@@ -1,0 +1,563 @@
+package app.perroute.service;
+
+import app.perroute.model.Protocol;
+import app.perroute.model.ProxyNode;
+import app.perroute.model.RoutingMode;
+import app.perroute.util.Json;
+
+import java.nio.file.Path;
+import java.util.ArrayList;
+import java.util.Arrays;
+import java.util.LinkedHashMap;
+import java.util.LinkedHashSet;
+import java.util.List;
+import java.util.Locale;
+import java.util.Map;
+
+public final class XrayConfigGenerator {
+    public static final int STATS_API_PORT = 17900;
+    public static final int PER_APP_PORT_BASE = 18100;
+
+    public String generateApplicationProxy(ProxyNode node) {
+        return generateApplicationProxy(node, List.of());
+    }
+
+    public String generateApplicationProxy(ProxyNode node, List<String> applicationPaths) {
+        return generateApplicationProxy(node, applicationPaths, List.of());
+    }
+
+    public String generateApplicationProxy(ProxyNode node, List<String> applicationPaths,
+                                           List<app.perroute.model.RouteRule> routeRules) {
+        if (node == null) throw new IllegalArgumentException("A server must be selected");
+        List<String> apps = applicationPaths == null ? List.of() : List.copyOf(applicationPaths);
+        if (node.protocol() == Protocol.XRAY_PROFILE) return generateApplicationProxyProfile(node, apps, routeRules);
+
+        Map<String, Object> root = map();
+        root.put("log", Map.of("loglevel", "info"));
+        List<Object> inbounds = applicationProxyInbounds(apps);
+        root.put("inbounds", inbounds);
+        root.put("outbounds", List.of(proxyOutbound(node), directOutbound(), blockOutbound()));
+
+        List<Object> rules = new ArrayList<>();
+        rules.add(Map.of("type", "field", "ip", List.of("geoip:private"), "outboundTag", "direct",
+                "ruleTag", "perroute-private-direct"));
+        rules.addAll(customRules(apps, routeRules, "direct", "proxy", "block"));
+        rules.add(Map.of("type", "field", "inboundTag", proxyInboundTags(apps),
+                "network", "tcp,udp", "outboundTag", "proxy", "ruleTag", "perroute-app-proxy"));
+        enableStats(root, inbounds, rules);
+        root.put("routing", Map.of("domainStrategy", "IPIfNonMatch", "rules", rules));
+        return Json.stringify(root) + System.lineSeparator();
+    }
+
+    @SuppressWarnings("unchecked")
+    public String generateProbe(ProxyNode node, int socksPort, int apiPort) {
+        Map<String, Object> root = Json.object(generateApplicationProxy(node));
+        List<Object> inbounds = (List<Object>)root.get("inbounds");
+        inbounds.removeIf(value -> value instanceof Map<?, ?> map && "perroute-http".equals(map.get("tag")));
+        for (Object value : inbounds) {
+            if (!(value instanceof Map<?, ?> raw)) continue;
+            Map<String, Object> inbound = (Map<String, Object>)raw;
+            if ("perroute-socks".equals(inbound.get("tag"))) inbound.put("port", socksPort);
+            if ("perroute-api".equals(inbound.get("tag"))) inbound.put("port", apiPort);
+        }
+        return Json.stringify(root) + System.lineSeparator();
+    }
+
+    public String generate(ProxyNode node, List<String> applicationPaths, RoutingMode mode) {
+        if (node == null) throw new IllegalArgumentException("A server must be selected");
+        if (applicationPaths == null || applicationPaths.isEmpty()) {
+            throw new IllegalArgumentException("At least one application must be selected");
+        }
+        if (node.protocol() == Protocol.XRAY_PROFILE) {
+            return generateXrayProfile(node, applicationPaths, mode);
+        }
+
+        Map<String, Object> root = map();
+        root.put("log", Map.of("loglevel", "info"));
+        root.put("inbounds", List.of(tunInbound()));
+        root.put("outbounds", List.of(proxyOutbound(node), directOutbound(), blockOutbound()));
+        root.put("routing", routing(applicationPaths, mode));
+        return Json.stringify(root) + System.lineSeparator();
+    }
+
+    private List<Object> applicationProxyInbounds(List<String> applicationPaths) {
+        List<Object> inbounds = new ArrayList<>();
+        Map<String, Object> sniffing = map();
+        sniffing.put("enabled", true);
+        sniffing.put("destOverride", List.of("http", "tls", "quic"));
+        sniffing.put("routeOnly", true);
+
+        Map<String, Object> socks = map();
+        socks.put("listen", "127.0.0.1");
+        socks.put("port", AppProxyLauncher.SOCKS_PORT);
+        socks.put("protocol", "socks");
+        socks.put("tag", "perroute-socks");
+        socks.put("settings", Map.of("udp", true));
+        socks.put("sniffing", sniffing);
+
+        Map<String, Object> http = map();
+        http.put("listen", "127.0.0.1");
+        http.put("port", AppProxyLauncher.HTTP_PORT);
+        http.put("protocol", "http");
+        http.put("tag", "perroute-http");
+        http.put("settings", Map.of());
+        http.put("sniffing", sniffing);
+        inbounds.add(socks);
+        inbounds.add(http);
+        for (int index = 0; index < applicationPaths.size(); index++) {
+            Map<String, Object> app = map();
+            app.put("listen", "127.0.0.1");
+            app.put("port", perAppPort(index));
+            app.put("protocol", "socks");
+            app.put("tag", perAppTag(index));
+            app.put("settings", Map.of("udp", true));
+            app.put("sniffing", sniffing);
+            inbounds.add(app);
+        }
+        return inbounds;
+    }
+
+    public static int perAppPort(int index) {
+        if (index < 0 || index >= 500) throw new IllegalArgumentException("Too many selected applications");
+        return PER_APP_PORT_BASE + index;
+    }
+
+    public static String perAppTag(int index) { return "perroute-app-" + index; }
+
+    private static List<String> proxyInboundTags(List<String> applications) {
+        List<String> tags = new ArrayList<>(List.of("perroute-socks", "perroute-http"));
+        for (int index = 0; index < applications.size(); index++) tags.add(perAppTag(index));
+        return tags;
+    }
+
+    private static void enableStats(Map<String, Object> root, List<Object> inbounds, List<Object> rules) {
+        Map<String, Object> apiInbound = map();
+        apiInbound.put("listen", "127.0.0.1");
+        apiInbound.put("port", STATS_API_PORT);
+        apiInbound.put("protocol", "dokodemo-door");
+        apiInbound.put("tag", "perroute-api");
+        apiInbound.put("settings", Map.of("address", "127.0.0.1"));
+        inbounds.add(apiInbound);
+        rules.add(0, Map.of("type", "field", "inboundTag", List.of("perroute-api"),
+                "outboundTag", "api", "ruleTag", "perroute-api-route"));
+        root.put("api", Map.of("tag", "api", "services", List.of("StatsService")));
+        root.put("stats", Map.of());
+        root.put("policy", Map.of("system", Map.of(
+                "statsInboundUplink", true,
+                "statsInboundDownlink", true,
+                "statsOutboundUplink", true,
+                "statsOutboundDownlink", true)));
+    }
+
+    private Map<String, Object> tunInbound() {
+        Map<String, Object> settings = map();
+        settings.put("name", "PerRoute");
+        settings.put("desc", "PerRoute");
+        settings.put("mtu", 1500);
+        settings.put("gateway", List.of("10.66.0.1/30", "fd66::1/126"));
+        settings.put("dns", List.of("1.1.1.1", "8.8.8.8"));
+        settings.put("autoSystemRoutingTable", List.of("0.0.0.0/0", "::/0"));
+        settings.put("autoOutboundsInterface", "auto");
+
+        Map<String, Object> sniffing = map();
+        sniffing.put("enabled", true);
+        sniffing.put("destOverride", List.of("http", "tls", "quic"));
+        sniffing.put("routeOnly", true);
+
+        Map<String, Object> inbound = map();
+        inbound.put("tag", "tun-in");
+        inbound.put("protocol", "tun");
+        inbound.put("settings", settings);
+        inbound.put("sniffing", sniffing);
+        return inbound;
+    }
+
+    private Map<String, Object> proxyOutbound(ProxyNode node) {
+        Map<String, Object> outbound = map();
+        outbound.put("tag", "proxy");
+        outbound.put("protocol", node.protocol().name().toLowerCase(Locale.ROOT));
+        outbound.put("settings", protocolSettings(node));
+        Map<String, Object> stream = streamSettings(node);
+        if (!stream.isEmpty()) outbound.put("streamSettings", stream);
+        return outbound;
+    }
+
+    private Map<String, Object> protocolSettings(ProxyNode node) {
+        Map<String, Object> settings = map();
+        settings.put("address", node.address());
+        settings.put("port", node.port());
+        switch (node.protocol()) {
+            case VLESS -> {
+                settings.put("id", node.credential());
+                settings.put("encryption", value(node, "encryption", "none"));
+                putNonBlank(settings, "flow", node.option("flow"));
+            }
+            case VMESS -> {
+                settings.put("id", node.credential());
+                settings.put("security", value(node, "security", "auto"));
+            }
+            case TROJAN -> settings.put("password", node.credential());
+            case SHADOWSOCKS -> {
+                settings.put("method", value(node, "method", "chacha20-poly1305"));
+                settings.put("password", node.credential());
+            }
+            case XRAY_PROFILE -> throw new IllegalArgumentException("Embedded profiles use the profile generator");
+        }
+        return settings;
+    }
+
+    @SuppressWarnings("unchecked")
+    private String generateXrayProfile(ProxyNode node, List<String> applicationPaths, RoutingMode mode) {
+        String raw = node.option("rawProfileJson");
+        if (raw.isBlank()) throw new IllegalArgumentException("Embedded Xray profile is empty");
+        Map<String, Object> root = Json.object(raw);
+        root.put("log", Map.of("loglevel", "info"));
+        Object rawOutbounds = root.get("outbounds");
+        if (!(rawOutbounds instanceof List<?> sourceOutbounds) || sourceOutbounds.isEmpty()) {
+            throw new IllegalArgumentException("Embedded Xray profile has no outbounds");
+        }
+        List<Object> outbounds = new ArrayList<>(sourceOutbounds);
+        String directTag = uniqueTag(outbounds, "perroute-direct");
+        outbounds.add(Map.of("tag", directTag, "protocol", "freedom", "settings", Map.of()));
+        root.put("outbounds", outbounds);
+        root.put("inbounds", List.of(tunInbound()));
+
+        Map<String, Object> routing;
+        Object rawRouting = root.get("routing");
+        if (rawRouting instanceof Map<?, ?> map) routing = (Map<String, Object>)map;
+        else { routing = map(); root.put("routing", routing); }
+        List<Object> originalRules = routing.get("rules") instanceof List<?> list ? new ArrayList<>(list) : List.of();
+        Target profileTarget = findProfileTarget(outbounds, originalRules);
+        List<String> processes = processPaths(applicationPaths);
+        List<Object> rules = new ArrayList<>();
+        rules.add(Map.of("type", "field", "ip", List.of("geoip:private"), "outboundTag", directTag,
+                "ruleTag", "perroute-private"));
+
+        if (mode == RoutingMode.EXCLUDE_SELECTED) {
+            rules.add(processRule(processes, new Target("outboundTag", directTag), "perroute-selected-direct"));
+        }
+        for (Object value : originalRules) {
+            if (!(value instanceof Map<?, ?> rawRule)) continue;
+            Map<String, Object> rule = new LinkedHashMap<>();
+            rawRule.forEach((key, item) -> rule.put(String.valueOf(key), item));
+            if (rule.containsKey("inboundTag")) continue;
+            if (mode == RoutingMode.INCLUDE_SELECTED) rule.put("process", processes);
+            rules.add(rule);
+        }
+        if (mode == RoutingMode.INCLUDE_SELECTED) {
+            rules.add(processRule(processes, profileTarget, "perroute-selected-profile"));
+            rules.add(Map.of("type", "field", "network", "tcp,udp", "outboundTag", directTag,
+                    "ruleTag", "perroute-fallback-direct"));
+        } else {
+            rules.add(targetRule(profileTarget, "perroute-fallback-profile"));
+        }
+        routing.put("domainStrategy", routing.getOrDefault("domainStrategy", "IPIfNonMatch"));
+        routing.put("rules", rules);
+        return Json.stringify(root) + System.lineSeparator();
+    }
+
+    @SuppressWarnings("unchecked")
+    private String generateApplicationProxyProfile(ProxyNode node, List<String> applicationPaths,
+                                                   List<app.perroute.model.RouteRule> routeRules) {
+        String raw = node.option("rawProfileJson");
+        if (raw.isBlank()) throw new IllegalArgumentException("Embedded Xray profile is empty");
+        Map<String, Object> root = Json.object(raw);
+        root.put("log", Map.of("loglevel", "info"));
+
+        Object rawOutbounds = root.get("outbounds");
+        if (!(rawOutbounds instanceof List<?> sourceOutbounds) || sourceOutbounds.isEmpty()) {
+            throw new IllegalArgumentException("Embedded Xray profile has no outbounds");
+        }
+        List<Object> outbounds = new ArrayList<>(sourceOutbounds);
+        String directTag = uniqueTag(outbounds, "perroute-direct");
+        String blockTag = uniqueTag(outbounds, "perroute-block");
+        outbounds.add(Map.of("tag", directTag, "protocol", "freedom", "settings", Map.of()));
+        outbounds.add(Map.of("tag", blockTag, "protocol", "blackhole", "settings", Map.of()));
+        root.put("outbounds", outbounds);
+        List<Object> inbounds = applicationProxyInbounds(applicationPaths);
+        root.put("inbounds", inbounds);
+
+        Map<String, Object> routing;
+        Object rawRouting = root.get("routing");
+        if (rawRouting instanceof Map<?, ?> existingRouting) routing = new LinkedHashMap<>((Map<String, Object>)existingRouting);
+        else routing = map();
+        List<Object> originalRules = routing.get("rules") instanceof List<?> list ? new ArrayList<>(list) : List.of();
+        Target profileTarget = findProfileTarget(outbounds, originalRules);
+        List<Object> rules = new ArrayList<>();
+        rules.add(Map.of("type", "field", "ip", List.of("geoip:private"), "outboundTag", directTag,
+                "ruleTag", "perroute-private-direct"));
+        for (Object value : originalRules) {
+            if (!(value instanceof Map<?, ?> rawRule)) continue;
+            Map<String, Object> rule = new LinkedHashMap<>();
+            rawRule.forEach((key, item) -> rule.put(String.valueOf(key), item));
+            if (!rule.containsKey("inboundTag")) rules.add(rule);
+        }
+        List<Object> custom = customRules(applicationPaths, routeRules, directTag, profileTarget.value, blockTag);
+        if ("balancerTag".equals(profileTarget.key)) {
+            for (Object value : custom) {
+                if (!(value instanceof Map<?, ?> rawCustomRule)) continue;
+                Map<String, Object> rule = (Map<String, Object>)rawCustomRule;
+                if (profileTarget.value.equals(rule.get("outboundTag"))) {
+                    rule.remove("outboundTag");
+                    rule.put("balancerTag", profileTarget.value);
+                }
+            }
+        }
+        rules.addAll(custom);
+        Map<String, Object> appRule = targetRule(profileTarget, "perroute-app-proxy");
+        appRule.put("inboundTag", proxyInboundTags(applicationPaths));
+        rules.add(appRule);
+        enableStats(root, inbounds, rules);
+        routing.put("domainStrategy", routing.getOrDefault("domainStrategy", "IPIfNonMatch"));
+        routing.put("rules", rules);
+        root.put("routing", routing);
+        return Json.stringify(root) + System.lineSeparator();
+    }
+
+    private static List<Object> customRules(List<String> applications,
+                                            List<app.perroute.model.RouteRule> source,
+                                            String directTag, String proxyTag, String blockTag) {
+        if (source == null || source.isEmpty()) return List.of();
+        List<Object> result = new ArrayList<>();
+        for (app.perroute.model.RouteRule rule : source) {
+            if (rule == null || !rule.enabled() || rule.value().isBlank()) continue;
+            Map<String, Object> item = map();
+            item.put("type", "field");
+            List<String> inboundTags = new ArrayList<>();
+            if (rule.applicationPath().isBlank()) inboundTags.addAll(proxyInboundTags(applications));
+            else {
+                for (int i = 0; i < applications.size(); i++) {
+                    if (applications.get(i).equalsIgnoreCase(rule.applicationPath())) inboundTags.add(perAppTag(i));
+                }
+            }
+            if (inboundTags.isEmpty()) continue;
+            item.put("inboundTag", inboundTags);
+            List<String> values = Arrays.stream(rule.value().split(","))
+                    .map(String::trim).filter(value -> !value.isBlank()).toList();
+            switch (rule.matchType()) {
+                case DOMAIN -> item.put("domain", values.stream().map(value ->
+                        value.contains(":") ? value : "domain:" + value).toList());
+                case IP -> item.put("ip", values);
+                case PORT -> item.put("port", String.join(",", values));
+            }
+            item.put("outboundTag", switch (rule.action()) {
+                case DIRECT -> directTag;
+                case BLOCK -> blockTag;
+                case PROXY -> proxyTag;
+            });
+            item.put("ruleTag", "perroute-custom-" + rule.id());
+            result.add(item);
+        }
+        return result;
+    }
+
+    @SuppressWarnings("unchecked")
+    private Target findProfileTarget(List<Object> outbounds, List<Object> rules) {
+        for (int i = rules.size() - 1; i >= 0; i--) {
+            if (!(rules.get(i) instanceof Map<?, ?> rule)) continue;
+            String balancer = objectString(rule.get("balancerTag"));
+            if (!balancer.isBlank()) return new Target("balancerTag", balancer);
+            String outbound = objectString(rule.get("outboundTag"));
+            if (rule.containsKey("inboundTag") && !outbound.isBlank() &&
+                    !outbound.equalsIgnoreCase("direct") && !outbound.equalsIgnoreCase("block")) {
+                return new Target("outboundTag", outbound);
+            }
+        }
+        for (Object value : outbounds) {
+            if (!(value instanceof Map<?, ?> rawOutbound)) continue;
+            String protocol = objectString(rawOutbound.get("protocol"));
+            if (!List.of("vless", "vmess", "trojan", "shadowsocks").contains(protocol.toLowerCase(Locale.ROOT))) continue;
+            Map<String, Object> outbound = (Map<String, Object>)rawOutbound;
+            String tag = objectString(outbound.get("tag"));
+            if (tag.isBlank()) {
+                tag = uniqueTag(outbounds, "perroute-profile-primary");
+                outbound.put("tag", tag);
+            }
+            return new Target("outboundTag", tag);
+        }
+        throw new IllegalArgumentException("Embedded Xray profile has no supported proxy target");
+    }
+
+    private static Map<String, Object> processRule(List<String> processes, Target target, String ruleTag) {
+        Map<String, Object> rule = map();
+        rule.put("type", "field");
+        rule.put("process", processes);
+        rule.put(target.key, target.value);
+        rule.put("ruleTag", ruleTag);
+        return rule;
+    }
+
+    private static Map<String, Object> targetRule(Target target, String ruleTag) {
+        Map<String, Object> rule = map();
+        rule.put("type", "field");
+        rule.put("network", "tcp,udp");
+        rule.put(target.key, target.value);
+        rule.put("ruleTag", ruleTag);
+        return rule;
+    }
+
+    private static String uniqueTag(List<Object> outbounds, String base) {
+        List<String> tags = outbounds.stream().filter(Map.class::isInstance).map(Map.class::cast)
+                .map(map -> objectString(map.get("tag"))).toList();
+        String candidate = base;
+        int suffix = 2;
+        while (tags.contains(candidate)) candidate = base + "-" + suffix++;
+        return candidate;
+    }
+
+    private static List<String> processPaths(List<String> applicationPaths) {
+        LinkedHashSet<String> patterns = new LinkedHashSet<>();
+        for (String applicationPath : applicationPaths) {
+            Path path = Path.of(applicationPath).toAbsolutePath().normalize();
+            patterns.add(path.toString().replace('\\', '/'));
+            Path fileName = path.getFileName();
+            if (fileName != null) {
+                String processName = fileName.toString();
+                if (processName.toLowerCase(Locale.ROOT).endsWith(".exe")) {
+                    processName = processName.substring(0, processName.length() - 4);
+                }
+                patterns.add(processName);
+                patterns.add(processName.toLowerCase(Locale.ROOT));
+            }
+        }
+        return List.copyOf(patterns);
+    }
+
+    private static String objectString(Object value) { return value == null ? "" : String.valueOf(value); }
+    private record Target(String key, String value) {}
+
+    private Map<String, Object> streamSettings(ProxyNode node) {
+        Map<String, Object> stream = map();
+        String method = normalizeTransport(value(node, "type", "raw"));
+        String security = normalizeSecurity(node);
+        stream.put("method", method);
+        stream.put("security", security);
+
+        switch (method) {
+            case "websocket" -> {
+                Map<String, Object> ws = map();
+                putNonBlank(ws, "path", node.option("path"));
+                putNonBlank(ws, "host", node.option("host"));
+                stream.put("wsSettings", ws);
+            }
+            case "grpc" -> {
+                Map<String, Object> grpc = map();
+                putNonBlank(grpc, "serviceName", first(node.option("serviceName"), node.option("path")));
+                putNonBlank(grpc, "authority", node.option("authority"));
+                if ("multi".equalsIgnoreCase(node.option("mode"))) grpc.put("multiMode", true);
+                stream.put("grpcSettings", grpc);
+            }
+            case "xhttp" -> {
+                Map<String, Object> xhttp = map();
+                putNonBlank(xhttp, "path", node.option("path"));
+                putNonBlank(xhttp, "host", node.option("host"));
+                putNonBlank(xhttp, "mode", node.option("mode"));
+                stream.put("xhttpSettings", xhttp);
+            }
+            case "httpupgrade" -> {
+                Map<String, Object> upgrade = map();
+                putNonBlank(upgrade, "path", node.option("path"));
+                putNonBlank(upgrade, "host", node.option("host"));
+                stream.put("httpupgradeSettings", upgrade);
+            }
+            case "mkcp" -> stream.put("kcpSettings", Map.of());
+            default -> {
+                String headerType = node.option("headerType");
+                if (!headerType.isBlank() && !headerType.equalsIgnoreCase("none")) {
+                    stream.put("rawSettings", Map.of("header", Map.of("type", headerType)));
+                }
+            }
+        }
+
+        String sni = first(node.option("sni"), node.option("serverName"), node.option("host"));
+        if (security.equals("tls")) {
+            Map<String, Object> tls = map();
+            putNonBlank(tls, "serverName", sni);
+            putNonBlank(tls, "fingerprint", node.option("fingerprint"));
+            if (truthy(node.option("allowInsecure"))) tls.put("allowInsecure", true);
+            if (!node.option("alpn").isBlank()) tls.put("alpn", splitComma(node.option("alpn")));
+            stream.put("tlsSettings", tls);
+        } else if (security.equals("reality")) {
+            Map<String, Object> reality = map();
+            putNonBlank(reality, "serverName", sni);
+            putNonBlank(reality, "fingerprint", value(node, "fingerprint", "chrome"));
+            putNonBlank(reality, "password", first(node.option("password"), node.option("pbk"), node.option("publicKey")));
+            putNonBlank(reality, "shortId", first(node.option("sid"), node.option("shortId")));
+            putNonBlank(reality, "spiderX", node.option("spx"));
+            stream.put("realitySettings", reality);
+        }
+        return stream;
+    }
+
+    private Map<String, Object> routing(List<String> applicationPaths, RoutingMode mode) {
+        List<String> processes = processPaths(applicationPaths);
+
+        List<Object> rules = new ArrayList<>();
+        rules.add(Map.of("type", "field", "ip", List.of("geoip:private"), "outboundTag", "direct"));
+        String selectedTarget = mode == RoutingMode.INCLUDE_SELECTED ? "proxy" : "direct";
+        String fallbackTarget = mode == RoutingMode.INCLUDE_SELECTED ? "direct" : "proxy";
+        rules.add(Map.of("type", "field", "process", processes, "outboundTag", selectedTarget,
+                "ruleTag", "selected-applications"));
+        rules.add(Map.of("type", "field", "network", "tcp,udp", "outboundTag", fallbackTarget,
+                "ruleTag", "fallback"));
+
+        Map<String, Object> routing = map();
+        routing.put("domainStrategy", "IPIfNonMatch");
+        routing.put("rules", rules);
+        return routing;
+    }
+
+    private Map<String, Object> directOutbound() {
+        return Map.of("tag", "direct", "protocol", "freedom", "settings", Map.of());
+    }
+
+    private Map<String, Object> blockOutbound() {
+        return Map.of("tag", "block", "protocol", "blackhole", "settings", Map.of());
+    }
+
+    private static String normalizeTransport(String value) {
+        return switch (value.toLowerCase(Locale.ROOT)) {
+            case "tcp", "raw", "none" -> "raw";
+            case "ws", "websocket" -> "websocket";
+            case "kcp", "mkcp" -> "mkcp";
+            case "http", "h2", "xhttp", "splithttp" -> "xhttp";
+            case "httpupgrade" -> "httpupgrade";
+            case "grpc" -> "grpc";
+            default -> value.toLowerCase(Locale.ROOT);
+        };
+    }
+
+    private static String normalizeSecurity(ProxyNode node) {
+        String value = first(node.option("securityLayer"), node.option("security"));
+        if (value.isBlank() && node.protocol() == Protocol.TROJAN) return "tls";
+        return switch (value.toLowerCase(Locale.ROOT)) {
+            case "tls" -> "tls";
+            case "reality" -> "reality";
+            default -> "none";
+        };
+    }
+
+    private static List<String> splitComma(String value) {
+        return Arrays.stream(value.split(",")).map(String::trim).filter(s -> !s.isBlank()).toList();
+    }
+
+    private static boolean truthy(String value) {
+        return "1".equals(value) || "true".equalsIgnoreCase(value);
+    }
+
+    private static String value(ProxyNode node, String key, String fallback) {
+        String value = node.option(key);
+        return value.isBlank() ? fallback : value;
+    }
+
+    private static String first(String... values) {
+        for (String value : values) if (value != null && !value.isBlank()) return value;
+        return "";
+    }
+
+    private static void putNonBlank(Map<String, Object> target, String key, String value) {
+        if (value != null && !value.isBlank()) target.put(key, value);
+    }
+
+    private static Map<String, Object> map() { return new LinkedHashMap<>(); }
+}
