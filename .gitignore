@@ -69,3 +69,8 @@ ehthumbs.db
 Desktop.ini
 $RECYCLE.BIN/
 .DS_Store
+
+# ---------------------------------------------------------------------------
+# Local design drafts and working notes (not part of the published project)
+# ---------------------------------------------------------------------------
+/docs/design/

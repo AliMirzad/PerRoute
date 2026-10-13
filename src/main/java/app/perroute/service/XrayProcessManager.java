@@ -59,6 +59,29 @@ public final class XrayProcessManager implements AutoCloseable {
         });
     }
 
+    /**
+     * Checks a complete config with Xray without touching the running core or its config file, so a
+     * rejected config can never interrupt the current connection.
+     */
+    public void validate(String config, boolean requiresWintun) throws IOException, InterruptedException {
+        Path coreDir = AppDirectories.coreDirectory();
+        Path executable = coreDir.resolve("xray.exe");
+        if (!Files.isRegularFile(executable) || (requiresWintun && !Files.isRegularFile(coreDir.resolve("wintun.dll")))) {
+            throw new IOException(requiresWintun
+                    ? "Xray/Wintun is not installed. Use the Install core button first."
+                    : "Xray is not installed. Use the Install core button first.");
+        }
+        Path data = AppDirectories.dataDirectory();
+        Files.createDirectories(data);
+        Path pending = data.resolve("pending-config.json");
+        try {
+            Files.writeString(pending, config, StandardCharsets.UTF_8);
+            validate(executable, coreDir, pending);
+        } finally {
+            Files.deleteIfExists(pending);
+        }
+    }
+
     private void validate(Path executable, Path coreDir, Path config) throws IOException, InterruptedException {
         Process validation = new ProcessBuilder(executable.toString(), "run", "-test", "-config", config.toString())
                 .directory(coreDir.toFile()).redirectErrorStream(true).start();

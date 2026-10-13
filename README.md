@@ -9,7 +9,7 @@
 A modern Windows client for VLESS, VMess, Trojan and Shadowsocks, built on [Xray-core](https://github.com/XTLS/Xray-core).
 
 ![Platform](https://img.shields.io/badge/platform-Windows%2010%20%7C%2011%20x64-0078D6)
-![Version](https://img.shields.io/badge/version-1.0.0-6B57D9)
+![Version](https://img.shields.io/badge/version-2.0.0-6B57D9)
 ![Built with](https://img.shields.io/badge/built%20with-Kotlin%20%2B%20Compose%20Desktop-7F52FF)
 ![Core](https://img.shields.io/badge/core-Xray-0B9B83)
 ![License](https://img.shields.io/badge/license-GPL--3.0-blue)
@@ -33,6 +33,7 @@ When you do want everything proxied, System proxy and Local proxy modes are one 
 | | |
 |---|---|
 | **Per-application routing** | Route arbitrary Windows applications, including ones with no proxy settings of their own. Already-running applications are picked up without being restarted. |
+| **A server per app (optional)** | Advanced routing lets selected applications use their own server while the rest follow the main server. It is off by default. |
 | **Three connection modes** | Smart per-app, System proxy, and Local proxy (SOCKS5 + HTTP). |
 | **Subscriptions** | Import by URL, pasted share links, Xray JSON, or QR code (image, clipboard, or camera). Updates keep your favorites, tags and selection. |
 | **Latency and speed tests** | Endpoint ping, a real tunnel test, and a download speed test per server, with sorting and filtering. |
@@ -42,9 +43,9 @@ When you do want everything proxied, System proxy and Local proxy modes are one 
 | **Routing rules** | Per-application rules by domain, IP/CIDR or port with Proxy, Direct and Block actions. First match wins. |
 | **One-click scenarios** | Work, Gaming and Streaming presets that set automation and add a small rule set on top of yours. |
 | **Profiles** | Save applications, server, mode and rules together and switch between them. |
-| **Privacy & routing inspector** | See the public IP of each route, your DNS resolvers, which rules are loaded in the running core, and which rule a destination will hit. |
+| **Connection diagnostics** | Check every route on its own: the public IP it exits from and when it last passed or failed. See your system DNS resolvers, which rules are loaded in the running core, and which rule a destination will hit. |
 | **Traffic history** | Live speed graph plus daily, monthly and per-application totals. Stored locally; destinations are never recorded. |
-| **Quick Access** | A compact tray panel to connect, switch servers or jump to the fastest one. |
+| **Quick Access** | A compact tray panel to connect, switch the main server or jump to the fastest one. |
 | **Safe recovery** | Windows proxy settings are restored after a crash, forced close, or sudden restart. |
 | **Signed updates** | Update manifests are verified against a pinned Ed25519 key; downloads are checked by size and SHA-256. |
 | **Light and dark themes** | |
@@ -55,56 +56,82 @@ Get the latest build from the [Releases](https://github.com/AliMirzad/PerRoute/r
 
 | Package | Use it when |
 |---|---|
-| `PerRoute-Setup-1.0.0.exe` | You want everything, including Smart per-app mode. The installer asks for Administrator approval once and installs PerRoute together with the per-app engine. |
-| `PerRoute-Portable-1.0.0.zip` | You want a no-install build. Extract the folder and run `PerRoute.exe`. System proxy and Local proxy work out of the box; Smart per-app works only if the per-app engine is already installed. |
+| `PerRoute-Setup-2.0.0.exe` | You want everything, including Smart per-app mode. The installer asks for Administrator approval once and installs PerRoute together with the per-app engine. |
+| `PerRoute-Portable-2.0.0.zip` | You want a no-install build. Extract the folder and run `PerRoute.exe`. System proxy and Local proxy work out of the box; Smart per-app works only if the per-app engine is already installed. |
 
 **Requirements:** Windows 10 or 11, 64-bit. The Java runtime and Xray core are bundled; nothing else needs to be installed.
 
 Verify a download against the SHA-256 values published with each release:
 
 ```powershell
-Get-FileHash .\PerRoute-Setup-1.0.0.exe -Algorithm SHA256
+Get-FileHash .\PerRoute-Setup-2.0.0.exe -Algorithm SHA256
 ```
 
 ## Quick start
 
-1. Open **Servers**, paste your subscription URL and choose **Add subscription** (or use **Add manual** for share links).
-2. Pick a server. Latency appears automatically; the best servers are speed-tested in the background.
-3. Open **Applications** and select the programs that should use the tunnel.
-4. Press **Connect**.
+1. Open **Servers**, choose **Add servers**, and paste your subscription URL (or use **Paste links** or **QR code**). Review the list, then add it.
+2. Select a server and choose **Use as main server**. Latency appears automatically; the best servers are speed-tested in the background.
+3. Open **Apps**, tick the programs that should use the tunnel, and choose **Save changes**.
+4. Open **Connection** and press **Connect**.
 
 ## Tour
 
-### Dashboard
+The window has eight labelled sections: Connection, Apps, Servers, Rules, Profiles, Diagnostics, Traffic and Settings.
 
-The main window shows the connection state, the active mode, live download and upload speed, session duration, latency, and which of your selected applications are currently sending traffic.
+### Connection
+
+Shows the connection state, the active mode, live download and upload speed, session duration, and one row per server in use with the applications on it and the result of its last check. A dot marks the selected applications that are sending traffic right now.
 
 <p align="center">
-  <img src="docs/screenshots/dashboard.png" width="49%" alt="Dashboard, ready to connect">
-  <img src="docs/screenshots/dashboard-light.png" width="49%" alt="Dashboard in the light theme">
+  <img src="docs/screenshots/dashboard.png" width="49%" alt="Connection, ready to connect">
+  <img src="docs/screenshots/dashboard-light.png" width="49%" alt="Connection in the light theme">
 </p>
 
 ### Servers
 
-Add and update subscriptions, filter by subscription, favorites, tag or country, and sort by latency. Each server shows its ping and measured download speed. Click a speed chip to test only that server.
+Add and update subscriptions, filter by subscription, favorites, tag or country, search, and sort by latency. Each server shows its ping and measured download speed, and carries a badge when it is the main server, a favorite, or tagged. Star a server to make it a favorite. The tag button on each row lists your existing tags, so a server goes into one with a single click; **New tag** creates another, and **No tag** clears it. Click a speed chip to test only that server. Select a server and choose **Use as main server** to make it the main route; this also works while connected.
 
-<p align="center"><img src="docs/screenshots/servers.png" width="820" alt="Server list with latency and speed"></p>
+<p align="center"><img src="docs/screenshots/servers.png" width="820" alt="Server list with latency, speed and usage"></p>
 
-- **Real test** starts an isolated Xray instance per server and verifies actual traffic through the tunnel.
+- **Add servers** takes a subscription URL, pasted share links, or a QR code (image, clipboard or camera). Whatever you choose is only read first: you see the servers that were found and any entries that could not be parsed before anything is saved. The camera stays off until you start it.
+- **Real tunnel test** starts an isolated Xray instance per server and verifies actual traffic through the tunnel.
 - **Speed test** downloads a bounded test file through each server, one at a time. After every ping pass the 10 best servers without a result are measured automatically (up to 10 MB each). This can be turned off under *Settings > Automation*.
 - Servers are de-duplicated by their effective configuration, not by name.
 
-### Applications
+<p align="center"><img src="docs/screenshots/add-servers.png" width="640" alt="Reviewing servers before they are added"></p>
 
-Choose from installed applications, running applications, or browse for any executable. Multi-process applications appear once.
+### Apps
+
+Choose from installed applications, running applications, or browse for any executable. Multi-process applications appear once. Changes are staged: nothing is applied until you choose **Save changes**, and leaving the screen with unsaved edits asks whether to save or discard them.
 
 <p align="center"><img src="docs/screenshots/applications.png" width="820" alt="Choosing applications to route"></p>
 
+### Advanced routing: a server per app
+
+Advanced routing is optional and **off by default**. While it is off, every selected application uses the main server and no per-app server controls are shown.
+
+Turn it on in **Apps** or under *Settings > Connection* (both switch the same setting) and each selected application gets a server picker. **Main server** remains the default for every application; pick another server to give that application a **Custom** route. Applications you did not select stay direct.
+
+<p align="center">
+  <img src="docs/screenshots/advanced-apps.png" width="49%" alt="Choosing a custom server for an application">
+  <img src="docs/screenshots/advanced-connection.png" width="49%" alt="One row per server while connected">
+</p>
+
+- Turning Advanced routing off does not delete anything. Your custom choices are kept and apply again when you turn it back on.
+- Custom servers apply in Smart per-app mode. System proxy and Local proxy keep them saved and ignore them.
+- Routes and the Advanced switch can be changed while disconnected only.
+- If an application's custom server is removed, or disappears from a subscription, the application is neither moved to the main server nor released to the direct route. PerRoute asks you to choose a replacement before it connects. While Advanced routing is off, such a leftover choice does not block anything.
+- Every server has its own check. A passing main server says nothing about a custom one, and results older than five minutes are marked stale.
+- All servers share one Xray process. Switching the main server, including automatic failover, restarts it and briefly interrupts every routed application. Custom servers are never switched or failed over automatically.
+- Any saved server can be a custom server, including embedded Xray JSON profiles. A custom profile keeps its own outbounds, balancers, observatory and rules, and its rules apply only to the applications on it. Sections that Xray has only once per process (DNS, policy) come from the main server.
+- If Xray rejects one of the servers, PerRoute does not connect and names that server and the application using it.
+- In the picker, favorites are listed first and marked with a star; with many servers a filter field appears.
+
 ### Routing rules
 
-Rules apply to all routed applications or to a single one. They are evaluated top to bottom and the first match wins.
+Rules apply to all routed applications or to a single one. They are evaluated top to bottom and the first match wins; use the arrows to reorder your rules, and the side panel to add or edit one. **Proxy** sends a connection through the application's own server: its custom server, or the main server when it has none.
 
-<p align="center"><img src="docs/screenshots/rules.png" width="820" alt="Routing rules"></p>
+<p align="center"><img src="docs/screenshots/rules.png" width="820" alt="Routing rules with the rule editor"></p>
 
 | Match | Examples |
 |---|---|
@@ -112,44 +139,46 @@ Rules apply to all routed applications or to a single one. They are evaluated to
 | IP | `203.0.113.0/24`, `geoip:ir` |
 | Port | `80,443,1000-2000` |
 
-### Scenarios and profiles
+### Profiles and presets
 
-A **scenario** is a one-click preset. It sets the automation switches and adds its own rules above yours without touching your applications, server, connection mode, or existing rules.
+A **preset** is a ready-made bundle. It sets the automation switches and adds its own rules above yours without touching your applications, servers, app routes, connection mode, or existing rules. **Preview changes** lists exactly what it would change before you apply it, and **Remove preset rules** takes its rules out again.
 
-| Scenario | Kill switch | Fastest on connect | Rules it adds |
+| Preset | Kill switch | Fastest on connect | Rules it adds |
 |---|---|---|---|
 | Work | On | Off | Collaboration tools always proxied; peer-to-peer ports blocked |
 | Gaming | Off | On | Game download CDNs stay direct |
 | Streaming | On | Off | Streaming services always proxied |
 
-A **profile** saves your own applications, server, mode and rules together, so you can switch whole setups at once. Apply a scenario first and save a profile to keep it.
+A **profile** saves your own applications, main server, mode, Advanced routing with its app routes, and rules together, so you can switch whole setups at once with **Apply**. Apply a preset first and save a profile to keep it.
 
-<p align="center"><img src="docs/screenshots/scenarios-profiles.png" width="820" alt="Scenarios and profiles"></p>
+<p align="center"><img src="docs/screenshots/scenarios-profiles.png" width="820" alt="Presets and saved profiles"></p>
 
-### Privacy & routing inspector
+### Diagnostics
 
-Check what each route actually exposes: the public IP and country of the direct route and of the tunnel, your system DNS servers, and the resolver that public services see. The rule check tells you which rule a destination will hit, and while connected every rule shows whether it is loaded in the running core.
+**Run checks** looks up the public IP and country of the direct route and of every server in use, each through its own connection, and records when it last passed or failed. The system DNS section shows the resolvers Windows uses; they describe the computer, not a single server. The rule tester tells you which rule and which server a destination would get, and while connected every rule shows whether it is loaded in the running core.
 
-<p align="center"><img src="docs/screenshots/inspector.png" width="820" alt="Privacy and routing inspector"></p>
+<p align="center"><img src="docs/screenshots/inspector.png" width="820" alt="Connection diagnostics with one check per route"></p>
 
 > [!NOTE]
-> The inspector reports what public servers observe at that moment. It does not capture packets and is not a substitute for a dedicated leak test.
+> Diagnostics report what public servers observed at that moment, and the rule tester predicts a routing decision without opening a connection. Neither captures packets, and neither is a substitute for a dedicated leak test.
 
-### Traffic history
+### Traffic
 
-A live speed graph for the last 90 seconds, with exact values under the pointer, and download/upload totals per day, per month and per application.
+A live speed graph for the last 90 seconds, with exact values under the pointer, and download/upload totals for today, for the month, per day and per application. Totals are byte counts only: there is no per-server or per-destination history.
 
-<p align="center"><img src="docs/screenshots/traffic-history.png" width="820" alt="Traffic history"></p>
+<p align="center"><img src="docs/screenshots/traffic-history.png" width="820" alt="Traffic and usage"></p>
 
 ### Settings
 
-Theme, connection mode, automation, secure updates, system components, and a selectable activity log.
+Grouped into General (theme and reset), Connection (mode and Advanced routing), Automation, Updates, Components, and a selectable Activity log.
 
-<p align="center"><img src="docs/screenshots/settings.png" width="820" alt="Settings and activity log"></p>
+**Reset everything** under *Settings > General* returns PerRoute to how it was when first installed: it clears every server and subscription, the selected applications and their routes, rules, profiles, the traffic history and all settings. It asks for confirmation, works only while disconnected, and cannot be undone. Installed components are not touched.
+
+<p align="center"><img src="docs/screenshots/settings.png" width="820" alt="Connection settings"></p>
 
 ### Quick Access
 
-Closing or minimizing the main window keeps PerRoute in the notification area. Clicking the tray icon opens Quick Access, where you can connect, switch servers, jump to the fastest server, reopen the main window, or quit.
+Closing or minimizing the main window keeps PerRoute in the notification area. Clicking the tray icon opens Quick Access, where you can connect, switch the main server, and reopen the main window. The list starts with the servers in use (the main server, then any custom servers), followed by your favorites and then the rest. Jumping to the fastest server and quitting are in its overflow menu. With Advanced routing on it shows how many applications and servers are involved; app routes themselves are edited in the main window.
 
 <p align="center"><img src="docs/screenshots/quick-access.png" width="360" alt="Quick Access tray panel"></p>
 
@@ -161,7 +190,7 @@ Closing or minimizing the main window keeps PerRoute in the notification area. C
 | **System proxy** | Applications that follow Windows proxy settings | Never | The previous Windows proxy settings are saved and restored exactly. |
 | **Local proxy** | Applications you configure yourself | Never | SOCKS5 on `127.0.0.1:17890`, HTTP on `127.0.0.1:17891`. Nothing system-wide is changed. |
 
-Connection modes cannot be changed while connected. Live server switching is always available.
+Connection modes, the app selection, app routes and rules cannot be changed while connected. Switching the main server is always available.
 
 ## Security and privacy
 
@@ -197,6 +226,16 @@ Connection modes cannot be changed while connected. Live server switching is alw
 .\test.ps1
 ```
 
+The suite includes the connection logic of the controller, run against a fake machine so that no Xray process, driver or proxy setting is touched. When the Xray core is present in `tools/xray/`, generated configs are also validated with `xray run -test`.
+
+To review the interface without a display, render every screen off-screen with demonstration data (baseline size, narrow size, 150% scaling, both themes) into `build/ui-snapshots/`:
+
+```powershell
+.\gradlew.bat renderUiSnapshots
+```
+
+Checks that need the installed driver and real servers are listed in [docs/advanced-routing-verification.md](docs/advanced-routing-verification.md).
+
 **3. Run from source.**
 
 ```powershell
@@ -213,9 +252,9 @@ This produces the following in `dist/`:
 
 | Output | Description |
 |---|---|
-| `PerRoute-Setup-1.0.0.exe` | Offline installer with the per-app engine |
-| `PerRoute-Portable-1.0.0.zip` | Self-contained portable build |
-| `PerRoute-1.0.0/` | Unpacked application image |
+| `PerRoute-Setup-2.0.0.exe` | Offline installer with the per-app engine |
+| `PerRoute-Portable-2.0.0.zip` | Self-contained portable build |
+| `PerRoute-2.0.0/` | Unpacked application image |
 
 The installer dependencies are downloaded on first use and verified against pinned SHA-256 digests.
 
@@ -238,10 +277,10 @@ docs/screenshots/                      Images used in this document
 Updates are distributed as a signed manifest next to the installer. Keep the private key outside the repository.
 
 ```powershell
-java tools\update\UpdateManifestTool.java sign 1.0.0 dist\PerRoute-Setup-1.0.0.exe https://github.com/AliMirzad/PerRoute/releases/download/v1.0.0/PerRoute-Setup-1.0.0.exe release-secrets\perroute-update-private.pk8 dist\update.json
+java tools\update\UpdateManifestTool.java sign 2.0.0 dist\PerRoute-Setup-2.0.0.exe https://github.com/AliMirzad/PerRoute/releases/download/v2.0.0/PerRoute-Setup-2.0.0.exe release-secrets\perroute-update-private.pk8 dist\update.json
 ```
 
-Attach `update.json` to the release. Users enable updates by entering this feed once in *Settings > Secure updates*:
+Attach `update.json` to the release. Users enable updates by entering this feed once in *Settings > Updates*:
 
 ```
 https://github.com/AliMirzad/PerRoute/releases/latest/download/update.json

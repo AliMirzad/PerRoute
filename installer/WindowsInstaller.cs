@@ -15,8 +15,8 @@ using Microsoft.Win32;
 [assembly: AssemblyDescription("Complete system installer for PerRoute")]
 [assembly: AssemblyCompany("Ali Mirzad")]
 [assembly: AssemblyProduct("PerRoute")]
-[assembly: AssemblyVersion("1.0.0.0")]
-[assembly: AssemblyFileVersion("1.0.0.0")]
+[assembly: AssemblyVersion("2.0.0.0")]
+[assembly: AssemblyFileVersion("2.0.0.0")]
 
 namespace PerRouteSetup
 {
@@ -51,7 +51,7 @@ namespace PerRouteSetup
 
     internal sealed class InstallerForm : Form
     {
-        private const string Version = "1.0.0";
+        private const string Version = "2.0.0";
         private const string ResourceName = "PerRoute.Payload";
         private const string ProxiFyreResourceName = "PerRoute.ProxiFyreSetup";
         private const string VisualCppResourceName = "PerRoute.VisualCppRuntime";

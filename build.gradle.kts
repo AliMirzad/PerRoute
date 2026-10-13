@@ -8,7 +8,7 @@ plugins {
 }
 
 group = "app.perroute"
-version = "1.0.0"
+version = "2.0.0"
 
 val stageNativeResources = tasks.register<Sync>("stageNativeResources") {
     into(layout.buildDirectory.dir("native-resources"))
@@ -55,7 +55,7 @@ compose.desktop {
             appResourcesRootDir.set(layout.buildDirectory.dir("native-resources"))
             targetFormats(TargetFormat.Exe)
             packageName = "PerRoute"
-            packageVersion = "1.0.0"
+            packageVersion = "2.0.0"
             description = "Modern per-application proxy client"
             vendor = "PerRoute"
             windows {
@@ -92,6 +92,16 @@ tasks.withType<org.jetbrains.kotlin.gradle.tasks.KotlinCompile>().configureEach 
 
 tasks.withType<Test>().configureEach {
     failOnNoDiscoveredTests = false
+}
+
+// Renders every screen off-screen with demonstration data: baseline, narrow, 150% scaling, both themes.
+// Pass scene names with -Pscenes=a,b to render only those.
+tasks.register<JavaExec>("renderUiSnapshots") {
+    dependsOn(tasks.named("testClasses"))
+    classpath = sourceSets["test"].runtimeClasspath
+    mainClass.set("app.perroute.UiSnapshotsKt")
+    args(layout.buildDirectory.dir("ui-snapshots").get().asFile.absolutePath)
+    (project.findProperty("scenes") as String?)?.split(',')?.filter { it.isNotBlank() }?.let { args(it) }
 }
 
 tasks.register<JavaExec>("runAllTests") {

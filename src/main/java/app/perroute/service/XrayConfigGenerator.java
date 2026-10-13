@@ -17,6 +17,7 @@ import java.util.Map;
 public final class XrayConfigGenerator {
     public static final int STATS_API_PORT = 17900;
     public static final int PER_APP_PORT_BASE = 18100;
+    public static final int ROUTE_CHECK_PORT_BASE = 18600;
 
     public String generateApplicationProxy(ProxyNode node) {
         return generateApplicationProxy(node, List.of());
@@ -28,25 +29,50 @@ public final class XrayConfigGenerator {
 
     public String generateApplicationProxy(ProxyNode node, List<String> applicationPaths,
                                            List<app.perroute.model.RouteRule> routeRules) {
+        return generateApplicationProxy(node, applicationPaths, routeRules, List.of());
+    }
+
+    /**
+     * @param applicationNodes the effective server of every application, parallel to {@code applicationPaths}.
+     *                         Empty, or a null entry, means the application follows the main server.
+     */
+    public String generateApplicationProxy(ProxyNode node, List<String> applicationPaths,
+                                           List<app.perroute.model.RouteRule> routeRules,
+                                           List<ProxyNode> applicationNodes) {
         if (node == null) throw new IllegalArgumentException("A server must be selected");
         List<String> apps = applicationPaths == null ? List.of() : List.copyOf(applicationPaths);
-        if (node.protocol() == Protocol.XRAY_PROFILE) return generateApplicationProxyProfile(node, apps, routeRules);
+        RouteLayout layout = RouteLayout.of(node, apps, applicationNodes);
+        if (node.protocol() == Protocol.XRAY_PROFILE) return generateApplicationProxyProfile(node, apps, routeRules, layout);
 
         Map<String, Object> root = map();
         root.put("log", Map.of("loglevel", "info"));
-        List<Object> inbounds = applicationProxyInbounds(apps);
+        List<Object> inbounds = applicationProxyInbounds(apps, layout.customs().size());
         root.put("inbounds", inbounds);
-        root.put("outbounds", List.of(proxyOutbound(node), directOutbound(), blockOutbound()));
+        List<Object> outbounds = new ArrayList<>(List.of(proxyOutbound(node, "proxy"), directOutbound(), blockOutbound()));
+        List<CustomRoute> customs = customRoutes(layout, outbounds, List.of());
+        root.put("outbounds", outbounds);
+        List<RouteGroup> groups = layout.groups(apps, new Target("outboundTag", "proxy"),
+                customs.stream().map(CustomRoute::target).toList());
 
         List<Object> rules = new ArrayList<>();
         rules.add(Map.of("type", "field", "ip", List.of("geoip:private"), "outboundTag", "direct",
                 "ruleTag", "perroute-private-direct"));
-        rules.addAll(customRules(apps, routeRules, "direct", "proxy", "block"));
-        rules.add(Map.of("type", "field", "inboundTag", proxyInboundTags(apps),
-                "network", "tcp,udp", "outboundTag", "proxy", "ruleTag", "perroute-app-proxy"));
+        rules.addAll(customProfileRules(customs, groups));
+        rules.addAll(customRules(apps, routeRules, "direct", groups, "block"));
+        rules.addAll(applicationRules(groups));
         enableStats(root, inbounds, rules);
-        root.put("routing", Map.of("domainStrategy", "IPIfNonMatch", "rules", rules));
+        Map<String, Object> routing = map();
+        routing.put("domainStrategy", "IPIfNonMatch");
+        routing.put("rules", rules);
+        mergeCustomSections(root, routing, customs);
+        root.put("routing", routing);
         return Json.stringify(root) + System.lineSeparator();
+    }
+
+    /** Keys of the distinct custom servers, in the order used for outbound tags and check ports. */
+    public static List<String> customRouteKeys(ProxyNode main, List<String> applicationPaths, List<ProxyNode> applicationNodes) {
+        List<String> apps = applicationPaths == null ? List.of() : applicationPaths;
+        return RouteLayout.of(main, apps, applicationNodes).customs().stream().map(ProxyNode::key).toList();
     }
 
     @SuppressWarnings("unchecked")
@@ -75,12 +101,12 @@ public final class XrayConfigGenerator {
         Map<String, Object> root = map();
         root.put("log", Map.of("loglevel", "info"));
         root.put("inbounds", List.of(tunInbound()));
-        root.put("outbounds", List.of(proxyOutbound(node), directOutbound(), blockOutbound()));
+        root.put("outbounds", List.of(proxyOutbound(node, "proxy"), directOutbound(), blockOutbound()));
         root.put("routing", routing(applicationPaths, mode));
         return Json.stringify(root) + System.lineSeparator();
     }
 
-    private List<Object> applicationProxyInbounds(List<String> applicationPaths) {
+    private List<Object> applicationProxyInbounds(List<String> applicationPaths, int customRoutes) {
         List<Object> inbounds = new ArrayList<>();
         Map<String, Object> sniffing = map();
         sniffing.put("enabled", true);
@@ -114,6 +140,17 @@ public final class XrayConfigGenerator {
             app.put("sniffing", sniffing);
             inbounds.add(app);
         }
+        // The shared SOCKS endpoint always leads to the main server, so every custom server gets a
+        // loopback inbound of its own. Route checks use it without touching an application's counters.
+        for (int index = 0; index < customRoutes; index++) {
+            Map<String, Object> check = map();
+            check.put("listen", "127.0.0.1");
+            check.put("port", routeCheckPort(index));
+            check.put("protocol", "socks");
+            check.put("tag", routeCheckTag(index));
+            check.put("settings", Map.of("udp", false));
+            inbounds.add(check);
+        }
         return inbounds;
     }
 
@@ -124,10 +161,254 @@ public final class XrayConfigGenerator {
 
     public static String perAppTag(int index) { return "perroute-app-" + index; }
 
+    public static int routeCheckPort(int index) {
+        if (index < 0 || index >= 500) throw new IllegalArgumentException("Too many custom servers");
+        return ROUTE_CHECK_PORT_BASE + index;
+    }
+
+    public static String routeCheckTag(int index) { return "perroute-check-" + index; }
+    public static String routeOutboundTag(int index) { return "perroute-route-" + index; }
+    /** A global PROXY rule is split per server; every part after the first carries this suffix. */
+    public static String routeRuleSuffix(int index) { return "#route" + index; }
+
     private static List<String> proxyInboundTags(List<String> applications) {
         List<String> tags = new ArrayList<>(List.of("perroute-socks", "perroute-http"));
         for (int index = 0; index < applications.size(); index++) tags.add(perAppTag(index));
         return tags;
+    }
+
+    /** Inbounds that share one destination: the main server, or a single custom server. */
+    private record RouteGroup(Target target, List<String> inboundTags, String ruleSuffix, int customIndex) {}
+
+    private record RouteLayout(List<ProxyNode> customs, int[] applicationGroup) {
+        static RouteLayout of(ProxyNode main, List<String> applications, List<ProxyNode> applicationNodes) {
+            int[] groups = new int[applications.size()];
+            java.util.Arrays.fill(groups, -1);
+            List<ProxyNode> customs = new ArrayList<>();
+            if (applicationNodes == null || applicationNodes.isEmpty()) return new RouteLayout(customs, groups);
+            if (applicationNodes.size() != applications.size()) {
+                throw new IllegalArgumentException("Every application needs exactly one server");
+            }
+            for (int index = 0; index < applications.size(); index++) {
+                ProxyNode node = applicationNodes.get(index);
+                if (node == null || (main != null && node.key().equals(main.key()))) continue;
+                int position = -1;
+                for (int known = 0; known < customs.size(); known++) {
+                    if (customs.get(known).key().equals(node.key())) position = known;
+                }
+                if (position < 0) { customs.add(node); position = customs.size() - 1; }
+                groups[index] = position;
+            }
+            return new RouteLayout(customs, groups);
+        }
+
+        /** Main group first (shared endpoints plus the applications that follow Main), then one per custom server. */
+        List<RouteGroup> groups(List<String> applications, Target mainTarget, List<Target> customTargets) {
+            List<String> mainTags = new ArrayList<>(List.of("perroute-socks", "perroute-http"));
+            List<List<String>> customInbounds = new ArrayList<>();
+            for (int index = 0; index < customs.size(); index++) customInbounds.add(new ArrayList<>());
+            for (int index = 0; index < applications.size(); index++) {
+                if (applicationGroup[index] < 0) mainTags.add(perAppTag(index));
+                else customInbounds.get(applicationGroup[index]).add(perAppTag(index));
+            }
+            List<RouteGroup> result = new ArrayList<>();
+            result.add(new RouteGroup(mainTarget, mainTags, "", -1));
+            for (int index = 0; index < customs.size(); index++) {
+                result.add(new RouteGroup(customTargets.get(index), customInbounds.get(index), routeRuleSuffix(index), index));
+            }
+            return result;
+        }
+    }
+
+    /**
+     * What one custom server adds to the shared config. A plain server is a single outbound. An embedded
+     * Xray profile brings its own outbounds, balancers, observatory and rules; all of its tags are moved
+     * into a namespace of their own so that nothing in it can refer to, or be selected by, another server.
+     */
+    private record CustomRoute(List<Object> outbounds, Target target, List<Map<String, Object>> rules,
+                               List<Object> balancers, Map<String, Object> observatory,
+                               Map<String, Object> burstObservatory) {}
+
+    private List<CustomRoute> customRoutes(RouteLayout layout, List<Object> outbounds, List<String> mainSelectors) {
+        List<CustomRoute> routes = new ArrayList<>();
+        for (int index = 0; index < layout.customs().size(); index++) {
+            String base = uniqueTag(outbounds, routeBase(index, mainSelectors));
+            CustomRoute route = customRoute(layout.customs().get(index), base);
+            outbounds.addAll(route.outbounds());
+            routes.add(route);
+        }
+        return routes;
+    }
+
+    /**
+     * Balancers and observatories pick outbounds by tag prefix. A custom server's tags must therefore not
+     * start with anything the main profile selects, or the main profile would balance over them too.
+     */
+    private static String routeBase(int index, List<String> mainSelectors) {
+        for (String candidate : List.of(routeOutboundTag(index), "~" + routeOutboundTag(index), "zz." + routeOutboundTag(index))) {
+            if (mainSelectors.stream().noneMatch(candidate::startsWith)) return candidate;
+        }
+        throw new IllegalArgumentException("The main server's profile selects every outbound, so it cannot share "
+                + "the connection with a custom server. Choose another main server or turn off Advanced routing.");
+    }
+
+    @SuppressWarnings("unchecked")
+    private CustomRoute customRoute(ProxyNode node, String base) {
+        if (node.protocol() != Protocol.XRAY_PROFILE) {
+            return new CustomRoute(List.of(proxyOutbound(node, base)), new Target("outboundTag", base),
+                    List.of(), List.of(), null, null);
+        }
+        String raw = node.option("rawProfileJson");
+        if (raw.isBlank()) throw new IllegalArgumentException("Embedded Xray profile is empty");
+        Map<String, Object> profile = Json.object(raw);
+        if (!(profile.get("outbounds") instanceof List<?> source) || source.isEmpty()) {
+            throw new IllegalArgumentException("Embedded Xray profile has no outbounds");
+        }
+        List<Object> own = new ArrayList<>(source);
+        Map<String, Object> routing = profile.get("routing") instanceof Map<?, ?> map ? (Map<String, Object>)map : Map.of();
+        List<Object> ownRules = routing.get("rules") instanceof List<?> list ? new ArrayList<>(list) : List.of();
+        // Found on the profile as written, so its own "direct" and "block" outbounds are still recognisable.
+        Target ownTarget = findProfileTarget(own, ownRules);
+        String namespace = base + "/";
+
+        List<Object> outbounds = new ArrayList<>();
+        for (Object value : own) {
+            if (!(value instanceof Map<?, ?> rawOutbound)) continue;
+            Map<String, Object> outbound = new LinkedHashMap<>((Map<String, Object>)rawOutbound);
+            renameTag(outbound, "tag", namespace);
+            if (outbound.get("proxySettings") instanceof Map<?, ?> proxySettings) {
+                Map<String, Object> copy = new LinkedHashMap<>((Map<String, Object>)proxySettings);
+                renameTag(copy, "tag", namespace);
+                outbound.put("proxySettings", copy);
+            }
+            if (outbound.get("streamSettings") instanceof Map<?, ?> stream && stream.get("sockopt") instanceof Map<?, ?> sockopt) {
+                Map<String, Object> sockoptCopy = new LinkedHashMap<>((Map<String, Object>)sockopt);
+                renameTag(sockoptCopy, "dialerProxy", namespace);
+                Map<String, Object> streamCopy = new LinkedHashMap<>((Map<String, Object>)stream);
+                streamCopy.put("sockopt", sockoptCopy);
+                outbound.put("streamSettings", streamCopy);
+            }
+            outbounds.add(outbound);
+        }
+
+        List<Map<String, Object>> rules = new ArrayList<>();
+        for (Object value : ownRules) {
+            if (!(value instanceof Map<?, ?> rawRule) || rawRule.containsKey("inboundTag")) continue;
+            Map<String, Object> rule = new LinkedHashMap<>((Map<String, Object>)rawRule);
+            renameTag(rule, "outboundTag", namespace);
+            renameTag(rule, "balancerTag", namespace);
+            renameTag(rule, "ruleTag", namespace);
+            rules.add(rule);
+        }
+
+        List<Object> balancers = new ArrayList<>();
+        if (routing.get("balancers") instanceof List<?> list) {
+            for (Object value : list) {
+                if (!(value instanceof Map<?, ?> rawBalancer)) continue;
+                Map<String, Object> balancer = new LinkedHashMap<>((Map<String, Object>)rawBalancer);
+                renameTag(balancer, "tag", namespace);
+                renameTag(balancer, "fallbackTag", namespace);
+                renameSelectors(balancer, "selector", namespace);
+                balancers.add(balancer);
+            }
+        }
+        return new CustomRoute(outbounds, new Target(ownTarget.key, namespace + ownTarget.value), rules, balancers,
+                observer(profile.get("observatory"), namespace), observer(profile.get("burstObservatory"), namespace));
+    }
+
+    private static void renameTag(Map<String, Object> target, String key, String namespace) {
+        String value = objectString(target.get(key));
+        if (!value.isBlank()) target.put(key, namespace + value);
+    }
+
+    private static void renameSelectors(Map<String, Object> target, String key, String namespace) {
+        if (target.get(key) instanceof List<?> list) {
+            target.put(key, list.stream().map(item -> (Object)(namespace + item)).toList());
+        }
+    }
+
+    @SuppressWarnings("unchecked")
+    private static Map<String, Object> observer(Object raw, String namespace) {
+        if (!(raw instanceof Map<?, ?> map)) return null;
+        Map<String, Object> copy = new LinkedHashMap<>((Map<String, Object>)map);
+        renameSelectors(copy, "subjectSelector", namespace);
+        return copy;
+    }
+
+    /** A custom profile's own rules, applied only to the applications that use that profile. */
+    private static List<Object> customProfileRules(List<CustomRoute> customs, List<RouteGroup> groups) {
+        List<Object> rules = new ArrayList<>();
+        for (int index = 0; index < customs.size(); index++) {
+            for (Map<String, Object> rule : customs.get(index).rules()) {
+                Map<String, Object> confined = new LinkedHashMap<>(rule);
+                confined.put("inboundTag", groups.get(index + 1).inboundTags());
+                rules.add(confined);
+            }
+        }
+        return rules;
+    }
+
+    /**
+     * Xray has one balancer list and one observatory for the whole process. Custom profiles append their
+     * balancers and their probe subjects; probe settings stay those of the main profile when it has any.
+     * Sections that cannot be scoped to a route (dns, policy, fakedns) are not taken from a custom profile.
+     */
+    @SuppressWarnings("unchecked")
+    private static void mergeCustomSections(Map<String, Object> root, Map<String, Object> routing, List<CustomRoute> customs) {
+        List<Object> balancers = routing.get("balancers") instanceof List<?> list ? new ArrayList<>(list) : new ArrayList<>();
+        customs.forEach(custom -> balancers.addAll(custom.balancers()));
+        if (!balancers.isEmpty()) routing.put("balancers", balancers);
+        for (String section : List.of("observatory", "burstObservatory")) {
+            List<Map<String, Object>> parts = customs.stream()
+                    .map(custom -> section.equals("observatory") ? custom.observatory() : custom.burstObservatory())
+                    .filter(java.util.Objects::nonNull).toList();
+            if (parts.isEmpty()) continue;
+            Map<String, Object> merged = new LinkedHashMap<>(root.get(section) instanceof Map<?, ?> existing
+                    ? (Map<String, Object>)existing : parts.get(0));
+            List<Object> selectors = new ArrayList<>();
+            if (root.get(section) instanceof Map<?, ?> existing && existing.get("subjectSelector") instanceof List<?> list) {
+                selectors.addAll(list);
+            }
+            for (Map<String, Object> part : parts) {
+                if (part.get("subjectSelector") instanceof List<?> list) selectors.addAll(list);
+            }
+            merged.put("subjectSelector", selectors);
+            root.put(section, merged);
+        }
+    }
+
+    /** Every tag prefix the main profile selects outbounds by. */
+    private static List<String> profileSelectors(Map<String, Object> profile) {
+        List<String> selectors = new ArrayList<>();
+        if (profile.get("routing") instanceof Map<?, ?> routing && routing.get("balancers") instanceof List<?> balancers) {
+            for (Object value : balancers) {
+                if (value instanceof Map<?, ?> balancer && balancer.get("selector") instanceof List<?> list) {
+                    list.forEach(item -> selectors.add(String.valueOf(item)));
+                }
+            }
+        }
+        for (String section : List.of("observatory", "burstObservatory")) {
+            if (profile.get(section) instanceof Map<?, ?> observer && observer.get("subjectSelector") instanceof List<?> list) {
+                list.forEach(item -> selectors.add(String.valueOf(item)));
+            }
+        }
+        return selectors;
+    }
+
+    private static List<Object> applicationRules(List<RouteGroup> groups) {
+        List<Object> rules = new ArrayList<>();
+        for (RouteGroup group : groups) {
+            Map<String, Object> rule = map();
+            rule.put("type", "field");
+            List<String> inboundTags = new ArrayList<>(group.inboundTags());
+            if (group.customIndex() >= 0) inboundTags.add(routeCheckTag(group.customIndex()));
+            rule.put("inboundTag", inboundTags);
+            rule.put("network", "tcp,udp");
+            rule.put(group.target().key, group.target().value);
+            rule.put("ruleTag", group.customIndex() < 0 ? "perroute-app-proxy" : "perroute-app-route-" + group.customIndex());
+            rules.add(rule);
+        }
+        return rules;
     }
 
     private static void enableStats(Map<String, Object> root, List<Object> inbounds, List<Object> rules) {
@@ -172,9 +453,9 @@ public final class XrayConfigGenerator {
         return inbound;
     }
 
-    private Map<String, Object> proxyOutbound(ProxyNode node) {
+    private Map<String, Object> proxyOutbound(ProxyNode node, String tag) {
         Map<String, Object> outbound = map();
-        outbound.put("tag", "proxy");
+        outbound.put("tag", tag);
         outbound.put("protocol", node.protocol().name().toLowerCase(Locale.ROOT));
         outbound.put("settings", protocolSettings(node));
         Map<String, Object> stream = streamSettings(node);
@@ -258,7 +539,7 @@ public final class XrayConfigGenerator {
 
     @SuppressWarnings("unchecked")
     private String generateApplicationProxyProfile(ProxyNode node, List<String> applicationPaths,
-                                                   List<app.perroute.model.RouteRule> routeRules) {
+                                                   List<app.perroute.model.RouteRule> routeRules, RouteLayout layout) {
         String raw = node.option("rawProfileJson");
         if (raw.isBlank()) throw new IllegalArgumentException("Embedded Xray profile is empty");
         Map<String, Object> root = Json.object(raw);
@@ -273,16 +554,18 @@ public final class XrayConfigGenerator {
         String blockTag = uniqueTag(outbounds, "perroute-block");
         outbounds.add(Map.of("tag", directTag, "protocol", "freedom", "settings", Map.of()));
         outbounds.add(Map.of("tag", blockTag, "protocol", "blackhole", "settings", Map.of()));
-        root.put("outbounds", outbounds);
-        List<Object> inbounds = applicationProxyInbounds(applicationPaths);
-        root.put("inbounds", inbounds);
-
         Map<String, Object> routing;
         Object rawRouting = root.get("routing");
         if (rawRouting instanceof Map<?, ?> existingRouting) routing = new LinkedHashMap<>((Map<String, Object>)existingRouting);
         else routing = map();
         List<Object> originalRules = routing.get("rules") instanceof List<?> list ? new ArrayList<>(list) : List.of();
         Target profileTarget = findProfileTarget(outbounds, originalRules);
+        List<CustomRoute> customs = customRoutes(layout, outbounds, profileSelectors(root));
+        root.put("outbounds", outbounds);
+        List<Object> inbounds = applicationProxyInbounds(applicationPaths, layout.customs().size());
+        root.put("inbounds", inbounds);
+        List<RouteGroup> groups = layout.groups(applicationPaths, profileTarget,
+                customs.stream().map(CustomRoute::target).toList());
         List<Object> rules = new ArrayList<>();
         rules.add(Map.of("type", "field", "ip", List.of("geoip:private"), "outboundTag", directTag,
                 "ruleTag", "perroute-private-direct"));
@@ -290,39 +573,35 @@ public final class XrayConfigGenerator {
             if (!(value instanceof Map<?, ?> rawRule)) continue;
             Map<String, Object> rule = new LinkedHashMap<>();
             rawRule.forEach((key, item) -> rule.put(String.valueOf(key), item));
-            if (!rule.containsKey("inboundTag")) rules.add(rule);
+            if (rule.containsKey("inboundTag")) continue;
+            // The profile's own rules describe its own outbounds. With custom servers present they are
+            // confined to the inbounds that follow the profile, so they cannot capture another server's apps.
+            if (!layout.customs().isEmpty()) rule.put("inboundTag", groups.get(0).inboundTags());
+            rules.add(rule);
         }
-        List<Object> custom = customRules(applicationPaths, routeRules, directTag, profileTarget.value, blockTag);
-        if ("balancerTag".equals(profileTarget.key)) {
-            for (Object value : custom) {
-                if (!(value instanceof Map<?, ?> rawCustomRule)) continue;
-                Map<String, Object> rule = (Map<String, Object>)rawCustomRule;
-                if (profileTarget.value.equals(rule.get("outboundTag"))) {
-                    rule.remove("outboundTag");
-                    rule.put("balancerTag", profileTarget.value);
-                }
-            }
-        }
-        rules.addAll(custom);
-        Map<String, Object> appRule = targetRule(profileTarget, "perroute-app-proxy");
-        appRule.put("inboundTag", proxyInboundTags(applicationPaths));
-        rules.add(appRule);
+        rules.addAll(customProfileRules(customs, groups));
+        rules.addAll(customRules(applicationPaths, routeRules, directTag, groups, blockTag));
+        rules.addAll(applicationRules(groups));
         enableStats(root, inbounds, rules);
         routing.put("domainStrategy", routing.getOrDefault("domainStrategy", "IPIfNonMatch"));
         routing.put("rules", rules);
+        mergeCustomSections(root, routing, customs);
         root.put("routing", routing);
         return Json.stringify(root) + System.lineSeparator();
     }
 
+    /**
+     * DIRECT and BLOCK mean the same for every application and stay one Xray rule. PROXY means "this
+     * application's own server", so it becomes one rule per server at the same position: the parts match
+     * disjoint inbounds, which leaves first-match order untouched.
+     */
     private static List<Object> customRules(List<String> applications,
                                             List<app.perroute.model.RouteRule> source,
-                                            String directTag, String proxyTag, String blockTag) {
+                                            String directTag, List<RouteGroup> groups, String blockTag) {
         if (source == null || source.isEmpty()) return List.of();
         List<Object> result = new ArrayList<>();
         for (app.perroute.model.RouteRule rule : source) {
             if (rule == null || !rule.enabled() || rule.value().isBlank()) continue;
-            Map<String, Object> item = map();
-            item.put("type", "field");
             List<String> inboundTags = new ArrayList<>();
             if (rule.applicationPath().isBlank()) inboundTags.addAll(proxyInboundTags(applications));
             else {
@@ -331,24 +610,46 @@ public final class XrayConfigGenerator {
                 }
             }
             if (inboundTags.isEmpty()) continue;
-            item.put("inboundTag", inboundTags);
-            List<String> values = Arrays.stream(rule.value().split(","))
-                    .map(String::trim).filter(value -> !value.isBlank()).toList();
-            switch (rule.matchType()) {
-                case DOMAIN -> item.put("domain", values.stream().map(value ->
-                        value.contains(":") ? value : "domain:" + value).toList());
-                case IP -> item.put("ip", values);
-                case PORT -> item.put("port", String.join(",", values));
+            String ruleTag = "perroute-custom-" + rule.id();
+            if (rule.action() != app.perroute.model.RouteRule.Action.PROXY) {
+                String target = rule.action() == app.perroute.model.RouteRule.Action.DIRECT ? directTag : blockTag;
+                result.add(customRule(rule, inboundTags, new Target("outboundTag", target), ruleTag));
+                continue;
             }
-            item.put("outboundTag", switch (rule.action()) {
-                case DIRECT -> directTag;
-                case BLOCK -> blockTag;
-                case PROXY -> proxyTag;
-            });
-            item.put("ruleTag", "perroute-custom-" + rule.id());
-            result.add(item);
+            if (groups.size() == 1) {
+                result.add(customRule(rule, inboundTags, groups.get(0).target(), ruleTag));
+                continue;
+            }
+            for (RouteGroup group : groups) {
+                List<String> matching = inboundTags.stream().filter(group.inboundTags()::contains).toList();
+                if (!matching.isEmpty()) result.add(customRule(rule, matching, group.target(), ruleTag + group.ruleSuffix()));
+            }
         }
         return result;
+    }
+
+    private static Map<String, Object> customRule(app.perroute.model.RouteRule rule, List<String> inboundTags,
+                                                  Target target, String ruleTag) {
+        Map<String, Object> item = map();
+        item.put("type", "field");
+        item.put("inboundTag", inboundTags);
+        List<String> values = Arrays.stream(rule.value().split(","))
+                .map(String::trim).filter(value -> !value.isBlank()).toList();
+        switch (rule.matchType()) {
+            case DOMAIN -> item.put("domain", values.stream().map(value ->
+                    value.contains(":") ? value : "domain:" + value).toList());
+            case IP -> item.put("ip", values);
+            case PORT -> item.put("port", String.join(",", values));
+        }
+        item.put(target.key, target.value);
+        item.put("ruleTag", ruleTag);
+        return item;
+    }
+
+    /** The saved rule a loaded Xray rule tag belongs to, or null for PerRoute's own rules. */
+    public static String customRuleId(String ruleTag) {
+        if (ruleTag == null || !ruleTag.startsWith("perroute-custom-")) return null;
+        return ruleTag.substring("perroute-custom-".length()).replaceFirst("#route\\d+$", "");
     }
 
     @SuppressWarnings("unchecked")

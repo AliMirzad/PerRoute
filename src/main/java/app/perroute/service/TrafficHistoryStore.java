@@ -61,6 +61,46 @@ public final class TrafficHistoryStore implements AutoCloseable {
         return new Snapshot(todayDown, todayUp, monthDown, monthUp, applications);
     }
 
+    /**
+     * Totals for one application, or for all of them when the filter is blank, plus one entry per recorded
+     * day of the current month (newest first). Only byte counts exist; nothing here names a destination.
+     */
+    public synchronized Report report(String applicationFilter) {
+        String filter = applicationFilter == null ? "" : applicationFilter.trim();
+        String today = LocalDate.now().toString();
+        String month = YearMonth.now().toString();
+        long todayDown = 0, todayUp = 0, monthDown = 0, monthUp = 0;
+        Map<String, Counters> todayApps = new LinkedHashMap<>();
+        Map<String, Counters> monthApps = new LinkedHashMap<>();
+        List<Day> dayTotals = new ArrayList<>();
+        for (var day : days.entrySet()) {
+            if (!day.getKey().startsWith(month)) continue;
+            long dayDown = 0, dayUp = 0;
+            for (var app : day.getValue().entrySet()) {
+                Counters monthTarget = monthApps.computeIfAbsent(app.getKey(), ignored -> new Counters());
+                monthTarget.down += app.getValue().down; monthTarget.up += app.getValue().up;
+                if (day.getKey().equals(today)) {
+                    Counters todayTarget = todayApps.computeIfAbsent(app.getKey(), ignored -> new Counters());
+                    todayTarget.down += app.getValue().down; todayTarget.up += app.getValue().up;
+                }
+                if (!filter.isEmpty() && !app.getKey().equalsIgnoreCase(filter)) continue;
+                dayDown += app.getValue().down; dayUp += app.getValue().up;
+            }
+            monthDown += dayDown; monthUp += dayUp;
+            if (day.getKey().equals(today)) { todayDown = dayDown; todayUp = dayUp; }
+            if (dayDown + dayUp > 0) dayTotals.add(new Day(day.getKey(), dayDown, dayUp));
+        }
+        dayTotals.sort(Comparator.comparing(Day::date).reversed());
+        return new Report(todayDown, todayUp, monthDown, monthUp, entries(todayApps), entries(monthApps), List.copyOf(dayTotals));
+    }
+
+    private static List<Entry> entries(Map<String, Counters> source) {
+        return source.entrySet().stream()
+                .map(item -> new Entry(item.getKey(), item.getValue().down, item.getValue().up))
+                .sorted(Comparator.comparingLong((Entry item) -> item.downloadBytes + item.uploadBytes).reversed())
+                .toList();
+    }
+
     public synchronized void clear() {
         days.clear();
         dirty = true;
@@ -116,6 +156,9 @@ public final class TrafficHistoryStore implements AutoCloseable {
     @Override public synchronized void close() { saveQuietly(); }
     private static final class Counters { long down; long up; }
     public record Entry(String applicationPath, long downloadBytes, long uploadBytes) {}
+    public record Day(String date, long downloadBytes, long uploadBytes) {}
+    public record Report(long todayDownloadBytes, long todayUploadBytes, long monthDownloadBytes, long monthUploadBytes,
+                         List<Entry> todayApplications, List<Entry> monthApplications, List<Day> days) {}
     public record Snapshot(long todayDownloadBytes, long todayUploadBytes, long monthDownloadBytes,
                            long monthUploadBytes, List<Entry> applications) {}
 }

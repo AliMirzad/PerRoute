@@ -1,5 +1,6 @@
 package app.perroute.persistence;
 
+import app.perroute.model.AppRoutes;
 import app.perroute.model.AppState;
 import app.perroute.model.ConnectionMode;
 import app.perroute.model.Protocol;
@@ -87,6 +88,17 @@ public final class AppStateStore {
             catch (RuntimeException ignored) {}
         }
         state.setActiveProfileId(properties.getProperty("profile.active", ""));
+        // States written before Advanced routing existed have none of these keys: Advanced stays off.
+        state.setAdvancedRouting(Boolean.parseBoolean(properties.getProperty("advanced.enabled", "false")));
+        int routeCount = integer(properties, "route.count");
+        for (int i = 0; i < routeCount; i++) {
+            String app = AppRoutes.normalize(properties.getProperty("route." + i + ".app", ""));
+            String nodeKey = properties.getProperty("route." + i + ".node", "");
+            if (app.isBlank() || nodeKey.isBlank()) continue;
+            state.appRoutes().put(app, nodeKey);
+            String label = properties.getProperty("route." + i + ".label", "");
+            if (!label.isBlank()) state.appRouteLabels().put(nodeKey, label);
+        }
         return state;
     }
 
@@ -130,6 +142,16 @@ public final class AppStateStore {
             properties.setProperty("profile." + i + ".json", encodeProfile(state.profiles().get(i)));
         }
         properties.setProperty("profile.active", state.activeProfileId());
+        properties.setProperty("advanced.enabled", String.valueOf(state.advancedRouting()));
+        properties.setProperty("route.count", String.valueOf(state.appRoutes().size()));
+        int routeIndex = 0;
+        for (var entry : state.appRoutes().entrySet()) {
+            properties.setProperty("route." + routeIndex + ".app", entry.getKey());
+            properties.setProperty("route." + routeIndex + ".node", entry.getValue());
+            String label = state.appRouteLabels().getOrDefault(entry.getValue(), "");
+            if (!label.isBlank()) properties.setProperty("route." + routeIndex + ".label", label);
+            routeIndex++;
+        }
 
         ByteArrayOutputStream out = new ByteArrayOutputStream();
         properties.store(out, "PerRoute encrypted state");
@@ -210,6 +232,8 @@ public final class AppStateStore {
         data.put("id", profile.id()); data.put("name", profile.name()); data.put("applicationPaths", profile.applicationPaths());
         data.put("nodeKey", profile.nodeKey()); data.put("mode", profile.mode().name());
         data.put("rules", profile.rules().stream().map(AppStateStore::encodeRule).map(Json::object).toList());
+        data.put("advancedRouting", profile.advancedRouting());
+        data.put("appRoutes", new LinkedHashMap<>(profile.appRoutes()));
         return Json.stringify(data);
     }
 
@@ -222,7 +246,12 @@ public final class AppStateStore {
         if (data.get("rules") instanceof List<?> list) {
             for (Object value : list) if (value instanceof Map<?, ?> map) rules.add(decodeRule(Json.stringify(map)));
         }
+        Map<String, String> routes = new LinkedHashMap<>();
+        if (data.get("appRoutes") instanceof Map<?, ?> map) {
+            map.forEach((app, nodeKey) -> { if (nodeKey != null) routes.put(String.valueOf(app), String.valueOf(nodeKey)); });
+        }
         return new ConnectionProfile(string(data, "id"), string(data, "name"), apps, string(data, "nodeKey"),
-                ConnectionMode.valueOf(string(data, "mode")), rules);
+                ConnectionMode.valueOf(string(data, "mode")), rules,
+                Boolean.TRUE.equals(data.get("advancedRouting")), routes);
     }
 }

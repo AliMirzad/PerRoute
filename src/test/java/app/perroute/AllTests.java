@@ -71,7 +71,16 @@ public final class AllTests {
         run("Lenient share links", AllTests::testLenientShareLinks);
         run("Route rule evaluator", AllTests::testRouteRuleEvaluator);
         run("Speed measurement", AllTests::testSpeedMeasurement);
-        System.out.println("All tests passed (" + assertions + " assertions)");
+        run("Legacy state migration", AllTests::testLegacyStateMigration);
+        run("Advanced routing persistence", AllTests::testAdvancedRoutingPersistence);
+        run("Route planner", AllTests::testRoutePlanner);
+        run("Multi-server config", AllTests::testMultiServerConfig);
+        run("Multi-server rule precedence", AllTests::testMultiServerRulePrecedence);
+        run("Embedded profile with custom servers", AllTests::testProfileWithCustomServers);
+        run("Embedded profile as a custom server", AllTests::testEmbeddedProfileAsCustomServer);
+        run("Traffic report", AllTests::testTrafficReport);
+        ControllerTests.runAll();
+        System.out.println("All tests passed (" + (assertions + ControllerTests.assertions()) + " assertions)");
         System.exit(0);
     }
 
@@ -344,9 +353,9 @@ public final class AllTests {
                 {
                   "version": "9.9.9",
                   "url": "https://updates.perroute.invalid/PerRoute-Setup-9.9.9.exe",
-                  "sha256": "190da6d7a920829612f400c8e48beec822eeec46c37d5f0185a3068bb8378095",
+                  "sha256": "ae084cd577687fb114d695cd88447e8cc4be6d5048fde285d6c93669ab1a745d",
                   "size": 6644,
-                  "signature": "1UhhKbomW9iYHY9J9pY/6Dnz30MAB4icgUf70x+t7YWoWChEidvtWGDMoYDYwlJYWEJ02pIoFxPvsg/obE8xAQ=="
+                  "signature": "cXQpXAFvo8AuTb7q8ircyiBTu0Tia5zm7TRl3X3MeM9+GtNqTr0Bo2M9JOdBOQxgw25U/0gfVgkHvZGOTFeMAw=="
                 }
                 """;
         SecureUpdateService.UpdateInfo update = new SecureUpdateService().parseAndVerify(
@@ -546,6 +555,429 @@ public final class AllTests {
         InputStream input = new java.io.ByteArrayInputStream(response);
         equal(200, TunnelHttp.readHeaders(input));
         equal("hi", new String(input.readAllBytes(), StandardCharsets.US_ASCII));
+    }
+
+    private static final String CHROME = "C:\\Apps\\Chrome.exe";
+    private static final String TELEGRAM = "C:\\Apps\\Telegram.exe";
+    private static final String DISCORD = "C:\\Apps\\Discord.exe";
+
+    private static ProxyNode server(String key, String host) {
+        return new ProxyNode(key, host, Protocol.VLESS, host, 443, "id-" + key, Map.of("security", "tls"), "");
+    }
+
+    private static ProxyNode embeddedProfile(String key) {
+        String json = """
+                {"remarks":"Embedded","outbounds":[
+                  {"tag":"proxy-a","protocol":"vless","settings":{"vnext":[{"address":"profile.example","port":443,"users":[{"id":"33333333-3333-3333-3333-333333333333","encryption":"none"}]}]}},
+                  {"tag":"direct","protocol":"freedom","settings":{}}],
+                 "routing":{"rules":[{"type":"field","domain":["domain:intranet.example"],"outboundTag":"direct"}]}}
+                """;
+        ProxyNode parsed = new SubscriptionParser().parse(json).nodes().get(0);
+        return new ProxyNode(key, parsed.name(), parsed.protocol(), parsed.address(), parsed.port(),
+                parsed.credential(), parsed.options(), parsed.sourceLink());
+    }
+
+    @SuppressWarnings("unchecked")
+    private static List<Map<String, Object>> routingRules(Map<String, Object> root) {
+        return ((List<Object>)((Map<String, Object>)root.get("routing")).get("rules")).stream()
+                .map(rule -> (Map<String, Object>)rule).toList();
+    }
+
+    private static Map<String, Object> ruleByTag(List<Map<String, Object>> rules, String tag) {
+        return rules.stream().filter(rule -> tag.equals(rule.get("ruleTag"))).findFirst()
+                .orElseThrow(() -> new AssertionError("Missing rule " + tag));
+    }
+
+    private static int ruleIndex(List<Map<String, Object>> rules, String tag) {
+        for (int index = 0; index < rules.size(); index++) if (tag.equals(rules.get(index).get("ruleTag"))) return index;
+        throw new AssertionError("Missing rule " + tag);
+    }
+
+    private static void testLegacyStateMigration() throws Exception {
+        Path directory = Files.createTempDirectory("perroute-state-legacy-");
+        AppStateStore store = new AppStateStore(directory.resolve("state.bin"));
+        ProxyNode node = new ShareLinkParser().parse("trojan://secret@legacy.example:443?security=tls#Legacy");
+        // Exactly what 1.0.0 wrote: no Advanced flag, no assignments, and a profile without the new fields.
+        java.util.Properties legacy = new java.util.Properties();
+        legacy.setProperty("node.count", "1");
+        legacy.setProperty("node.0.link", node.sourceLink());
+        legacy.setProperty("app.count", "1");
+        legacy.setProperty("app.0.path", CHROME);
+        legacy.setProperty("connection.mode", "NATIVE_PER_APP");
+        legacy.setProperty("selected.node", "anything");
+        legacy.setProperty("profile.count", "1");
+        legacy.setProperty("profile.0.json", "{\"id\":\"old\",\"name\":\"Old\",\"applicationPaths\":[\"C:\\\\Apps\\\\Chrome.exe\"],"
+                + "\"nodeKey\":\"k\",\"mode\":\"NATIVE_PER_APP\",\"rules\":[]}");
+        java.io.ByteArrayOutputStream out = new java.io.ByteArrayOutputStream();
+        legacy.store(out, "legacy");
+        store.write(out.toByteArray());
+
+        AppState restored = store.load();
+        check(!restored.advancedRouting(), "A state saved before Advanced routing must load with it off");
+        equal(0, restored.appRoutes().size());
+        equal(1, restored.nodes().size());
+        equal(List.of(CHROME), restored.appPaths());
+        equal(ConnectionMode.NATIVE_PER_APP, restored.connectionMode());
+        ConnectionProfile profile = restored.profiles().get(0);
+        check(!profile.advancedRouting(), "A legacy profile must not enable Advanced routing");
+        equal(0, profile.appRoutes().size());
+
+        store.save(restored);
+        AppState again = store.load();
+        check(!again.advancedRouting(), "Re-saving a migrated state must keep Advanced routing off");
+        try (var files = Files.list(directory)) { for (Path file : files.toList()) Files.deleteIfExists(file); }
+        Files.deleteIfExists(directory);
+    }
+
+    private static void testAdvancedRoutingPersistence() throws Exception {
+        Path directory = Files.createTempDirectory("perroute-state-advanced-");
+        AppStateStore store = new AppStateStore(directory.resolve("state.bin"));
+        AppState state = new AppState();
+        ProxyNode main = server("main", "main.example");
+        ProxyNode custom = server("custom", "custom.example");
+        state.nodes().add(main); state.nodes().add(custom);
+        state.appPaths().add(CHROME);
+        state.setAdvancedRouting(true);
+        state.appRoutes().put(app.perroute.model.AppRoutes.normalize(CHROME), custom.key());
+        state.appRouteLabels().put(custom.key(), "Custom server");
+        state.profiles().add(new ConnectionProfile("p", "Office", List.of(CHROME), main.key(),
+                ConnectionMode.NATIVE_PER_APP, List.of(), true, Map.of("C:/Apps/CHROME.exe", custom.key())));
+        store.save(state);
+
+        AppState restored = store.load();
+        check(restored.advancedRouting(), "The Advanced flag must survive a restart");
+        equal(Map.of("c:\\apps\\chrome.exe", "custom"), restored.appRoutes());
+        equal("Custom server", restored.appRouteLabels().get("custom"));
+        check(restored.profiles().get(0).advancedRouting(), "Profiles must store the Advanced flag");
+        equal(Map.of("c:\\apps\\chrome.exe", "custom"), restored.profiles().get(0).appRoutes());
+        equal("c:\\apps\\chrome.exe", app.perroute.model.AppRoutes.normalize("C:/Apps/../Apps/CHROME.EXE"));
+
+        restored.setAdvancedRouting(false);
+        store.save(restored);
+        AppState disabled = store.load();
+        check(!disabled.advancedRouting(), "Advanced routing must be saved as off");
+        equal(Map.of("c:\\apps\\chrome.exe", "custom"), disabled.appRoutes());
+        try (var files = Files.list(directory)) { for (Path file : files.toList()) Files.deleteIfExists(file); }
+        Files.deleteIfExists(directory);
+    }
+
+    private static void testRoutePlanner() {
+        ProxyNode main = server("main", "main.example");
+        ProxyNode second = server("second", "second.example");
+        ProxyNode profile = embeddedProfile("profile");
+        List<ProxyNode> nodes = List.of(main, second, profile);
+        List<String> apps = List.of(CHROME, TELEGRAM, DISCORD);
+        Map<String, String> routes = Map.of("c:\\apps\\chrome.exe", "second", "c:\\apps\\discord.exe", "main");
+
+        var off = app.perroute.service.RoutePlanner.plan(nodes, "main", apps, false, routes, Map.of(), ConnectionMode.NATIVE_PER_APP);
+        check(!off.advancedEffective() && off.ready(), "Advanced off must ignore every assignment");
+        equal(1, off.routes().size());
+        equal(apps, off.routes().get(0).applications());
+        equal(main, off.nodeFor(CHROME));
+
+        var on = app.perroute.service.RoutePlanner.plan(nodes, "main", apps, true, routes, Map.of(), ConnectionMode.NATIVE_PER_APP);
+        check(on.advancedEffective() && on.ready(), "Valid assignments must be ready");
+        equal(2, on.routes().size());
+        equal(second, on.nodeFor("c:/apps/CHROME.exe"));
+        equal(main, on.nodeFor(TELEGRAM));
+        equal(main, on.nodeFor(DISCORD));
+        equal(List.of(TELEGRAM, DISCORD), on.routes().get(0).applications());
+        check(on.routes().get(0).main() && !on.routes().get(1).main(), "The main server must be listed first");
+        equal(List.of(CHROME), on.routes().get(1).applications());
+        equal(null, on.nodeFor("C:\\Apps\\NotSelected.exe"));
+
+        for (ConnectionMode mode : List.of(ConnectionMode.SYSTEM_PROXY, ConnectionMode.BROWSER_PROXY, ConnectionMode.TUN_COMPATIBILITY)) {
+            var other = app.perroute.service.RoutePlanner.plan(nodes, "main", apps, true, routes, Map.of(), mode);
+            check(!other.advancedEffective() && other.routes().size() == 1, "Assignments only apply in Smart per-app");
+        }
+
+        var followsNewMain = app.perroute.service.RoutePlanner.plan(nodes, "second", apps, true, routes, Map.of(), ConnectionMode.NATIVE_PER_APP);
+        equal(second, followsNewMain.nodeFor(CHROME));
+        equal(main, followsNewMain.nodeFor(DISCORD));
+        equal(second, followsNewMain.nodeFor(TELEGRAM));
+        equal(List.of(CHROME, TELEGRAM), followsNewMain.routes().get(0).applications());
+
+        Map<String, String> dangling = Map.of("c:\\apps\\chrome.exe", "gone", "c:\\apps\\telegram.exe", "profile");
+        var missing = app.perroute.service.RoutePlanner.plan(nodes, "main", apps, true, dangling, Map.of("gone", "Old server"), ConnectionMode.NATIVE_PER_APP);
+        check(!missing.ready(), "An effective assignment to a removed server must block");
+        equal(1, missing.missing().size());
+        equal(app.perroute.service.RoutePlanner.Problem.REMOVED, missing.missing().get(0).problem());
+        equal("Old server", missing.missing().get(0).label());
+        equal(null, missing.nodeFor(CHROME));
+        equal(profile, missing.nodeFor(TELEGRAM));
+        check(app.perroute.service.RoutePlanner.plan(nodes, "main", apps, false, dangling, Map.of(), ConnectionMode.NATIVE_PER_APP).ready(),
+                "An inactive unresolved assignment must not block standard routing");
+        check(app.perroute.service.RoutePlanner.plan(nodes, "main", apps, true, dangling, Map.of(), ConnectionMode.SYSTEM_PROXY).ready(),
+                "An unresolved assignment must not block other connection modes");
+        check(app.perroute.service.RoutePlanner.selectableAsCustom(profile) && app.perroute.service.RoutePlanner.selectableAsCustom(second),
+                "Every saved server, embedded profiles included, can be a custom server");
+    }
+
+    @SuppressWarnings("unchecked")
+    private static void testMultiServerConfig() {
+        ProxyNode main = server("main", "main.example");
+        ProxyNode second = server("second", "second.example");
+        ProxyNode third = server("third", "third.example");
+        List<String> apps = List.of(CHROME, TELEGRAM, DISCORD);
+        XrayConfigGenerator generator = new XrayConfigGenerator();
+
+        String standard = generator.generateApplicationProxy(main, apps, List.of());
+        equal(standard, generator.generateApplicationProxy(main, apps, List.of(), java.util.Arrays.asList(null, null, null)));
+        equal(standard, generator.generateApplicationProxy(main, apps, List.of(), List.of(main, main, main)));
+        check(!standard.contains("perroute-route-") && !standard.contains("perroute-check-"),
+                "Standard routing must not create custom outbounds or check inbounds");
+
+        List<ProxyNode> nodes = java.util.Arrays.asList(second, null, third);
+        equal(List.of("second", "third"), XrayConfigGenerator.customRouteKeys(main, apps, nodes));
+        Map<String, Object> root = Json.object(generator.generateApplicationProxy(main, apps, List.of(), nodes));
+        List<Map<String, Object>> outbounds = ((List<Object>)root.get("outbounds")).stream().map(item -> (Map<String, Object>)item).toList();
+        equal(List.of("proxy", "direct", "block", "perroute-route-0", "perroute-route-1"),
+                outbounds.stream().map(item -> item.get("tag")).toList());
+        equal("main.example", ((Map<String, Object>)outbounds.get(0).get("settings")).get("address"));
+        equal("second.example", ((Map<String, Object>)outbounds.get(3).get("settings")).get("address"));
+        equal("third.example", ((Map<String, Object>)outbounds.get(4).get("settings")).get("address"));
+
+        List<Map<String, Object>> inbounds = ((List<Object>)root.get("inbounds")).stream().map(item -> (Map<String, Object>)item).toList();
+        equal(List.of("perroute-socks", "perroute-http", "perroute-app-0", "perroute-app-1", "perroute-app-2",
+                "perroute-check-0", "perroute-check-1", "perroute-api"), inbounds.stream().map(item -> item.get("tag")).toList());
+        equal(XrayConfigGenerator.perAppPort(0), inbounds.get(2).get("port"));
+        equal(XrayConfigGenerator.routeCheckPort(1), inbounds.get(6).get("port"));
+        check(inbounds.stream().allMatch(item -> "127.0.0.1".equals(item.get("listen"))), "Every inbound must stay on loopback");
+
+        List<Map<String, Object>> rules = routingRules(root);
+        equal("perroute-api-route", rules.get(0).get("ruleTag"));
+        Map<String, Object> mainRule = ruleByTag(rules, "perroute-app-proxy");
+        equal(List.of("perroute-socks", "perroute-http", "perroute-app-1"), mainRule.get("inboundTag"));
+        equal("proxy", mainRule.get("outboundTag"));
+        Map<String, Object> firstCustom = ruleByTag(rules, "perroute-app-route-0");
+        equal(List.of("perroute-app-0", "perroute-check-0"), firstCustom.get("inboundTag"));
+        equal("perroute-route-0", firstCustom.get("outboundTag"));
+        Map<String, Object> secondCustom = ruleByTag(rules, "perroute-app-route-1");
+        equal(List.of("perroute-app-2", "perroute-check-1"), secondCustom.get("inboundTag"));
+        equal("perroute-route-1", secondCustom.get("outboundTag"));
+        validateWithBundledXray(Json.stringify(root));
+
+        Map<String, Object> shared = Json.object(generator.generateApplicationProxy(main, apps, List.of(),
+                java.util.Arrays.asList(second, second, null)));
+        equal(4, ((List<Object>)shared.get("outbounds")).size());
+        equal(List.of("perroute-app-0", "perroute-app-1", "perroute-check-0"),
+                ruleByTag(routingRules(shared), "perroute-app-route-0").get("inboundTag"));
+
+        // The per-app engine keeps mapping applications to their own port; only Xray decides the server.
+        Map<String, Object> engine = Json.object(new ProxiFyreManager().generateConfig(apps));
+        equal("127.0.0.1:" + XrayConfigGenerator.perAppPort(2),
+                ((Map<String, Object>)((List<Object>)engine.get("proxies")).get(2)).get("socks5ProxyEndpoint"));
+    }
+
+    private static void testMultiServerRulePrecedence() {
+        ProxyNode main = server("main", "main.example");
+        ProxyNode second = server("second", "second.example");
+        List<String> apps = List.of(CHROME, TELEGRAM);
+        List<RouteRule> source = List.of(
+                new RouteRule("block", "Block trackers", "", RouteRule.MatchType.DOMAIN, "keyword:tracker", RouteRule.Action.BLOCK, true),
+                new RouteRule("tools", "Work tools", "", RouteRule.MatchType.DOMAIN, "github.com", RouteRule.Action.PROXY, true),
+                new RouteRule("chrome", "Chrome proxy", CHROME, RouteRule.MatchType.PORT, "8443", RouteRule.Action.PROXY, true),
+                new RouteRule("off", "Disabled", "", RouteRule.MatchType.DOMAIN, "example.org", RouteRule.Action.PROXY, false),
+                new RouteRule("direct", "Bank direct", "", RouteRule.MatchType.DOMAIN, "bank.example", RouteRule.Action.DIRECT, true));
+        XrayConfigGenerator generator = new XrayConfigGenerator();
+
+        List<Map<String, Object>> standard = routingRules(Json.object(generator.generateApplicationProxy(main, apps, source)));
+        equal(List.of("perroute-api-route", "perroute-private-direct", "perroute-custom-block", "perroute-custom-tools",
+                "perroute-custom-chrome", "perroute-custom-direct", "perroute-app-proxy"),
+                standard.stream().map(rule -> rule.get("ruleTag")).toList());
+        equal("proxy", ruleByTag(standard, "perroute-custom-tools").get("outboundTag"));
+
+        Map<String, Object> root = Json.object(generator.generateApplicationProxy(main, apps, source, java.util.Arrays.asList(second, null)));
+        List<Map<String, Object>> rules = routingRules(root);
+        equal(List.of("perroute-api-route", "perroute-private-direct", "perroute-custom-block",
+                "perroute-custom-tools", "perroute-custom-tools#route0", "perroute-custom-chrome#route0",
+                "perroute-custom-direct", "perroute-app-proxy", "perroute-app-route-0"),
+                rules.stream().map(rule -> rule.get("ruleTag")).toList());
+
+        Map<String, Object> block = ruleByTag(rules, "perroute-custom-block");
+        equal(List.of("perroute-socks", "perroute-http", "perroute-app-0", "perroute-app-1"), block.get("inboundTag"));
+        equal("block", block.get("outboundTag"));
+        Map<String, Object> toolsMain = ruleByTag(rules, "perroute-custom-tools");
+        equal(List.of("perroute-socks", "perroute-http", "perroute-app-1"), toolsMain.get("inboundTag"));
+        equal("proxy", toolsMain.get("outboundTag"));
+        Map<String, Object> toolsCustom = ruleByTag(rules, "perroute-custom-tools#route0");
+        equal(List.of("perroute-app-0"), toolsCustom.get("inboundTag"));
+        equal("perroute-route-0", toolsCustom.get("outboundTag"));
+        equal(toolsMain.get("domain"), toolsCustom.get("domain"));
+        equal(ruleIndex(rules, "perroute-custom-tools") + 1, ruleIndex(rules, "perroute-custom-tools#route0"));
+        Map<String, Object> chrome = ruleByTag(rules, "perroute-custom-chrome#route0");
+        equal(List.of("perroute-app-0"), chrome.get("inboundTag"));
+        equal("perroute-route-0", chrome.get("outboundTag"));
+        Map<String, Object> direct = ruleByTag(rules, "perroute-custom-direct");
+        equal(List.of("perroute-socks", "perroute-http", "perroute-app-0", "perroute-app-1"), direct.get("inboundTag"));
+        equal("direct", direct.get("outboundTag"));
+        check(rules.stream().noneMatch(rule -> String.valueOf(rule.get("inboundTag")).contains("perroute-check-0")
+                        && String.valueOf(rule.get("ruleTag")).startsWith("perroute-custom-")),
+                "User rules must not apply to the route-check inbound");
+
+        equal("tools", XrayConfigGenerator.customRuleId("perroute-custom-tools#route0"));
+        equal("tools", XrayConfigGenerator.customRuleId("perroute-custom-tools"));
+        equal(null, XrayConfigGenerator.customRuleId("perroute-app-proxy"));
+        equal(java.util.Set.of("block", "tools", "chrome", "direct"), rules.stream()
+                .map(rule -> XrayConfigGenerator.customRuleId(String.valueOf(rule.get("ruleTag"))))
+                .filter(java.util.Objects::nonNull).collect(java.util.stream.Collectors.toSet()));
+        validateWithBundledXray(Json.stringify(root));
+    }
+
+    @SuppressWarnings("unchecked")
+    private static void testProfileWithCustomServers() {
+        ProxyNode profile = embeddedProfile("profile");
+        ProxyNode second = server("second", "second.example");
+        List<String> apps = List.of(CHROME, TELEGRAM);
+        List<RouteRule> source = List.of(
+                new RouteRule("tools", "Work tools", "", RouteRule.MatchType.DOMAIN, "github.com", RouteRule.Action.PROXY, true));
+        XrayConfigGenerator generator = new XrayConfigGenerator();
+
+        String standard = generator.generateApplicationProxy(profile, apps, source);
+        equal(standard, generator.generateApplicationProxy(profile, apps, source, java.util.Arrays.asList(null, null)));
+        Map<String, Object> intranet = routingRules(Json.object(standard)).stream()
+                .filter(rule -> rule.containsKey("domain") && !rule.containsKey("ruleTag")).findFirst().orElseThrow();
+        check(!intranet.containsKey("inboundTag"), "Standard mode must leave the profile's own rules untouched");
+
+        Map<String, Object> root = Json.object(generator.generateApplicationProxy(profile, apps, source, java.util.Arrays.asList(null, second)));
+        List<Object> outbounds = (List<Object>)root.get("outbounds");
+        check(outbounds.stream().map(Map.class::cast).anyMatch(item -> "perroute-route-0".equals(item.get("tag"))),
+                "A custom server must be added next to the profile's outbounds");
+        List<Map<String, Object>> rules = routingRules(root);
+        Map<String, Object> confined = rules.stream()
+                .filter(rule -> rule.containsKey("domain") && !rule.containsKey("ruleTag")).findFirst().orElseThrow();
+        equal(List.of("perroute-socks", "perroute-http", "perroute-app-0"), confined.get("inboundTag"));
+        equal("proxy-a", ruleByTag(rules, "perroute-custom-tools").get("outboundTag"));
+        equal("perroute-route-0", ruleByTag(rules, "perroute-custom-tools#route0").get("outboundTag"));
+        equal("proxy-a", ruleByTag(rules, "perroute-app-proxy").get("outboundTag"));
+        equal(List.of("perroute-app-1", "perroute-check-0"), ruleByTag(rules, "perroute-app-route-0").get("inboundTag"));
+        validateWithBundledXray(Json.stringify(root));
+    }
+
+    /** A profile shaped like a typical provider config: several outbounds, a balancer, an observatory, DNS and rules. */
+    private static ProxyNode balancedProfile(String key, String host) {
+        String json = """
+                {"remarks":"Balanced %s",
+                 "dns":{"servers":["1.1.1.1"]},
+                 "observatory":{"subjectSelector":["proxy-"],"probeUrl":"https://www.gstatic.com/generate_204","probeInterval":"30s"},
+                 "outbounds":[
+                  {"tag":"proxy-one","protocol":"vless","settings":{"vnext":[{"address":"one.%s","port":443,"users":[{"id":"33333333-3333-3333-3333-333333333333","encryption":"none"}]}]}},
+                  {"tag":"proxy-two","protocol":"vless","settings":{"vnext":[{"address":"two.%s","port":443,"users":[{"id":"44444444-4444-4444-4444-444444444444","encryption":"none"}]}]},
+                   "streamSettings":{"network":"tcp","sockopt":{"dialerProxy":"fragment"}}},
+                  {"tag":"fragment","protocol":"freedom","settings":{}},
+                  {"tag":"direct","protocol":"freedom","settings":{}},
+                  {"tag":"block","protocol":"blackhole","settings":{}}],
+                 "routing":{"domainStrategy":"IPIfNonMatch",
+                  "balancers":[{"tag":"balancer","selector":["proxy-"],"strategy":{"type":"leastPing"},"fallbackTag":"proxy-one"}],
+                  "rules":[
+                   {"type":"field","inboundTag":["dns-in"],"outboundTag":"direct"},
+                   {"type":"field","domain":["domain:local.%s"],"outboundTag":"direct"},
+                   {"type":"field","port":"6881-6889","outboundTag":"block"},
+                   {"type":"field","network":"tcp,udp","balancerTag":"balancer"}]}}
+                """.formatted(host, host, host, host);
+        ProxyNode parsed = new SubscriptionParser().parse(json).nodes().get(0);
+        return new ProxyNode(key, parsed.name(), parsed.protocol(), parsed.address(), parsed.port(),
+                parsed.credential(), parsed.options(), parsed.sourceLink());
+    }
+
+    @SuppressWarnings("unchecked")
+    private static void testEmbeddedProfileAsCustomServer() {
+        ProxyNode mainProfile = balancedProfile("main-profile", "main.example");
+        ProxyNode customProfile = balancedProfile("custom-profile", "custom.example");
+        ProxyNode plain = server("plain", "plain.example");
+        List<String> apps = List.of(CHROME, TELEGRAM, DISCORD);
+        List<RouteRule> source = List.of(
+                new RouteRule("tools", "Work tools", "", RouteRule.MatchType.DOMAIN, "github.com", RouteRule.Action.PROXY, true));
+        XrayConfigGenerator generator = new XrayConfigGenerator();
+
+        // Profile as Main, a second profile for Chrome, a plain server for Telegram, Discord follows Main.
+        Map<String, Object> root = Json.object(generator.generateApplicationProxy(mainProfile, apps, source,
+                java.util.Arrays.asList(customProfile, plain, null)));
+        List<String> tags = ((List<Object>)root.get("outbounds")).stream().map(item -> String.valueOf(((Map<String, Object>)item).get("tag"))).toList();
+        check(tags.containsAll(List.of("proxy-one", "proxy-two", "fragment", "direct", "block")), "The main profile keeps its own tags: " + tags);
+        check(tags.containsAll(List.of("perroute-route-0/proxy-one", "perroute-route-0/proxy-two", "perroute-route-0/fragment",
+                "perroute-route-0/direct", "perroute-route-0/block", "perroute-route-1")), "The custom profile lives in its own namespace: " + tags);
+        equal(tags.size(), (int)tags.stream().distinct().count());
+        check(tags.stream().filter(tag -> tag.startsWith("proxy-")).count() == 2,
+                "Nothing of a custom server may match the main profile's balancer selector");
+
+        Map<String, Object> chained = ((List<Object>)root.get("outbounds")).stream().map(item -> (Map<String, Object>)item)
+                .filter(item -> "perroute-route-0/proxy-two".equals(item.get("tag"))).findFirst().orElseThrow();
+        equal("perroute-route-0/fragment", ((Map<String, Object>)((Map<String, Object>)chained.get("streamSettings")).get("sockopt")).get("dialerProxy"));
+        check(String.valueOf(chained).contains("two.custom.example"), "The namespaced outbound must still point at the custom profile's server");
+
+        Map<String, Object> routing = (Map<String, Object>)root.get("routing");
+        List<Map<String, Object>> balancers = ((List<Object>)routing.get("balancers")).stream().map(item -> (Map<String, Object>)item).toList();
+        equal(List.of("balancer", "perroute-route-0/balancer"), balancers.stream().map(item -> item.get("tag")).toList());
+        equal(List.of("perroute-route-0/proxy-"), balancers.get(1).get("selector"));
+        equal("perroute-route-0/proxy-one", balancers.get(1).get("fallbackTag"));
+        equal(List.of("proxy-", "perroute-route-0/proxy-"), ((Map<String, Object>)root.get("observatory")).get("subjectSelector"));
+        equal("https://www.gstatic.com/generate_204", ((Map<String, Object>)root.get("observatory")).get("probeUrl"));
+
+        List<Map<String, Object>> rules = routingRules(root);
+        List<String> mainInbounds = List.of("perroute-socks", "perroute-http", "perroute-app-2");
+        List<String> customInbounds = List.of("perroute-app-0");
+        // Each profile's own rules reach only the applications on that profile.
+        check(rules.stream().anyMatch(rule -> "direct".equals(rule.get("outboundTag")) && mainInbounds.equals(rule.get("inboundTag"))
+                && List.of("domain:local.main.example").equals(rule.get("domain"))), "The main profile's direct rule must stay with Main's apps");
+        check(rules.stream().anyMatch(rule -> "block".equals(rule.get("outboundTag")) && mainInbounds.equals(rule.get("inboundTag"))),
+                "The main profile's block rule must stay with Main's apps");
+        check(rules.stream().anyMatch(rule -> "perroute-route-0/direct".equals(rule.get("outboundTag")) && customInbounds.equals(rule.get("inboundTag"))
+                && List.of("domain:local.custom.example").equals(rule.get("domain"))), "The custom profile's direct rule must follow its app");
+        check(rules.stream().anyMatch(rule -> "perroute-route-0/block".equals(rule.get("outboundTag")) && customInbounds.equals(rule.get("inboundTag"))),
+                "The custom profile's block rule must follow its app");
+        check(rules.stream().noneMatch(rule -> List.of("dns-in").equals(rule.get("inboundTag"))), "Rules tied to the profile's own inbounds are dropped");
+
+        equal("balancer", ruleByTag(rules, "perroute-app-proxy").get("balancerTag"));
+        equal(mainInbounds, ruleByTag(rules, "perroute-app-proxy").get("inboundTag"));
+        Map<String, Object> customApps = ruleByTag(rules, "perroute-app-route-0");
+        equal("perroute-route-0/balancer", customApps.get("balancerTag"));
+        equal(List.of("perroute-app-0", "perroute-check-0"), customApps.get("inboundTag"));
+        equal("perroute-route-1", ruleByTag(rules, "perroute-app-route-1").get("outboundTag"));
+        equal("balancer", ruleByTag(rules, "perroute-custom-tools").get("balancerTag"));
+        equal("perroute-route-0/balancer", ruleByTag(rules, "perroute-custom-tools#route0").get("balancerTag"));
+        equal("perroute-route-1", ruleByTag(rules, "perroute-custom-tools#route1").get("outboundTag"));
+        equal(Map.of("servers", List.of("1.1.1.1")), root.get("dns"));
+        validateWithBundledXray(Json.stringify(root));
+
+        // A plain server as Main with a profile as the custom server.
+        Map<String, Object> mixed = Json.object(generator.generateApplicationProxy(plain, apps, source,
+                java.util.Arrays.asList(customProfile, null, null)));
+        List<Map<String, Object>> mixedRules = routingRules(mixed);
+        equal("proxy", ruleByTag(mixedRules, "perroute-app-proxy").get("outboundTag"));
+        equal("perroute-route-0/balancer", ruleByTag(mixedRules, "perroute-app-route-0").get("balancerTag"));
+        equal(1, ((List<Object>)((Map<String, Object>)mixed.get("routing")).get("balancers")).size());
+        equal(List.of("perroute-route-0/proxy-"), ((Map<String, Object>)mixed.get("observatory")).get("subjectSelector"));
+        check(!mixed.containsKey("dns"), "A custom profile's DNS section is global in Xray and must not be adopted");
+        validateWithBundledXray(Json.stringify(mixed));
+
+        equal(List.of("custom-profile", "plain"), XrayConfigGenerator.customRouteKeys(mainProfile, apps,
+                java.util.Arrays.asList(customProfile, plain, null)));
+        String standard = generator.generateApplicationProxy(mainProfile, apps, source);
+        check(!standard.contains("perroute-route-"), "Without custom servers the profile config is unchanged");
+    }
+
+    private static void testTrafficReport() throws Exception {
+        Path file = Files.createTempDirectory("perroute-report-test").resolve("history.json");
+        TrafficHistoryStore store = new TrafficHistoryStore(file);
+        store.record(CHROME, 4000, 400);
+        store.record(TELEGRAM, 1000, 100);
+        var all = store.report("");
+        equal(5000L, all.todayDownloadBytes());
+        equal(500L, all.monthUploadBytes());
+        equal(2, all.monthApplications().size());
+        equal(CHROME, all.todayApplications().get(0).applicationPath());
+        equal(1, all.days().size());
+        equal(5000L, all.days().get(0).downloadBytes());
+        var one = store.report("c:\\apps\\telegram.exe");
+        equal(1000L, one.todayDownloadBytes());
+        equal(100L, one.monthUploadBytes());
+        equal(1000L, one.days().get(0).downloadBytes());
+        equal(2, one.monthApplications().size());
+        equal(0L, store.report("C:\\Apps\\Unknown.exe").monthDownloadBytes());
+        store.close();
+        Files.deleteIfExists(file);
+        Files.deleteIfExists(file.getParent());
     }
 
     private static void equal(Object expected, Object actual) {

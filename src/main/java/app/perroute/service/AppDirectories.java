@@ -8,6 +8,8 @@ public final class AppDirectories {
     private AppDirectories() {}
 
     public static Path dataDirectory() {
+        String configured = System.getProperty("perroute.data");
+        if (configured != null && !configured.isBlank()) return Path.of(configured).toAbsolutePath().normalize();
         String local = System.getenv("LOCALAPPDATA");
         if (local != null && !local.isBlank()) return Path.of(local, "PerRoute");
         return Path.of(System.getProperty("user.home"), ".perroute");
