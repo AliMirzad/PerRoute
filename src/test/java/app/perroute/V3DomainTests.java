@@ -967,10 +967,17 @@ final class V3DomainTests {
         check(condition.getAsBoolean(), "Timed out waiting for a condition");
     }
 
+    /** Removes a temporary directory. Windows can keep a deleted file pending for a moment, so it retries. */
     static void deleteTree(Path directory) throws IOException {
-        if (!Files.exists(directory)) return;
-        try (var files = Files.walk(directory)) {
-            for (Path file : files.sorted(java.util.Comparator.reverseOrder()).toList()) Files.deleteIfExists(file);
+        for (int attempt = 1; ; attempt++) {
+            if (!Files.exists(directory)) return;
+            try (var files = Files.walk(directory)) {
+                for (Path file : files.sorted(java.util.Comparator.reverseOrder()).toList()) Files.deleteIfExists(file);
+                return;
+            } catch (IOException busy) {
+                if (attempt >= 8) throw busy;
+                try { Thread.sleep(75L * attempt); } catch (InterruptedException e) { Thread.currentThread().interrupt(); throw busy; }
+            }
         }
     }
 

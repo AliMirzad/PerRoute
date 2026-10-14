@@ -81,12 +81,24 @@ public final class AllTests {
         run("Traffic report", AllTests::testTrafficReport);
         V3DomainTests.runAll();
         ControllerTests.runAll();
-        System.out.println("All tests passed (" + (assertions + V3DomainTests.assertions() + ControllerTests.assertions()) + " assertions)");
+        V3ControllerTests.runAll();
+        System.out.println("All tests passed (" + (assertions + V3DomainTests.assertions() + ControllerTests.assertions() + V3ControllerTests.assertions()) + " assertions)");
         System.exit(0);
     }
 
     @FunctionalInterface
     private interface CheckedTest { void run() throws Exception; }
+
+    /** Windows can keep a just-deleted file pending for a moment (for example while it is scanned), so retry. */
+    private static void removeTemporaryDirectory(Path directory) throws Exception {
+        for (int attempt = 1; ; attempt++) {
+            try { V3DomainTests.deleteTree(directory); return; }
+            catch (java.io.IOException busy) {
+                if (attempt >= 5) throw busy;
+                Thread.sleep(100L * attempt);
+            }
+        }
+    }
 
     private static void run(String name, CheckedTest test) throws Exception {
         System.out.println("[test] " + name);
@@ -421,8 +433,7 @@ public final class AllTests {
         equal(RouteRule.Action.DIRECT, restored.routeRules().get(0).action());
         equal("Gaming", restored.profiles().get(0).name());
         equal("saved-profile", restored.activeProfileId());
-        try (var files = Files.list(directory)) { for (Path file : files.toList()) Files.deleteIfExists(file); }
-        Files.deleteIfExists(directory);
+        removeTemporaryDirectory(directory);
     }
 
     private static void testProxyHealthCheck() throws Exception {
@@ -626,8 +637,7 @@ public final class AllTests {
         store.save(restored);
         AppState again = store.load();
         check(!again.advancedRouting(), "Re-saving a migrated state must keep Advanced routing off");
-        try (var files = Files.list(directory)) { for (Path file : files.toList()) Files.deleteIfExists(file); }
-        Files.deleteIfExists(directory);
+        removeTemporaryDirectory(directory);
     }
 
     private static void testAdvancedRoutingPersistence() throws Exception {
@@ -658,8 +668,7 @@ public final class AllTests {
         AppState disabled = store.load();
         check(!disabled.advancedRouting(), "Advanced routing must be saved as off");
         equal(Map.of("c:\\apps\\chrome.exe", "custom"), disabled.appRoutes());
-        try (var files = Files.list(directory)) { for (Path file : files.toList()) Files.deleteIfExists(file); }
-        Files.deleteIfExists(directory);
+        removeTemporaryDirectory(directory);
     }
 
     private static void testRoutePlanner() {

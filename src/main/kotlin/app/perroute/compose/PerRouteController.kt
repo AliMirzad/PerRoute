@@ -197,11 +197,13 @@ class ImportPreview(
 data class ImportOutcome(val preview: ImportPreview? = null, val error: String? = null)
 
 /** Owns the saved state and the connection. Every screen goes through it; it is the only place that decides whether a change is allowed. */
-class PerRouteController(
+class PerRouteController @JvmOverloads constructor(
     private val state: AppState,
     private val store: AppStateStore,
     private val backend: ConnectionBackend = SystemConnectionBackend(),
-    private val preferences: Preferences = Preferences.userNodeForPackage(PerRouteController::class.java)
+    private val preferences: Preferences = Preferences.userNodeForPackage(PerRouteController::class.java),
+    recoveryPolicy: RouteHealthTracker.Policy = RouteHealthTracker.Policy.DEFAULT,
+    private val autoIntervalMillis: Long = AUTO_INTERVAL_MILLIS
 ) : AutoCloseable {
     private val subscriptionService by lazy { SubscriptionService() }
     private val coreInstaller by lazy { CoreInstaller() }
@@ -250,12 +252,14 @@ class PerRouteController(
     private val quality by lazy { QualityService(AppDirectories.dataDirectory().resolve("quality-history.json")) }
     private val autoRouting by lazy { AutoRouting(quality) }
     private val inspector = ConnectionInspector()
-    private val recovery = RouteRecoveryManager(probe = ::probeRoute, onResult = ::onRouteResult)
+    private val recovery = RouteRecoveryManager(probe = ::probeRoute, onResult = ::onRouteResult, policy = recoveryPolicy)
     /** The config the running core corresponds to, including outbounds renamed by runtime changes. */
     @Volatile private var runningConfig: String? = null
     @Volatile private var runningPrepared: PreparedConnection? = null
     @Volatile private var gatewayActive = false
     private val autoLoopGeneration = AtomicLong()
+    /** Failovers are at least one full recovery cycle apart (about a minute by default), which prevents flapping. */
+    private val failoverIntervalMillis = recoveryPolicy.backoffMaxMillis() * 2
 
     init {
         if (state.connectionMode() == ConnectionMode.TUN_COMPATIBILITY) {
@@ -462,9 +466,18 @@ class PerRouteController(
     fun setAutoSwitchMargin(value: Int) = preferences.putInt(PREF_AUTO_MARGIN, value.coerceIn(3, 40))
     fun autoCooldownMinutes(): Int = preferences.getInt(PREF_AUTO_COOLDOWN, 10).coerceIn(1, 120)
     fun setAutoCooldownMinutes(value: Int) = preferences.putInt(PREF_AUTO_COOLDOWN, value.coerceIn(1, 120))
-    private fun autoPolicy() = AutoServerSelector.Policy(autoSwitchMargin(), autoCooldownMinutes() * 60_000L, 60_000L, 0.25)
+    private fun autoPolicy() = AutoServerSelector.Policy(autoSwitchMargin(), autoCooldownMinutes() * 60_000L, failoverIntervalMillis, 0.25)
 
     // ---------------------------------------------------------------- quality
+
+    /** Adds one measured sample to a server's quality history. */
+    fun recordQualitySample(key: String, sample: app.perroute.quality.QualitySample) {
+        when (sample.kind()) {
+            app.perroute.quality.QualitySample.Kind.REACHABILITY -> quality.recordReachability(key, sample.latencyMillis())
+            app.perroute.quality.QualitySample.Kind.TUNNEL -> quality.recordTunnel(key, sample.success(), sample.latencyMillis(), sample.detail())
+            app.perroute.quality.QualitySample.Kind.RECOVERY -> quality.recordRecovery(key)
+        }
+    }
 
     fun qualityScore(key: String): QualityScore = quality.score(key)
     fun qualityScores(): Map<String, QualityScore> = quality.scores(nodes().map { it.key() })
@@ -610,7 +623,7 @@ class PerRouteController(
         if (activeRoutes.none { it.auto }) return
         Thread.ofVirtual().name("perroute-auto-routing").start {
             while (autoLoopGeneration.get() == generation && !closing) {
-                try { Thread.sleep(AUTO_INTERVAL_MILLIS) } catch (_: InterruptedException) { break }
+                try { Thread.sleep(autoIntervalMillis) } catch (_: InterruptedException) { break }
                 if (autoLoopGeneration.get() != generation || !isConnected()) break
                 val health = recovery.snapshot()
                 activeRoutes.filter { it.auto }.forEach { route ->

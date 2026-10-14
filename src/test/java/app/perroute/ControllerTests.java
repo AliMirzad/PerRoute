@@ -579,10 +579,49 @@ final class ControllerTests {
         @Override public void stop() { stopCount++; running = false; }
         @Override public boolean isRunning() { return running; }
         @Override public void stopOrphan() {}
-        @Override public void addLogListener(Consumer<String> listener) {}
+        @Override public void addLogListener(Consumer<String> listener) { logListeners.add(listener); }
         @Override public void addRunningListener(Consumer<Boolean> listener) { runningListeners.add(listener); }
-        @Override public void applyPerApp(List<String> applications) { perAppApplications = List.copyOf(applications); }
-        @Override public void restorePerApp() {}
+        @Override public void applyPerApp(List<String> applications) { perAppApplications = List.copyOf(applications); applyPerAppCount++; }
+        @Override public void restorePerApp() { restorePerAppCount++; }
+
+        final List<Consumer<String>> logListeners = new java.util.concurrent.CopyOnWriteArrayList<>();
+        volatile int applyPerAppCount, restorePerAppCount;
+
+        /** Feeds a line as if the core had written it. */
+        void emit(String line) { logListeners.forEach(listener -> listener.accept(line)); }
+
+        /** The core exits on its own. */
+        void crash() { running = false; runningListeners.forEach(listener -> listener.accept(false)); }
+
+        // Runtime changes: off by default, so version 2 tests see the restart path exactly as before.
+        volatile boolean supportsRuntimeChange;
+        volatile String failRuntimeChange;
+        final List<String[]> runtimeChanges = new java.util.concurrent.CopyOnWriteArrayList<>();
+
+        @Override public void applyRuntimeChange(XrayConfigGenerator.RuntimeChange change, String newTag, String oldTag, String config) {
+            if (!supportsRuntimeChange) throw new UnsupportedOperationException("This backend cannot change a running core");
+            if (failRuntimeChange != null) throw new IllegalStateException(failRuntimeChange);
+            runtimeChanges.add(new String[]{newTag, oldTag, config, change.outbounds(), change.routing()});
+            lastConfig = config;
+        }
+
+        volatile List<app.perroute.gateway.AppGateway.Route> gatewayRoutes = List.of();
+        volatile boolean gatewayRunning;
+        volatile int gatewayStarts, gatewayStops;
+        volatile String failGateway;
+        final Map<String, long[]> gatewayLimits = new java.util.concurrent.ConcurrentHashMap<>();
+        final Map<String, app.perroute.gateway.AppGateway.Counters> gatewayCounters = new java.util.concurrent.ConcurrentHashMap<>();
+
+        @Override public void startGateway(List<app.perroute.gateway.AppGateway.Route> routes) {
+            if (failGateway != null) throw new IllegalStateException(failGateway);
+            gatewayRoutes = List.copyOf(routes);
+            gatewayStarts++;
+            gatewayRunning = true;
+        }
+        @Override public void stopGateway() { gatewayStops++; gatewayRunning = false; }
+        @Override public void setGatewayLimits(String path, long down, long up) { gatewayLimits.put(path.toLowerCase(), new long[]{down, up}); }
+        @Override public Map<String, app.perroute.gateway.AppGateway.Counters> gatewayCounters() { return Map.copyOf(gatewayCounters); }
+        @Override public boolean gatewayRunning() { return gatewayRunning; }
         @Override public void stopPerAppSidecar() {}
         @Override public void applySystemProxy() {}
         @Override public void restoreSystemProxy() {}
