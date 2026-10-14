@@ -12,8 +12,8 @@ import java.util.Map;
 import java.util.Set;
 
 public final class AppProxyLauncher {
-    public static final int SOCKS_PORT = 17890;
-    public static final int HTTP_PORT = 17891;
+    public static final int SOCKS_PORT = 17890 + PortOffset.VALUE;
+    public static final int HTTP_PORT = 17891 + PortOffset.VALUE;
 
     public enum Adapter { CHROMIUM, JETBRAINS, ENVIRONMENT, UNSUPPORTED }
 

@@ -124,6 +124,60 @@ public final class XrayProcessManager implements AutoCloseable {
         fireState(false);
     }
 
+    /**
+     * Moves one route of the running core to a new outbound without restarting it: the new outbound is added,
+     * all routing rules are swapped in one call, and only then is the old outbound removed. Until the swap the
+     * old route keeps working; after it, new connections use the new outbound. If adding or swapping fails,
+     * whatever was added is removed again and the running core is left exactly as it was.
+     *
+     * @param config the complete config the core now corresponds to; it replaces current-config.json
+     */
+    public synchronized void applyRuntimeChange(String outbounds, String routing, String newTag, String oldTag, String config)
+            throws IOException, InterruptedException {
+        if (!isRunning()) throw new IOException("The connection core is not running");
+        Path data = AppDirectories.dataDirectory();
+        Files.createDirectories(data);
+        // These files hold server credentials, exactly like current-config.json, and are removed right away.
+        Path outboundFile = data.resolve("runtime-outbound.json");
+        Path routingFile = data.resolve("runtime-routing.json");
+        try {
+            Files.writeString(outboundFile, outbounds, StandardCharsets.UTF_8);
+            Files.writeString(routingFile, routing, StandardCharsets.UTF_8);
+            api("ado", outboundFile.toString());
+            try {
+                api("adrules", routingFile.toString());
+            } catch (IOException swapFailed) {
+                try { api("rmo", newTag); } catch (IOException ignored) { }
+                throw swapFailed;
+            }
+            try { api("rmo", oldTag); }
+            catch (IOException stale) { fireLog("The previous outbound " + oldTag + " could not be removed and stays idle: " + stale.getMessage()); }
+            Files.writeString(data.resolve("current-config.json"), config, StandardCharsets.UTF_8);
+        } finally {
+            Files.deleteIfExists(outboundFile);
+            Files.deleteIfExists(routingFile);
+        }
+    }
+
+    private String api(String command, String argument) throws IOException, InterruptedException {
+        Path coreDir = AppDirectories.coreDirectory();
+        Process process = new ProcessBuilder(coreDir.resolve("xray.exe").toString(), "api", command,
+                "--server=127.0.0.1:" + XrayConfigGenerator.STATS_API_PORT, argument)
+                .directory(coreDir.toFile()).redirectErrorStream(true).start();
+        ByteArrayOutputStream output = new ByteArrayOutputStream();
+        Thread drain = Thread.ofVirtual().start(() -> {
+            try { process.getInputStream().transferTo(output); } catch (IOException ignored) { }
+        });
+        if (!process.waitFor(8, TimeUnit.SECONDS)) {
+            process.destroyForcibly();
+            throw new IOException("Xray did not answer the " + command + " request in time");
+        }
+        drain.join(1_000);
+        String text = output.toString(StandardCharsets.UTF_8).strip();
+        if (process.exitValue() != 0) throw new IOException("Xray refused " + command + ": " + (text.isBlank() ? "exit " + process.exitValue() : text));
+        return text;
+    }
+
     public void stopOrphan() {
         String executable = AppDirectories.coreDirectory().resolve("xray.exe").toString();
         java.util.Set<Long> own = ProcessHandle.current().descendants()
