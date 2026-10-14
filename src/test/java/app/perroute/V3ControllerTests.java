@@ -261,6 +261,7 @@ final class V3ControllerTests {
         f.backend.supportsRuntimeChange = true;
         check(f.controller.connect().getOk(), "Connect");
         int starts = f.backend.startCount;
+        check(f.backend.lastConfig.contains("HandlerService") && f.backend.lastConfig.contains("RoutingService"), "Route monitoring needs the control API");
         check(f.controller.switchNode("third").getOk(), "Switch");
         equal(starts, f.backend.startCount);
         equal(1, f.backend.runtimeChanges.size());
@@ -368,6 +369,8 @@ final class V3ControllerTests {
         f.controller.setBandwidthPolicy(f.telegram, new BandwidthPolicy(8_000_000, 0));
         check(f.controller.connect().getOk(), "Connect");
         equal(0, f.backend.gatewayStarts);
+        check(!f.backend.lastConfig.contains("HandlerService") && !f.backend.lastConfig.contains("RoutingService"),
+                "Without the features that need it, the core keeps the read-only statistics API of version 2");
         Map<String, Object> config = Json.object(f.backend.lastConfig);
         Object inbound = ((List<?>) config.get("inbounds")).stream().map(Map.class::cast)
                 .filter(map -> "perroute-app-0".equals(map.get("tag"))).findFirst().orElseThrow().get("port");

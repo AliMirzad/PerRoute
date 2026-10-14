@@ -27,15 +27,22 @@ public final class XrayConfigGenerator {
     public static final String MAIN_OUTBOUND_TAG = "proxy";
 
     private final int appPortBase;
+    private final boolean runtimeControl;
 
-    public XrayConfigGenerator() { this(PER_APP_PORT_BASE); }
+    public XrayConfigGenerator() { this(PER_APP_PORT_BASE, false); }
 
-    /** @param appPortBase first loopback port of the per-app inbounds: {@link #PER_APP_PORT_BASE} or {@link #GATEWAY_UPSTREAM_PORT_BASE} */
-    public XrayConfigGenerator(int appPortBase) {
+    public XrayConfigGenerator(int appPortBase) { this(appPortBase, false); }
+
+    /**
+     * @param appPortBase    first loopback port of the per-app inbounds: {@link #PER_APP_PORT_BASE} or {@link #GATEWAY_UPSTREAM_PORT_BASE}
+     * @param runtimeControl also enable the core's handler and routing API, which in-place route changes need
+     */
+    public XrayConfigGenerator(int appPortBase, boolean runtimeControl) {
         if (appPortBase != PER_APP_PORT_BASE && appPortBase != GATEWAY_UPSTREAM_PORT_BASE) {
             throw new IllegalArgumentException("Unsupported per-app port base " + appPortBase);
         }
         this.appPortBase = appPortBase;
+        this.runtimeControl = runtimeControl;
     }
 
     public static int gatewayUpstreamPort(int index) {
@@ -84,7 +91,7 @@ public final class XrayConfigGenerator {
         rules.addAll(customProfileRules(customs, groups));
         rules.addAll(customRules(apps, routeRules, "direct", groups, "block"));
         rules.addAll(applicationRules(groups));
-        enableStats(root, inbounds, rules);
+        enableStats(root, inbounds, rules, runtimeControl);
         Map<String, Object> routing = map();
         routing.put("domainStrategy", "IPIfNonMatch");
         routing.put("rules", rules);
@@ -504,7 +511,7 @@ public final class XrayConfigGenerator {
         return rules;
     }
 
-    private static void enableStats(Map<String, Object> root, List<Object> inbounds, List<Object> rules) {
+    private static void enableStats(Map<String, Object> root, List<Object> inbounds, List<Object> rules, boolean runtimeControl) {
         Map<String, Object> apiInbound = map();
         apiInbound.put("listen", "127.0.0.1");
         apiInbound.put("port", STATS_API_PORT);
@@ -515,8 +522,10 @@ public final class XrayConfigGenerator {
         rules.add(0, Map.of("type", "field", "inboundTag", List.of("perroute-api"),
                 "outboundTag", "api", "ruleTag", "perroute-api-route"));
         // HandlerService and RoutingService let one route's outbound be replaced while the core keeps running,
-        // so a change to one route does not restart, and interrupt, every other route.
-        root.put("api", Map.of("tag", "api", "services", List.of("StatsService", "HandlerService", "RoutingService")));
+        // so a change to one route does not restart, and interrupt, every other route. They can change routing,
+        // and Xray's API has no authentication, so they are only enabled when a feature needs them.
+        root.put("api", Map.of("tag", "api", "services", runtimeControl
+                ? List.of("StatsService", "HandlerService", "RoutingService") : List.of("StatsService")));
         root.put("stats", Map.of());
         root.put("policy", Map.of("system", Map.of(
                 "statsInboundUplink", true,
@@ -677,7 +686,7 @@ public final class XrayConfigGenerator {
         rules.addAll(customProfileRules(customs, groups));
         rules.addAll(customRules(applicationPaths, routeRules, directTag, groups, blockTag));
         rules.addAll(applicationRules(groups));
-        enableStats(root, inbounds, rules);
+        enableStats(root, inbounds, rules, runtimeControl);
         routing.put("domainStrategy", routing.getOrDefault("domainStrategy", "IPIfNonMatch"));
         routing.put("rules", rules);
         mergeCustomSections(root, routing, customs);

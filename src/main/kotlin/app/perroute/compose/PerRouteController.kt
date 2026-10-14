@@ -779,7 +779,7 @@ class PerRouteController @JvmOverloads constructor(
     private fun applyRouteChange(routeId: String, next: PreparedConnection): Boolean {
         val current = runningPrepared ?: return false
         val config = runningConfig ?: return false
-        if (!connectionReady || current.tun || next.tun || current.gateway != next.gateway) return false
+        if (!connectionReady || current.tun || next.tun || current.gateway != next.gateway || !current.runtimeControl) return false
         if (current.routes.size != next.routes.size || current.applications != next.applications) return false
         for ((before, after) in current.routes.zip(next.routes)) {
             if (before.main != after.main || before.auto != after.auto || before.ruleTag != after.ruleTag || before.applications != after.applications) return false
@@ -1786,7 +1786,8 @@ class PerRouteController @JvmOverloads constructor(
         val gateway: Boolean = false,
         val applications: List<String> = emptyList(),
         val autoChoices: Map<String, String> = emptyMap(),
-        val plan: RoutePlanner.Plan
+        val plan: RoutePlanner.Plan,
+        val runtimeControl: Boolean = false
     )
 
     private fun missingRouteMessage(plan: RoutePlanner.Plan): String {
@@ -1817,7 +1818,9 @@ class PerRouteController @JvmOverloads constructor(
         val tun = mode == ConnectionMode.TUN_COMPATIBILITY
         val perApp = mode == ConnectionMode.NATIVE_PER_APP
         val gateway = perApp && trafficGateway()
-        val generator = if (gateway) XrayConfigGenerator(XrayConfigGenerator.GATEWAY_UPSTREAM_PORT_BASE) else configGenerator
+        // The core's control API is only enabled for features that change routes in place.
+        val runtimeControl = !tun && (routeMonitoring() || hasAutoApps())
+        val generator = XrayConfigGenerator(if (gateway) XrayConfigGenerator.GATEWAY_UPSTREAM_PORT_BASE else XrayConfigGenerator.PER_APP_PORT_BASE, runtimeControl)
         val configNodes = if (!perApp) emptyList() else plan.applicationNodes().mapIndexed { index, node ->
             if (node != null && plan.routeFor(apps[index])?.auto() == true) autoSlot(apps[index], node) else node
         }
@@ -1831,7 +1834,7 @@ class PerRouteController @JvmOverloads constructor(
                 id = route.id(), auto = route.auto(),
                 ruleTag = XrayConfigGenerator.applicationRouteRuleTag(if (route.main()) -1 else index))
         }
-        return PreparedConnection(config, tun, routes, gateway, apps, if (perApp) autoChoices else emptyMap(), plan)
+        return PreparedConnection(config, tun, routes, gateway, apps, if (perApp) autoChoices else emptyMap(), plan, runtimeControl)
     }
 
     private fun autoSlotKey(application: String) = "auto-slot:" + AppRoutes.normalize(application)
