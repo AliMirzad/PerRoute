@@ -405,12 +405,14 @@ public final class AppGateway implements AutoCloseable {
         }
     }
 
-    /** A SOCKS5 address as it appeared on the wire, plus its readable form. */
+    /**
+     * A SOCKS5 address as it appeared on the wire after its type byte (which belongs to the 4-byte header that
+     * precedes it), plus its readable form.
+     */
     record Address(byte[] raw, String host, int port, InetAddress address) {}
 
     static Address readAddress(InputStream in, byte type) throws IOException {
         ByteArrayOutputStream raw = new ByteArrayOutputStream();
-        raw.write(type);
         String host;
         InetAddress address = null;
         switch (type & 0xff) {

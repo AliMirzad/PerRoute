@@ -79,8 +79,9 @@ public final class AllTests {
         run("Embedded profile with custom servers", AllTests::testProfileWithCustomServers);
         run("Embedded profile as a custom server", AllTests::testEmbeddedProfileAsCustomServer);
         run("Traffic report", AllTests::testTrafficReport);
+        V3DomainTests.runAll();
         ControllerTests.runAll();
-        System.out.println("All tests passed (" + (assertions + ControllerTests.assertions()) + " assertions)");
+        System.out.println("All tests passed (" + (assertions + V3DomainTests.assertions() + ControllerTests.assertions()) + " assertions)");
         System.exit(0);
     }
 

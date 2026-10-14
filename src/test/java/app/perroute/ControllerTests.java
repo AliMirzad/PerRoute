@@ -191,8 +191,16 @@ final class ControllerTests {
             backend.release();
             controller.close();
             System.clearProperty("perroute.data");
-            try (var files = Files.walk(directory)) {
-                for (Path file : files.sorted(Comparator.reverseOrder()).toList()) Files.deleteIfExists(file);
+            // Background writers (the state saver, the history store) can still create a file while the
+            // folder is being removed, so a few attempts are made before giving up.
+            for (int attempt = 1; ; attempt++) {
+                try (var files = Files.walk(directory)) {
+                    for (Path file : files.sorted(Comparator.reverseOrder()).toList()) Files.deleteIfExists(file);
+                    return;
+                } catch (IOException busy) {
+                    if (attempt >= 5) throw busy;
+                    try { Thread.sleep(100L * attempt); } catch (InterruptedException e) { Thread.currentThread().interrupt(); throw busy; }
+                }
             }
         }
     }
