@@ -78,7 +78,7 @@ import java.nio.file.Path
 private enum class AppListSource { INSTALLED, RUNNING }
 /** An executable offered for selection, with the name shown for it. */
 private data class AppChoice(val name: String, val path: String)
-/** The order the mockups use for the three modes. */
+/** Display order for the three routing modes. */
 private val RouteModeOrder = listOf(AppRouteMode.AUTO, AppRouteMode.MAIN, AppRouteMode.MANUAL)
 
 /** How one application is routed in the draft: by the main server, a custom one, Auto, or a server that is gone. */
