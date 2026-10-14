@@ -23,6 +23,7 @@ import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.rounded.AltRoute
 import androidx.compose.material.icons.rounded.Article
+import androidx.compose.material.icons.rounded.Backup
 import androidx.compose.material.icons.rounded.ChevronRight
 import androidx.compose.material.icons.rounded.ContentCopy
 import androidx.compose.material.icons.rounded.DarkMode
@@ -81,9 +82,11 @@ import java.awt.EventQueue
 internal enum class SettingsCategory(val label: String, val icon: ImageVector) {
     General("General", Icons.Rounded.Tune),
     Connection("Connection", Icons.Rounded.Wifi),
+    Routing("Routing", Icons.Rounded.AltRoute),
     Automation("Automation", Icons.Rounded.Sync),
     Updates("Updates", Icons.Rounded.SystemUpdateAlt),
     Components("Components", Icons.Rounded.Inventory2),
+    Backup("Backup & Restore", Icons.Rounded.Backup),
     ActivityLog("Activity log", Icons.Rounded.Article)
 }
 
@@ -115,6 +118,8 @@ internal fun SettingsScreen(shell: Shell) {
                     when (shell.settingsCategory) {
                         SettingsCategory.General -> GeneralSettings(shell)
                         SettingsCategory.Connection -> ConnectionSettings(shell)
+                        SettingsCategory.Routing -> RoutingSettings(shell)
+                        SettingsCategory.Backup -> BackupSettings(shell)
                         SettingsCategory.Automation -> AutomationSettings(shell)
                         SettingsCategory.Updates -> UpdateSettings(shell)
                         SettingsCategory.Components -> ComponentSettings(shell)
@@ -128,7 +133,7 @@ internal fun SettingsScreen(shell: Shell) {
 
 /** The scrolling body of one settings group. */
 @Composable
-private fun SettingsPage(title: String, content: @Composable () -> Unit) {
+internal fun SettingsPage(title: String, content: @Composable () -> Unit) {
     Column(Modifier.fillMaxSize().verticalScroll(rememberScrollState())) {
         Text(title, color = White, fontSize = 14.sp, fontWeight = FontWeight.Bold)
         Spacer(Modifier.height(9.dp))
@@ -319,7 +324,7 @@ private fun AutomationSettings(shell: Shell) {
 
 /** An automation option with its explanation and switch. */
 @Composable
-private fun FeatureToggleRow(icon: ImageVector, title: String, detail: String, checked: Boolean, onToggle: (Boolean) -> Unit) {
+internal fun FeatureToggleRow(icon: ImageVector, title: String, detail: String, checked: Boolean, onToggle: (Boolean) -> Unit) {
     Row(
         Modifier.fillMaxWidth().clip(RowShape).background(NeutralOverlay.copy(.035f)).border(1.dp, NeutralOverlay.copy(.06f), RowShape).padding(11.dp),
         verticalAlignment = Alignment.CenterVertically

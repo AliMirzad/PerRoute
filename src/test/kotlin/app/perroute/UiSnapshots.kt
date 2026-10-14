@@ -84,6 +84,8 @@ private class MemoryPreferences : AbstractPreferences(null, "") {
 private class DemoBackend(private val perAppDriver: Boolean = true) : ConnectionBackend {
     @Volatile private var running = false
     @Volatile private var startedAt = 0L
+    @Volatile private var gatewayOn = false
+    private val logListeners = java.util.concurrent.CopyOnWriteArrayList<Consumer<String>>()
     override fun coreReady() = true
     override fun perAppReady() = perAppDriver
     override fun elevated() = false
@@ -92,7 +94,16 @@ private class DemoBackend(private val perAppDriver: Boolean = true) : Connection
     override fun stop() { running = false }
     override fun isRunning() = running
     override fun stopOrphan() {}
-    override fun addLogListener(listener: Consumer<String>) {}
+    override fun addLogListener(listener: Consumer<String>) { logListeners += listener }
+    fun emit(line: String) = logListeners.forEach { it.accept(line) }
+    override fun startGateway(routes: List<app.perroute.gateway.AppGateway.Route>) { gatewayOn = true }
+    override fun stopGateway() { gatewayOn = false }
+    override fun gatewayRunning() = gatewayOn
+    override fun gatewayCounters(): Map<String, app.perroute.gateway.AppGateway.Counters> {
+        val seconds = (System.currentTimeMillis() - startedAt) / 1_000.0
+        return listOf(CHROME to (1_550_000L to 390_000L), TELEGRAM to (1_230_000L to 150_000L), DISCORD to (0L to 0L), SPOTIFY to (40_000L to 12_000L))
+            .associate { (path, rates) -> path to app.perroute.gateway.AppGateway.Counters((rates.first * seconds).toLong(), (rates.second * seconds).toLong(), 3, 0) }
+    }
     override fun addRunningListener(listener: Consumer<Boolean>) {}
     override fun applyPerApp(applications: List<String>) {}
     override fun restorePerApp() {}
@@ -140,8 +151,49 @@ private class Demo(
     val missing: Boolean = false,
     val empty: Boolean = false,
     val mode: ConnectionMode = ConnectionMode.NATIVE_PER_APP,
-    val dark: Boolean = true
+    val dark: Boolean = true,
+    val auto: Boolean = false,
+    val gateway: Boolean = true
 )
+
+/** Quality history for the demonstration servers: excellent, good, fair, unavailable, stale and unmeasured. */
+private fun seedQuality(controller: PerRouteController) {
+    val now = System.currentTimeMillis()
+    fun samples(key: String, reach: Long, tunnel: Long, count: Int = 6, ageMinutes: Long = 0, failures: Int = 0) {
+        for (i in count downTo 1) {
+            val at = now - ageMinutes * 60_000L - i * 90_000L
+            controller.recordQualitySample(key, app.perroute.quality.QualitySample.reachability(at, reach + i % 3))
+            controller.recordQualitySample(key, app.perroute.quality.QualitySample.tunnel(at + 500, i <= count - failures, tunnel + i * 4, ""))
+        }
+    }
+    samples("de-1", 18, 95)
+    samples("de-2", 60, 380, failures = 1)
+    samples("nl-1", 170, 900, failures = 2)
+    samples("us-3", 110, 450, ageMinutes = 180)
+    (1..3).forEach { controller.recordQualitySample("uk-1", app.perroute.quality.QualitySample.tunnel(now - it * 60_000L, false, -1, "timeout")) }
+}
+
+/** Lines the core would log for a few connections, so the inspector has something to show. */
+private fun emitDemoConnections(backend: DemoBackend) {
+    val lines = listOf(
+        "[Info] [11] proxy/socks: TCP Connect request to tcp:142.250.185.78:443", "[Info] [11] app/dispatcher: sniffed domain: www.youtube.com",
+        "[Info] [11] app/dispatcher: Hit route rule: [perroute-custom-r2#route0] so taking detour [perroute-route-0] for [tcp:www.youtube.com:443]",
+        "from tcp:127.0.0.1:61001 accepted tcp:142.250.185.78:443 [perroute-app-0 -> perroute-route-0]",
+        "[Info] [12] proxy/socks: TCP Connect request to tcp:149.154.167.220:443",
+        "[Info] [12] app/dispatcher: taking detour [perroute-route-1] for [tcp:149.154.167.220:443]",
+        "from tcp:127.0.0.1:61002 accepted tcp:149.154.167.220:443 [perroute-app-1 -> perroute-route-1]",
+        "[Info] [13] proxy/socks: TCP Connect request to tcp:162.159.135.232:443", "[Info] [13] app/dispatcher: sniffed domain: discord.com",
+        "[Info] [13] app/dispatcher: taking detour [proxy] for [tcp:discord.com:443]",
+        "from tcp:127.0.0.1:61003 accepted tcp:162.159.135.232:443 [perroute-app-2 -> proxy]",
+        "[Info] [14] proxy/socks: TCP Connect request to tcp:185.143.233.120:443", "[Info] [14] app/dispatcher: sniffed domain: bank.example.ir",
+        "[Info] [14] app/dispatcher: Hit route rule: [perroute-custom-r1] so taking detour [direct] for [tcp:bank.example.ir:443]",
+        "from tcp:127.0.0.1:61004 accepted tcp:185.143.233.120:443 [perroute-app-0 -> direct]",
+        "[Info] [15] proxy/socks: TCP Connect request to tcp:35.186.224.25:443", "[Info] [15] app/dispatcher: sniffed domain: tracker.ads.example",
+        "[Info] [15] app/dispatcher: Hit route rule: [perroute-custom-r3] so taking detour [block] for [tcp:tracker.ads.example:443]",
+        "from tcp:127.0.0.1:61005 accepted tcp:35.186.224.25:443 [perroute-app-0 -> block]"
+    )
+    lines.forEach { backend.emit("2026/10/14 16:42:10.000000 $it") }
+}
 
 private val listeners = List(3) { ServerSocket(0, 16, InetAddress.getLoopbackAddress()) }.onEach { server ->
     Thread.ofPlatform().daemon().start { while (true) runCatching { server.accept().close() } }
@@ -171,6 +223,12 @@ private fun demoState(demo: Demo): AppState {
     state.appRoutes()[AppRoutes.normalize(CHROME)] = "nl-1"
     state.appRoutes()[AppRoutes.normalize(TELEGRAM)] = if (demo.missing) "jp-4" else "de-2"
     state.appRouteLabels().putAll(mapOf("nl-1" to "Netherlands NL-01", "de-2" to "Germany DE-02", "jp-4" to "Japan JP-04"))
+    if (demo.auto) {
+        state.appRoutes().remove(AppRoutes.normalize(TELEGRAM))
+        state.autoApps().add(AppRoutes.normalize(TELEGRAM))
+    }
+    state.bandwidthPolicies()[AppRoutes.normalize(CHROME)] = app.perroute.model.BandwidthPolicy(100_000_000, 20_000_000)
+    state.bandwidthPolicies()[AppRoutes.normalize(TELEGRAM)] = app.perroute.model.BandwidthPolicy(10_000_000, 5_000_000)
     val rules = listOf(
         RouteRule("r1", "Local banking", "", RouteRule.MatchType.DOMAIN, "bank.example.ir", RouteRule.Action.DIRECT, true),
         RouteRule("r2", "Work tools", "", RouteRule.MatchType.DOMAIN, "github.com, slack.com", RouteRule.Action.PROXY, true),
@@ -217,13 +275,18 @@ private fun render(scene: Scene, output: Path) {
     seedHistory(data)
     val preferences = MemoryPreferences().apply {
         putBoolean("darkTheme", scene.demo.dark); putBoolean("autoSpeedTest", false); putBoolean("autoFailover", false); putBoolean("autoReconnect", false)
+        putBoolean("v3.initialized", true); putBoolean("v3.trafficGateway", scene.demo.gateway); putBoolean("v3.routeMonitoring", true)
+        putBoolean("v3.qualityBackground", true)
     }
-    val controller = PerRouteController(demoState(scene.demo), AppStateStore(data.resolve("state.bin")), DemoBackend(), preferences)
+    val backend = DemoBackend()
+    val controller = PerRouteController(demoState(scene.demo), AppStateStore(data.resolve("state.bin")), backend, preferences)
+    if (!scene.demo.empty) seedQuality(controller)
     ActivePalette = if (scene.demo.dark) DarkPalette else LightPalette
     if (scene.demo.connected) {
         val result = controller.connect()
         check(result.ok) { "${scene.name}: ${result.message}" }
         Thread.sleep(2_600)
+        emitDemoConnections(backend)
     }
     if (scene.runChecks) controller.checkRoutes()
     val dispatcher = QueueDispatcher()
@@ -290,7 +353,29 @@ fun main(args: Array<String>) {
                 "trojan://secret@sg1.example.net:443?security=tls#Singapore SG-02\nwireguard://not-supported\nvless://broken")
         shell.showDialog { AddServersDialog(shell, ImportMethod.PASTE, outcome) { shell.closeDialog() } }
     }
+    val autoDraft = Demo(advanced = true, auto = true)
+    val autoOn = Demo(advanced = true, connected = true, auto = true)
+    val restorePreview: (Shell) -> Unit = { shell ->
+        val file = Files.createTempFile("perroute-demo-", ".prb")
+        shell.controller.exportBackup(file, app.perroute.backup.BackupService.Section.entries.toSet(), null)
+        val request = shell.controller.openBackup(file, null).first!!
+        shell.showDialog { app.perroute.compose.RestorePreviewDialog(shell, request) {} }
+    }
     val scenes = listOf(
+        Scene("100-servers-quality", advanced, tab = Tab.Servers, settleMillis = 2_500),
+        Scene("101-servers-quality-expanded", advanced, tab = Tab.Servers, settleMillis = 2_500, clicks = listOf(876 to 361)),
+        Scene("102-apps-auto", autoDraft, tab = Tab.Apps, settleMillis = 3_500),
+        Scene("103-apps-auto-focused", autoDraft, tab = Tab.Apps, settleMillis = 3_500, prepare = { it.draft.focused = TELEGRAM }),
+        Scene("104-connection-recovery", autoOn, settleMillis = 1_500),
+        Scene("105-diagnostics-inspector", Demo(advanced = true, connected = true, auto = true, gateway = false), tab = Tab.Diagnostics,
+            prepare = { it.diagnosticsTab = DiagnosticsTab.Inspector }),
+        Scene("106-traffic-bandwidth", autoOn, tab = Tab.Traffic, settleMillis = 3_000),
+        Scene("107-settings-routing", standard, tab = Tab.Settings, prepare = { it.settingsCategory = SettingsCategory.Routing }),
+        Scene("108-settings-backup", standard, tab = Tab.Settings, prepare = { it.settingsCategory = SettingsCategory.Backup }),
+        Scene("109-restore-preview", advanced, tab = Tab.Settings, prepare = { it.settingsCategory = SettingsCategory.Backup; restorePreview(it) }),
+        Scene("110-light-apps-auto", Demo(advanced = true, auto = true, dark = false), tab = Tab.Apps, settleMillis = 3_500, prepare = { it.draft.focused = TELEGRAM }),
+        Scene("111-light-connection-recovery", Demo(advanced = true, connected = true, auto = true, dark = false), settleMillis = 1_500),
+        Scene("112-narrow-apps-auto", autoDraft, 820, 620, tab = Tab.Apps, settleMillis = 3_500, prepare = { it.draft.focused = TELEGRAM }),
         Scene("01-connection-standard-ready", standard),
         Scene("02-connection-standard-connected", standardOn),
         Scene("03-connection-advanced-connected", advancedOn),

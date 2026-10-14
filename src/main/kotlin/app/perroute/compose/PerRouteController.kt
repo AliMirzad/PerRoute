@@ -539,6 +539,20 @@ class PerRouteController @JvmOverloads constructor(
         return AutoDecisionView(decision, System.currentTimeMillis(), applied = false)
     }
 
+    /**
+     * What Auto would choose for an application with [pool], from the current scores and its saved choice.
+     * Used by the Apps screen before anything is saved; nothing is stored.
+     */
+    fun previewAutoDecision(path: String, pool: AutoCandidatePool): AutoServerSelector.Decision {
+        val key = AppRoutes.normalize(path)
+        if (isConnected()) autoRouting.last(key)?.takeIf { pool == autoPool(path) }?.let { return it.decision }
+        return synchronized(state) {
+            autoRouting.decide(pool, state.autoSelections()[key], state.nodes().toList(), HashSet(state.favoriteNodeKeys()),
+                LinkedHashMap(state.nodeTags()), state.nodes().firstOrNull { it.key() == state.selectedNodeKey() } ?: state.nodes().firstOrNull(),
+                failingNodeKeys(), autoPolicy())
+        }
+    }
+
     private fun decideAuto(key: String, failing: Set<String>): AutoServerSelector.Decision = synchronized(state) {
         autoRouting.decide(
             AutoCandidatePool.decode(state.autoPools()[key]), state.autoSelections()[key], state.nodes().toList(),
@@ -812,7 +826,7 @@ class PerRouteController @JvmOverloads constructor(
         val config = runningConfig.orEmpty()
         val targets = runCatching { XrayConfigGenerator.applicationRouteTargets(config) }.getOrDefault(emptyMap())
         val routeTags = activeRoutes.mapNotNull { route -> targets[route.ruleTag]?.let { route.id to it } }.toMap()
-        val context = InspectorContext(prepared.applications, activeRoutes, routeTags, rules(), prepared.plan, routeChecks) { cleanName(it.name()) }
+        val context = InspectorContext(prepared.applications, activeRoutes, routeTags, rules(), prepared.plan, routeChecks) { serverName(it) }
         return InspectorView.rows(inspector.snapshot(System.currentTimeMillis()), context)
     }
 

@@ -21,12 +21,14 @@ import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.rounded.AllInclusive
 import androidx.compose.material.icons.rounded.Apps
 import androidx.compose.material.icons.rounded.ArrowDownward
 import androidx.compose.material.icons.rounded.ArrowUpward
 import androidx.compose.material.icons.rounded.BarChart
 import androidx.compose.material.icons.rounded.DeleteSweep
 import androidx.compose.material.icons.rounded.MoreVert
+import androidx.compose.material.icons.rounded.Speed
 import androidx.compose.material3.Icon
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
@@ -84,7 +86,7 @@ internal fun TrafficScreen(shell: Shell) {
     val knownApps = (report.monthApplications().map { it.applicationPath() } + shell.apps).distinctBy { it.lowercase() }
 
     ScreenPanel(
-        "Traffic & usage", "Stored on this device. Destination history is never recorded.",
+        "Traffic & bandwidth", "Live traffic, usage and limits per app. Stored on this device; destinations are never recorded.",
         actions = {
             MenuIcon(Icons.Rounded.MoreVert, "More traffic actions", listOf(
                 MenuEntry("Clear traffic history…", Icons.Rounded.DeleteSweep, danger = true) {
@@ -129,6 +131,10 @@ internal fun TrafficScreen(shell: Shell) {
             Spacer(Modifier.height(9.dp))
             LiveSpeedChart(points, shell.connected)
             Spacer(Modifier.height(9.dp))
+            if (shell.apps.isNotEmpty()) {
+                BandwidthTable(shell)
+                Spacer(Modifier.height(9.dp))
+            }
             Column(Modifier.fillMaxWidth().clip(RowShape).background(NeutralOverlay.copy(.035f)).border(1.dp, NeutralOverlay.copy(.06f), RowShape).padding(12.dp)) {
                 when (view) {
                     TrafficView.Today -> UsageList("Today by application", report.todayApplications(), appFilter,
@@ -141,6 +147,122 @@ internal fun TrafficScreen(shell: Shell) {
             Spacer(Modifier.height(7.dp))
             Text("Live speed includes all active proxy routes. Only byte counts are kept; there is no per-server or per-destination history.",
                 color = Muted, fontSize = 10.sp, lineHeight = 14.sp)
+        }
+    }
+}
+
+/** A rate in bits per second, the unit limits are set in. */
+internal fun formatBits(bytesPerSecond: Long): String {
+    val bits = bytesPerSecond * 8.0
+    return when {
+        bits >= 1_000_000_000 -> "%.1f Gbps".format(java.util.Locale.ROOT, bits / 1_000_000_000)
+        bits >= 1_000_000 -> "%.1f Mbps".format(java.util.Locale.ROOT, bits / 1_000_000)
+        bits >= 1_000 -> "%.0f Kbps".format(java.util.Locale.ROOT, bits / 1_000)
+        else -> "%.0f bps".format(java.util.Locale.ROOT, bits)
+    }
+}
+
+/**
+ * Every selected app with its live rate, session totals, limits, how much of each limit it uses and whether the
+ * limit is being enforced right now. Limits are edited here or in Apps and apply at once while connected.
+ */
+@Composable
+private fun BandwidthTable(shell: Shell) {
+    val controller = shell.controller
+    val statuses = remember(shell.traffic, shell.connected, shell.apps.toList()) { shell.apps.associateWith { controller.bandwidthStatus(it) } }
+    fun edit(path: String) = shell.showDialog {
+        DialogCard("Bandwidth limit for ${appName(path)}", "The limit is the app's total across all of its connections, enforced by the traffic gateway.",
+            shell::closeDialog, width = 420.dp, actions = { PrimaryButton("Done") { shell.closeDialog() } }) {
+            BandwidthEditor(shell, path)
+        }
+    }
+    Column(Modifier.fillMaxWidth().clip(RowShape).background(NeutralOverlay.copy(.035f)).border(1.dp, NeutralOverlay.copy(.06f), RowShape).padding(12.dp)) {
+        Row(verticalAlignment = Alignment.CenterVertically) {
+            Text("Bandwidth by app", color = White, fontSize = 12.sp, fontWeight = FontWeight.Bold)
+            Spacer(Modifier.width(8.dp))
+            val throttled = statuses.values.count { it.state == BandwidthState.THROTTLING }
+            val active = shell.traffic.applications.count { it.active }
+            Text("${plural(active, "active app")}" + if (throttled > 0) "  •  $throttled throttling" else "", color = if (throttled > 0) Amber else Muted, fontSize = 10.sp)
+            Spacer(Modifier.weight(1f))
+            Text("Rates and limits in megabits per second", color = Muted, fontSize = 9.5.sp)
+        }
+        Spacer(Modifier.height(8.dp))
+        Row(Modifier.fillMaxWidth().padding(bottom = 4.dp)) {
+            Text("App", color = Muted, fontSize = 9.5.sp, modifier = Modifier.width(130.dp))
+            Text("Current ↓ / ↑", color = Muted, fontSize = 9.5.sp, modifier = Modifier.weight(1f))
+            Text("Session ↓ / ↑", color = Muted, fontSize = 9.5.sp, modifier = Modifier.weight(1f))
+            Text("Limit ↓ / ↑", color = Muted, fontSize = 9.5.sp, modifier = Modifier.weight(1f))
+            Text("Utilization", color = Muted, fontSize = 9.5.sp, modifier = Modifier.weight(1f))
+            Text("Status", color = Muted, fontSize = 9.5.sp, modifier = Modifier.width(92.dp))
+            Spacer(Modifier.width(30.dp))
+        }
+        shell.apps.forEach { path ->
+            val usage = shell.traffic.applications.firstOrNull { it.path.equals(path, true) }
+            val status = statuses[path] ?: controller.bandwidthStatus(path)
+            val policy = status.policy
+            Row(Modifier.fillMaxWidth().padding(vertical = 4.dp), verticalAlignment = Alignment.CenterVertically) {
+                Row(Modifier.width(130.dp), verticalAlignment = Alignment.CenterVertically) {
+                    AppAvatar(fileName(path), path, 22.dp)
+                    Spacer(Modifier.width(8.dp))
+                    EllipsisText(appName(path), White, 11.sp, Modifier.weight(1f), FontWeight.SemiBold)
+                }
+                Column(Modifier.weight(1f)) {
+                    Text("↓ ${formatBits(usage?.downloadBytesPerSecond ?: 0)}", color = Cyan, fontSize = 9.5.sp, maxLines = 1)
+                    Text("↑ ${formatBits(usage?.uploadBytesPerSecond ?: 0)}", color = Violet2, fontSize = 9.5.sp, maxLines = 1)
+                }
+                Column(Modifier.weight(1f)) {
+                    Text(formatBytes(usage?.downloadBytes ?: 0), color = White.copy(.86f), fontSize = 9.5.sp, maxLines = 1)
+                    Text(formatBytes(usage?.uploadBytes ?: 0), color = White.copy(.86f), fontSize = 9.5.sp, maxLines = 1)
+                }
+                Column(Modifier.weight(1f)) {
+                    Text(if (policy.downloadBitsPerSecond() > 0) formatBits(policy.downloadBytesPerSecond()) else "Unlimited", color = White.copy(.86f), fontSize = 9.5.sp, maxLines = 1)
+                    Text(if (policy.uploadBitsPerSecond() > 0) formatBits(policy.uploadBytesPerSecond()) else "Unlimited", color = White.copy(.86f), fontSize = 9.5.sp, maxLines = 1)
+                }
+                Column(Modifier.weight(1f).padding(end = 8.dp), verticalArrangement = Arrangement.spacedBy(5.dp)) {
+                    val downShare = policy.downloadBytesPerSecond().takeIf { it > 0 }?.let { (usage?.downloadBytesPerSecond ?: 0).toFloat() / it }
+                    val upShare = policy.uploadBytesPerSecond().takeIf { it > 0 }?.let { (usage?.uploadBytesPerSecond ?: 0).toFloat() / it }
+                    UtilizationLine(downShare, Cyan)
+                    UtilizationLine(upShare, Violet2)
+                }
+                Box(Modifier.width(92.dp)) { CompactBandwidthStatus(status, shell.connected && usage?.active != true) }
+                MenuIcon(Icons.Rounded.MoreVert, "Limits for ${appName(path)}", listOf(
+                    MenuEntry("Edit limits…", Icons.Rounded.Speed) { edit(path) },
+                    MenuEntry("Set unlimited", Icons.Rounded.AllInclusive, enabled = !policy.unlimited()) {
+                        shell.run { controller.setBandwidthPolicy(path, app.perroute.model.BandwidthPolicy.UNLIMITED) }
+                    }
+                ), size = 28.dp)
+            }
+        }
+        if (statuses.values.any { it.state == BandwidthState.NOT_ENFORCED }) {
+            Spacer(Modifier.height(6.dp))
+            Text(statuses.values.first { it.state == BandwidthState.NOT_ENFORCED }.detail, color = Red, fontSize = 9.5.sp, lineHeight = 13.sp)
+        }
+    }
+}
+
+@Composable
+private fun UtilizationLine(share: Float?, color: Color) {
+    Row(verticalAlignment = Alignment.CenterVertically) {
+        UsageBar(Modifier.weight(1f), share ?: 0f, if (share != null && share >= .9f) Amber else color)
+        Text(share?.let { "${(it * 100).toInt().coerceAtMost(999)}%" } ?: "—", color = Muted, fontSize = 8.5.sp,
+            modifier = Modifier.width(34.dp).padding(start = 5.dp), maxLines = 1)
+    }
+}
+
+@Composable
+private fun CompactBandwidthStatus(status: BandwidthStatus, idle: Boolean) {
+    val (label, color) = when (status.state) {
+        BandwidthState.UNLIMITED -> (if (idle) "Idle" else "Unlimited") to Muted
+        BandwidthState.ENFORCED -> "Enforced" to Cyan
+        BandwidthState.THROTTLING -> "Throttling" to Amber
+        BandwidthState.PENDING -> "Pending" to Violet2
+        BandwidthState.NOT_ENFORCED -> "Not enforced" to Red
+    }
+    Tooltip(status.detail) {
+        Row(verticalAlignment = Alignment.CenterVertically) {
+            StatusDot(color, 7.dp)
+            Spacer(Modifier.width(5.dp))
+            Text(label, color = color, fontSize = 10.sp, fontWeight = FontWeight.SemiBold, maxLines = 1)
         }
     }
 }

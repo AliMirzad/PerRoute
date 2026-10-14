@@ -32,6 +32,8 @@ import androidx.compose.material.icons.rounded.ContentCopy
 import androidx.compose.material.icons.rounded.ContentPaste
 import androidx.compose.material.icons.rounded.DeleteOutline
 import androidx.compose.material.icons.rounded.Download
+import androidx.compose.material.icons.rounded.ExpandLess
+import androidx.compose.material.icons.rounded.ExpandMore
 import androidx.compose.material.icons.rounded.Image
 import androidx.compose.material.icons.rounded.Label
 import androidx.compose.material.icons.rounded.Link
@@ -83,7 +85,7 @@ import java.awt.FileDialog
 import java.nio.file.Path
 
 /** How the server list is ordered. */
-private enum class ServerSort(val label: String) { DEFAULT("Default order"), FASTEST("Lowest latency"), SLOWEST("Highest latency") }
+private enum class ServerSort(val label: String) { DEFAULT("Default order"), QUALITY("Quality"), FASTEST("Lowest latency"), SLOWEST("Highest latency") }
 private const val AutoSpeedTestLimit = 10
 /** What the list needs to know about a server besides the server itself. */
 private data class ServerMeta(val source: String, val sourceLabel: String, val tag: String, val country: String, val favorite: Boolean)
@@ -107,7 +109,16 @@ internal fun ServersScreen(shell: Shell) {
     var speedTestingKey by remember { mutableStateOf<String?>(null) }
     var speedJob by remember { mutableStateOf<Job?>(null) }
     var highlightedKey by remember { mutableStateOf(shell.selectedNodeKey) }
+    var expandedKey by remember { mutableStateOf<String?>(null) }
+    var scores by remember { mutableStateOf(controller.qualityScores()) }
     val visibleServers = remember { mutableStateOf<List<ProxyNode>>(emptyList()) }
+    // Scores change as measurements arrive (tests, live routes, background checks); a slow refresh is enough.
+    LaunchedEffect(Unit) {
+        while (isActive) {
+            scores = withContext(Dispatchers.IO) { controller.qualityScores() }
+            kotlinx.coroutines.delay(15_000)
+        }
+    }
     val listState = rememberLazyListState()
     val locked = shell.locked
 
@@ -154,6 +165,7 @@ internal fun ServersScreen(shell: Shell) {
                 if (runRealTest) controller.realTestServers(snapshot) else controller.pingServers(snapshot)
             }
             latencies = measured
+            scores = withContext(Dispatchers.IO) { controller.qualityScores() }
             if (controller.autoSpeedTest()) {
                 val known = speeds
                 runSpeedTest(snapshot.filter { (measured[it.key()] ?: -1L) >= 0L && it.key() !in known }
@@ -245,7 +257,7 @@ internal fun ServersScreen(shell: Shell) {
                         if (main != null) { Spacer(Modifier.width(7.dp)); RouteBadge(main = true, long = true) }
                     }
                     EllipsisText(
-                        if (shell.connected) "Switching the main server restarts the shared core. Every routed app reconnects briefly."
+                        if (shell.connected) "Switching replaces only the main route; custom and Auto routes keep running. Embedded profiles restart the core briefly."
                         else "Changing the main server keeps custom assignments.", Muted, 9.5.sp
                     )
                 }
@@ -330,9 +342,14 @@ internal fun ServersScreen(shell: Shell) {
                                 info.sourceLabel.contains(query, true) || info.tag.contains(query, true))
                     }
                 }
-                val filtered = remember(matching, serverSort, latencies) {
+                val filtered = remember(matching, serverSort, latencies, scores) {
                     when (serverSort) {
                         ServerSort.DEFAULT -> matching
+                        // Rated servers first, best first; unmeasured servers last, never ranked as healthy.
+                        ServerSort.QUALITY -> matching.sortedWith(
+                            compareByDescending<ProxyNode> { scores[it.key()]?.usable() == true }
+                                .thenByDescending { scores[it.key()]?.score() ?: -1 }
+                                .thenByDescending { scores[it.key()]?.confidence() ?: 0.0 })
                         ServerSort.FASTEST -> matching.sortedWith(
                             compareBy<ProxyNode> { (latencies[it.key()] ?: -1L) < 0L }
                                 .thenBy { latencies[it.key()]?.takeIf { value -> value >= 0L } ?: Long.MAX_VALUE })
@@ -410,6 +427,10 @@ internal fun ServersScreen(shell: Shell) {
                                 speed = speeds[node.key()],
                                 speedTesting = speedTestingKey == node.key(),
                                 onSpeed = { runSpeedTest(listOf(node)) },
+                                quality = scores[node.key()],
+                                expanded = expandedKey == node.key(),
+                                onExpand = { expandedKey = if (expandedKey == node.key()) null else node.key() },
+                                showQuality = wide,
                                 highlighted = node.key() == highlightedKey,
                                 favorite = info?.favorite == true,
                                 onFavorite = { controller.toggleFavorite(node.key()); metaRevision++ },
@@ -445,6 +466,10 @@ private fun ServerRow(
     speed: Long?,
     speedTesting: Boolean,
     onSpeed: () -> Unit,
+    quality: app.perroute.quality.QualityScore?,
+    expanded: Boolean,
+    onExpand: () -> Unit,
+    showQuality: Boolean,
     highlighted: Boolean,
     favorite: Boolean,
     onFavorite: () -> Unit,
@@ -452,11 +477,14 @@ private fun ServerRow(
     tagMenu: List<MenuEntry>,
     menu: List<MenuEntry>
 ) {
+    Column(
+        Modifier.fillMaxWidth().clip(RowShape)
+            .background(if (highlighted) Violet.copy(.13f) else NeutralOverlay.copy(.035f))
+            .border(1.dp, if (highlighted || expanded) Violet2.copy(.45f) else NeutralOverlay.copy(.06f), RowShape)
+    ) {
     Row(
         Modifier.fillMaxWidth().focusRing(RowShape).clip(RowShape)
             .selectable(highlighted, role = Role.RadioButton, onClick = onHighlight).pointerHoverIcon(PointerIcon.Hand)
-            .background(if (highlighted) Violet.copy(.13f) else NeutralOverlay.copy(.035f))
-            .border(1.dp, if (highlighted) Violet2.copy(.45f) else NeutralOverlay.copy(.06f), RowShape)
             .padding(horizontal = 12.dp, vertical = 9.dp),
         verticalAlignment = Alignment.CenterVertically
     ) {
@@ -504,6 +532,8 @@ private fun ServerRow(
         Spacer(Modifier.width(6.dp))
         SpeedChip(speed, speedTesting, serverName(node), onSpeed)
         Spacer(Modifier.width(7.dp))
+        QualityPill(quality, compact = !showQuality)
+        Spacer(Modifier.width(6.dp))
         IconAction(if (favorite) Icons.Rounded.Star else Icons.Rounded.StarBorder,
             if (favorite) "Remove ${serverName(node)} from favorites" else "Add ${serverName(node)} to favorites",
             tint = if (favorite) Amber else Muted, onClick = onFavorite)
@@ -512,6 +542,30 @@ private fun ServerRow(
             tagMenu, tint = if (tag.isBlank()) Muted else Cyan)
         Spacer(Modifier.width(5.dp))
         MenuIcon(Icons.Rounded.MoreVert, "More actions for ${serverName(node)}", menu)
+        Spacer(Modifier.width(5.dp))
+        IconAction(if (expanded) Icons.Rounded.ExpandLess else Icons.Rounded.ExpandMore,
+            if (expanded) "Hide the quality details of ${serverName(node)}" else "Show the quality details of ${serverName(node)}", onClick = onExpand)
+    }
+    androidx.compose.animation.AnimatedVisibility(expanded, enter = androidx.compose.animation.expandVertically(tween(200)),
+        exit = androidx.compose.animation.shrinkVertically(tween(160))) {
+        Column(Modifier.fillMaxWidth().padding(start = 12.dp, end = 12.dp, bottom = 11.dp)) {
+            Box(Modifier.fillMaxWidth().height(1.dp).background(NeutralOverlay.copy(.08f)))
+            Spacer(Modifier.height(9.dp))
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                Text("Network quality", color = White, fontSize = 12.5.sp, fontWeight = FontWeight.Bold)
+                Spacer(Modifier.width(9.dp))
+                QualityPill(quality, compact = true)
+                Spacer(Modifier.width(9.dp))
+                ConfidenceBadge(quality)
+                Spacer(Modifier.weight(1f))
+                Text("Measured by pings, real tunnel tests and checks of live routes", color = Muted, fontSize = 9.5.sp)
+            }
+            Spacer(Modifier.height(8.dp))
+            if (quality != null && quality.label() != app.perroute.quality.QualityLabel.UNKNOWN) QualityDetails(quality)
+            else InfoBanner(quality?.explanation() ?: "Run a ping or a real tunnel test, or connect, to rate this server. An unmeasured server is never treated as healthy.",
+                Modifier.fillMaxWidth())
+        }
+    }
     }
 }
 

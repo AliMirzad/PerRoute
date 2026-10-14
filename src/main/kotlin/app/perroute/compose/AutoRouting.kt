@@ -30,14 +30,14 @@ internal class AutoRouting(private val quality: QualityService, private val cloc
         val candidates = nodes
             .filter { pool.includes(it.key(), it.key() in favorites, tags[it.key()]) }
             .map { node ->
-                AutoServerSelector.Candidate(node.key(), PerRouteController.cleanName(node.name()), quality.score(node.key()), node.key() in failingNodeKeys)
+                AutoServerSelector.Candidate(node.key(), serverName(node), quality.score(node.key()), node.key() in failingNodeKeys)
             }
         // A current server outside the pool, or one that no longer exists, is not among the candidates; the
         // selector then picks afresh and says the previous choice is gone.
         val decision = AutoServerSelector.decide(
             candidates,
             current?.takeIf { it.nodeKey().isNotBlank() }?.let { AutoServerSelector.Current(it.nodeKey(), it.changedAt()) },
-            main?.key().orEmpty(), main?.let { PerRouteController.cleanName(it.name()) }.orEmpty(),
+            main?.key().orEmpty(), main?.let { serverName(it) }.orEmpty(),
             policy, clock()
         )
         return decision
