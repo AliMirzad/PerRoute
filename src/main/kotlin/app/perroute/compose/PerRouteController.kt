@@ -37,6 +37,21 @@ import java.util.concurrent.atomic.AtomicBoolean
 import java.net.NetworkInterface
 import app.perroute.service.RouteRuleEvaluator
 import app.perroute.util.Json
+import app.perroute.backup.BackupCodec
+import app.perroute.backup.BackupService
+import app.perroute.gateway.AppGateway
+import app.perroute.inspector.ConnectionInspector
+import app.perroute.model.BandwidthPolicy
+import app.perroute.quality.QualityScore
+import app.perroute.routing.AppRouteMode
+import app.perroute.routing.AutoCandidatePool
+import app.perroute.routing.AutoSelection
+import app.perroute.routing.AutoServerSelector
+import app.perroute.routing.RouteHealthTracker
+import app.perroute.runtime.QualityService
+import app.perroute.runtime.RouteProbe
+import app.perroute.runtime.RouteRecoveryManager
+import app.perroute.runtime.RouteTarget
 import java.util.function.Consumer
 import java.util.prefs.Preferences
 
@@ -101,8 +116,32 @@ data class RouteCheck(
             now - atMillis > PerRouteController.ROUTE_CHECK_STALE_MILLIS
 }
 
-/** A server the running core is carrying traffic for, and the loopback port that leads to it. */
-data class ActiveRoute(val node: ProxyNode, val main: Boolean, val applications: List<String>, val checkPort: Int)
+/**
+ * A server the running core is carrying traffic for, and the loopback port that leads to it. [id] is the
+ * server key for the main route and shared custom routes, and `auto:<path>` for an application in Auto mode,
+ * which always has a route of its own. [ruleTag] names the core rule that sends the route's applications out.
+ */
+data class ActiveRoute(
+    val node: ProxyNode,
+    val main: Boolean,
+    val applications: List<String>,
+    val checkPort: Int,
+    val id: String = node.key(),
+    val auto: Boolean = false,
+    val ruleTag: String = XrayConfigGenerator.applicationRouteRuleTag(-1)
+)
+
+/** Whether a per-app limit is being enforced right now, and why not when it is not. */
+enum class BandwidthState { UNLIMITED, ENFORCED, THROTTLING, PENDING, NOT_ENFORCED }
+
+data class BandwidthStatus(val policy: BandwidthPolicy, val state: BandwidthState, val detail: String,
+                           val downloadBytesPerSecond: Long = 0, val uploadBytesPerSecond: Long = 0)
+
+/** The health of one live route as the recovery manager sees it, with its timeline. */
+data class RouteHealthView(val route: ActiveRoute, val health: RouteHealthTracker.Snapshot?, val monitoring: Boolean)
+
+/** A restore that has been read and checked, waiting for the user's decision. Nothing has changed yet. */
+class RestoreRequest(val file: Path, val preview: BackupService.RestorePreview)
 
 /** What Windows resolves with. It describes the machine, not any single route. */
 data class DnsObservation(val systemServers: List<String>, val publicResolver: String?, val atMillis: Long)
@@ -158,11 +197,13 @@ class ImportPreview(
 data class ImportOutcome(val preview: ImportPreview? = null, val error: String? = null)
 
 /** Owns the saved state and the connection. Every screen goes through it; it is the only place that decides whether a change is allowed. */
-class PerRouteController(
+class PerRouteController @JvmOverloads constructor(
     private val state: AppState,
     private val store: AppStateStore,
     private val backend: ConnectionBackend = SystemConnectionBackend(),
-    private val preferences: Preferences = Preferences.userNodeForPackage(PerRouteController::class.java)
+    private val preferences: Preferences = Preferences.userNodeForPackage(PerRouteController::class.java),
+    recoveryPolicy: RouteHealthTracker.Policy = RouteHealthTracker.Policy.DEFAULT,
+    private val autoIntervalMillis: Long = AUTO_INTERVAL_MILLIS
 ) : AutoCloseable {
     private val subscriptionService by lazy { SubscriptionService() }
     private val coreInstaller by lazy { CoreInstaller() }
@@ -207,21 +248,39 @@ class PerRouteController(
         Thread(task, "perroute-state-writer").apply { isDaemon = true }
     }
 
+    // ---- Version 3: quality, Auto routing, route recovery, traffic gateway, inspector and backups.
+    private val quality by lazy { QualityService(AppDirectories.dataDirectory().resolve("quality-history.json")) }
+    private val autoRouting by lazy { AutoRouting(quality) }
+    private val inspector = ConnectionInspector()
+    private val recovery = RouteRecoveryManager(probe = ::probeRoute, onResult = ::onRouteResult, policy = recoveryPolicy)
+    /** The config the running core corresponds to, including outbounds renamed by runtime changes. */
+    @Volatile private var runningConfig: String? = null
+    @Volatile private var runningPrepared: PreparedConnection? = null
+    @Volatile private var gatewayActive = false
+    private val autoLoopGeneration = AtomicLong()
+    /** Failovers are at least one full recovery cycle apart (about a minute by default), which prevents flapping. */
+    private val failoverIntervalMillis = recoveryPolicy.backoffMaxMillis() * 2
+
     init {
         if (state.connectionMode() == ConnectionMode.TUN_COMPATIBILITY) {
             state.setConnectionMode(ConnectionMode.SYSTEM_PROXY)
             save()
         }
         if (deduplicateNodes()) save()
+        initializeVersionThreeDefaults()
         runCatching { backend.restoreSystemProxy() }
             .onFailure { log("Could not restore stale system proxy settings: ${message(it)}") }
         backend.addLogListener(Consumer { line -> log(line) })
+        // The inspector reads the core's own per-connection lines; they are kept in memory only.
+        backend.addLogListener(Consumer { line -> if (connectionReady) inspector.onLogLine(line, System.currentTimeMillis()) })
+        backend.addGatewayListener(Consumer { connection -> inspector.onGatewayConnection(connection, System.currentTimeMillis()) })
         backend.addRunningListener(Consumer { running ->
             if (!running && phase == ConnectionPhase.CONNECTED) {
                 val stoppedMode = activeMode
                 connectionReady = false
                 activeMode = null
                 phase = ConnectionPhase.DISCONNECTED
+                runCatching { backend.stopGateway() }
                 stopTelemetry()
                 if (stoppedMode == ConnectionMode.NATIVE_PER_APP) {
                     if (!killSwitch()) Thread.ofVirtual().name("perroute-sidecar-cleanup").start {
@@ -245,9 +304,11 @@ class PerRouteController(
             }
         }
         startNetworkMonitor()
+        startQualityMeasurements()
         recoverFromUnexpectedExit()
         Runtime.getRuntime().addShutdownHook(Thread({
             if (!closing) {
+                runCatching { backend.stopGateway() }
                 runCatching { backend.stop() }
                 runCatching { backend.restoreSystemProxy() }
                 runCatching { if (!killSwitch()) backend.stopPerAppSidecar() }
@@ -366,6 +427,546 @@ class PerRouteController(
         }
     }
 
+    // ============================================================================ version 3
+
+    /**
+     * New automatic behavior is opt-in for installations that ran PerRoute 2: background quality checks, route
+     * monitoring and the traffic gateway start switched off there and on for a fresh installation. The choice
+     * is written once, so it never changes by itself later.
+     */
+    private fun initializeVersionThreeDefaults() {
+        if (preferences.getBoolean(PREF_V3_INITIALIZED, false)) return
+        val fresh = !synchronized(state) { state.migratedFromV2() }
+        preferences.putBoolean(PREF_QUALITY_BACKGROUND, fresh)
+        preferences.putBoolean(PREF_ROUTE_MONITORING, fresh)
+        preferences.putBoolean(PREF_TRAFFIC_GATEWAY, fresh)
+        preferences.putBoolean(PREF_V3_INITIALIZED, true)
+        if (!fresh) log("Your PerRoute 2 setup was kept as it was. New automatic features stay off until you turn them on in Settings > Routing.")
+    }
+
+    fun qualityBackground(): Boolean = preferences.getBoolean(PREF_QUALITY_BACKGROUND, true)
+    fun setQualityBackground(value: Boolean) {
+        preferences.putBoolean(PREF_QUALITY_BACKGROUND, value)
+        if (value) quality.requestPass()
+    }
+    fun routeMonitoring(): Boolean = preferences.getBoolean(PREF_ROUTE_MONITORING, true)
+    fun setRouteMonitoring(value: Boolean) {
+        preferences.putBoolean(PREF_ROUTE_MONITORING, value)
+        recovery.setContinuous(value)
+    }
+    fun trafficGateway(): Boolean = preferences.getBoolean(PREF_TRAFFIC_GATEWAY, true)
+    /** The gateway sits in the data path, so it can only be switched while disconnected. */
+    fun setTrafficGateway(value: Boolean): ActionResult {
+        editLock("the traffic gateway")?.let { return it }
+        preferences.putBoolean(PREF_TRAFFIC_GATEWAY, value)
+        return ActionResult(true, if (value) "The traffic gateway will carry per-app traffic from the next connection. Bandwidth limits and connection details become available."
+            else "The traffic gateway is off. Per-app traffic goes straight to the core; bandwidth limits are not enforced.")
+    }
+    fun autoSwitchMargin(): Int = preferences.getInt(PREF_AUTO_MARGIN, 10).coerceIn(3, 40)
+    fun setAutoSwitchMargin(value: Int) = preferences.putInt(PREF_AUTO_MARGIN, value.coerceIn(3, 40))
+    fun autoCooldownMinutes(): Int = preferences.getInt(PREF_AUTO_COOLDOWN, 10).coerceIn(1, 120)
+    fun setAutoCooldownMinutes(value: Int) = preferences.putInt(PREF_AUTO_COOLDOWN, value.coerceIn(1, 120))
+    private fun autoPolicy() = AutoServerSelector.Policy(autoSwitchMargin(), autoCooldownMinutes() * 60_000L, failoverIntervalMillis, 0.25)
+
+    // ---------------------------------------------------------------- quality
+
+    /** Adds one measured sample to a server's quality history. */
+    fun recordQualitySample(key: String, sample: app.perroute.quality.QualitySample) {
+        when (sample.kind()) {
+            app.perroute.quality.QualitySample.Kind.REACHABILITY -> quality.recordReachability(key, sample.latencyMillis())
+            app.perroute.quality.QualitySample.Kind.TUNNEL -> quality.recordTunnel(key, sample.success(), sample.latencyMillis(), sample.detail())
+            app.perroute.quality.QualitySample.Kind.RECOVERY -> quality.recordRecovery(key)
+        }
+    }
+
+    fun qualityScore(key: String): QualityScore = quality.score(key)
+    fun qualityScores(): Map<String, QualityScore> = quality.scores(nodes().map { it.key() })
+    fun qualityLastPass(): Long = quality.lastPassAt
+
+    private fun startQualityMeasurements() {
+        quality.startBackground(
+            enabled = { !closing && (qualityBackground() || hasAutoApps()) },
+            targets = ::qualityTargets,
+            verifyCandidates = { if (hasAutoApps()) autoCandidateNodes() else emptyList() },
+            ping = { node -> latencyProbe.probe(node, 2_000).let { if (it.reachable()) it.milliseconds() else -1L } },
+            verify = { node -> realTunnelProbe.probe(node).let { it.reachable() to it.milliseconds() } }
+        )
+    }
+
+    /** Servers worth measuring, most useful first: Auto candidates, servers in use, favorites, then the stalest. */
+    private fun qualityTargets(): List<ProxyNode> {
+        val all = synchronized(state) { state.nodes().filter { it.key() !in state.hiddenNodeKeys() } }
+        val candidates = autoCandidateNodes().mapTo(hashSetOf()) { it.key() }
+        val inUse = activeRoutes.mapTo(hashSetOf()) { it.node.key() } + listOfNotNull(selectedNode()?.key())
+        val favorites = synchronized(state) { HashSet(state.favoriteNodeKeys()) }
+        return all.sortedWith(compareByDescending<ProxyNode> { it.key() in candidates }
+            .thenByDescending { it.key() in inUse }
+            .thenByDescending { it.key() in favorites }
+            .thenBy { quality.lastMeasured(it.key()) })
+    }
+
+    private fun autoCandidateNodes(): List<ProxyNode> = synchronized(state) {
+        if (!state.advancedRouting()) return@synchronized emptyList()
+        val pools = state.autoApps().map { AutoCandidatePool.decode(state.autoPools()[it]) }.distinct()
+        state.nodes().filter { node ->
+            pools.any { it.includes(node.key(), node.key() in state.favoriteNodeKeys(), state.nodeTags()[node.key()]) }
+        }
+    }
+
+    // ---------------------------------------------------------------- Auto routing
+
+    private fun hasAutoApps(): Boolean = synchronized(state) { state.advancedRouting() && state.autoApps().isNotEmpty() }
+
+    fun appRouteMode(path: String): AppRouteMode = synchronized(state) {
+        val key = AppRoutes.normalize(path)
+        when {
+            key in state.autoApps() -> AppRouteMode.AUTO
+            state.appRoutes().containsKey(key) -> AppRouteMode.MANUAL
+            else -> AppRouteMode.MAIN
+        }
+    }
+
+    fun autoApps(): Set<String> = synchronized(state) { LinkedHashSet(state.autoApps()) }
+    fun autoPools(): Map<String, String> = synchronized(state) { LinkedHashMap(state.autoPools()) }
+    fun autoPool(path: String): AutoCandidatePool = synchronized(state) { AutoCandidatePool.decode(state.autoPools()[AppRoutes.normalize(path)]) }
+
+    /** The last decision Auto made for an application, or a fresh one computed now (and not applied). */
+    fun autoDecision(path: String): AutoDecisionView? {
+        val key = AppRoutes.normalize(path)
+        autoRouting.last(key)?.let { return it }
+        if (key !in autoApps()) return null
+        val decision = decideAuto(key, emptySet())
+        return AutoDecisionView(decision, System.currentTimeMillis(), applied = false)
+    }
+
+    /**
+     * What Auto would choose for an application with [pool], from the current scores and its saved choice.
+     * Used by the Apps screen before anything is saved; nothing is stored.
+     */
+    fun previewAutoDecision(path: String, pool: AutoCandidatePool): AutoServerSelector.Decision {
+        val key = AppRoutes.normalize(path)
+        if (isConnected()) autoRouting.last(key)?.takeIf { pool == autoPool(path) }?.let { return it.decision }
+        return synchronized(state) {
+            autoRouting.decide(pool, state.autoSelections()[key], state.nodes().toList(), HashSet(state.favoriteNodeKeys()),
+                LinkedHashMap(state.nodeTags()), state.nodes().firstOrNull { it.key() == state.selectedNodeKey() } ?: state.nodes().firstOrNull(),
+                failingNodeKeys(), autoPolicy())
+        }
+    }
+
+    private fun decideAuto(key: String, failing: Set<String>): AutoServerSelector.Decision = synchronized(state) {
+        autoRouting.decide(
+            AutoCandidatePool.decode(state.autoPools()[key]), state.autoSelections()[key], state.nodes().toList(),
+            HashSet(state.favoriteNodeKeys()), LinkedHashMap(state.nodeTags()),
+            state.nodes().firstOrNull { it.key() == state.selectedNodeKey() } ?: state.nodes().firstOrNull(), failing, autoPolicy()
+        )
+    }
+
+    /**
+     * The server each application in Auto mode uses for a connection, by normalized path. With [persist] the
+     * decisions become the saved selections (used when connecting); without it the saved selections are shown
+     * as they are and only applications without one get a preview.
+     */
+    private fun autoChoices(persist: Boolean): Map<String, String> {
+        val (keys, effective) = synchronized(state) {
+            state.appPaths().map { AppRoutes.normalize(it) }.filter { it in state.autoApps() } to
+                (state.advancedRouting() && state.connectionMode() == ConnectionMode.NATIVE_PER_APP)
+        }
+        if (!effective || keys.isEmpty()) return emptyMap()
+        val now = System.currentTimeMillis()
+        val result = LinkedHashMap<String, String>()
+        for (key in keys) {
+            val saved = synchronized(state) { state.autoSelections()[key]?.takeIf { selection -> state.nodes().any { it.key() == selection.nodeKey() } } }
+            if (!persist && saved != null) { result[key] = saved.nodeKey(); continue }
+            val decision = decideAuto(key, emptySet())
+            result[key] = decision.nodeKey() ?: ""
+            if (persist) {
+                autoRouting.remember(key, decision, applied = decision.hasServer())
+                if (decision.hasServer() && saved?.nodeKey() != decision.nodeKey()) {
+                    synchronized(state) { state.autoSelections()[key] = AutoSelection(decision.nodeKey(), now) }
+                    save()
+                }
+            }
+        }
+        return result
+    }
+
+    private fun failingNodeKeys(): Set<String> {
+        val health = recovery.snapshot()
+        return activeRoutes.filter { route -> health[route.id]?.affected() == true }.mapTo(hashSetOf()) { it.node.key() }
+    }
+
+    /**
+     * Re-decides one application in Auto mode while connected and, when its server should change, moves only
+     * that application's route. Every other route keeps running untouched. Manual and Main applications are
+     * never changed here.
+     */
+    private fun reevaluateAuto(application: String, routeFailed: Boolean) {
+        if (!isConnected() || closing) return
+        val key = AppRoutes.normalize(application)
+        val route = activeRoutes.firstOrNull { it.auto && AppRoutes.normalize(it.applications.first()) == key } ?: return
+        val failing = failingNodeKeys() + if (routeFailed) setOf(route.node.key()) else emptySet()
+        val decision = decideAuto(key, failing)
+        if (!decision.hasServer() || decision.nodeKey() == route.node.key()) {
+            autoRouting.remember(key, decision, applied = true)
+            return
+        }
+        val target = nodes().firstOrNull { it.key() == decision.nodeKey() } ?: return
+        val prepared = runningPrepared ?: return
+        val main = selectedNode() ?: return
+        val outcome = runCatching {
+            val next = prepare(main, activeMode ?: state.connectionMode(), prepared.applications, prepared.autoChoices + (key to target.key()))
+            applyRouteChange(route.id, next)
+        }
+        if (outcome.getOrNull() == true) {
+            synchronized(state) { state.autoSelections()[key] = AutoSelection(target.key(), System.currentTimeMillis()) }
+            save()
+            autoRouting.remember(key, decision, applied = true)
+            recovery.replace(RouteTarget(route.id, cleanName(target.name()), target.key(), route.checkPort))
+            recovery.note(route.id, RouteHealthTracker.EventType.FAILOVER, if (decision.reason() == AutoServerSelector.Reason.FAILOVER) "Failed over" else "Server changed",
+                "Now using ${cleanName(target.name())}. Other routes were not restarted.")
+            log("Auto moved ${displayName(application)} to ${cleanName(target.name())} (${decision.summary()}). Other routes were not touched.")
+        } else {
+            val reason = outcome.exceptionOrNull()?.let { message(it) } ?: "this route can only change with a reconnect"
+            autoRouting.remember(key, decision, applied = false, note = "Not applied: $reason")
+            log("Auto would move ${displayName(application)} to ${cleanName(target.name())}, but $reason. It keeps its current server.")
+        }
+    }
+
+    private fun startAutoLoop() {
+        val generation = autoLoopGeneration.incrementAndGet()
+        if (activeRoutes.none { it.auto }) return
+        Thread.ofVirtual().name("perroute-auto-routing").start {
+            while (autoLoopGeneration.get() == generation && !closing) {
+                try { Thread.sleep(autoIntervalMillis) } catch (_: InterruptedException) { break }
+                if (autoLoopGeneration.get() != generation || !isConnected()) break
+                val health = recovery.snapshot()
+                activeRoutes.filter { it.auto }.forEach { route ->
+                    runCatching { reevaluateAuto(route.applications.first(), health[route.id]?.state == RouteHealthTracker.State.FAILED) }
+                }
+            }
+        }
+    }
+
+    // ---------------------------------------------------------------- bandwidth
+
+    fun bandwidthPolicies(): Map<String, BandwidthPolicy> = synchronized(state) { LinkedHashMap(state.bandwidthPolicies()) }
+    fun bandwidthPolicy(path: String): BandwidthPolicy =
+        synchronized(state) { state.bandwidthPolicies()[AppRoutes.normalize(path)] } ?: BandwidthPolicy.UNLIMITED
+
+    /** Limits can be changed at any time; while the gateway carries the app, the new limit applies at once. */
+    fun setBandwidthPolicy(path: String, policy: BandwidthPolicy): ActionResult {
+        val key = AppRoutes.normalize(path)
+        if (key.isBlank()) return ActionResult(false, "Choose an application first.")
+        synchronized(state) { if (policy.unlimited()) state.bandwidthPolicies().remove(key) else state.bandwidthPolicies()[key] = policy }
+        save()
+        val connectedPath = runningPrepared?.applications?.firstOrNull { AppRoutes.normalize(it) == key }
+        if (gatewayActive && connectedPath != null) {
+            runCatching { backend.setGatewayLimits(connectedPath, policy.downloadBytesPerSecond(), policy.uploadBytesPerSecond()) }
+                .onFailure { return ActionResult(false, "The limit was saved but could not be applied: ${message(it)}") }
+        }
+        val status = bandwidthStatus(path)
+        return ActionResult(true, if (policy.unlimited()) "${displayName(path)} is unlimited." else "Limit saved. ${status.detail}")
+    }
+
+    fun bandwidthStatus(path: String): BandwidthStatus {
+        val policy = bandwidthPolicy(path)
+        val key = AppRoutes.normalize(path)
+        val usage = traffic.applications.firstOrNull { AppRoutes.normalize(it.path) == key }
+        val down = usage?.downloadBytesPerSecond ?: 0L
+        val up = usage?.uploadBytesPerSecond ?: 0L
+        if (policy.unlimited()) return BandwidthStatus(policy, BandwidthState.UNLIMITED, "No limit.", down, up)
+        if (!isConnected()) return BandwidthStatus(policy, BandwidthState.PENDING, "Enforced while connected in Smart per-app mode.", down, up)
+        if (activeMode != ConnectionMode.NATIVE_PER_APP) {
+            return BandwidthStatus(policy, BandwidthState.NOT_ENFORCED, "Not enforced: limits apply in Smart per-app mode only.", down, up)
+        }
+        if (!gatewayActive) {
+            return BandwidthStatus(policy, BandwidthState.NOT_ENFORCED, "Not enforced: the traffic gateway is off. Turn it on in Settings > Routing, then reconnect.", down, up)
+        }
+        if (runningPrepared?.applications?.none { AppRoutes.normalize(it) == key } != false) {
+            return BandwidthStatus(policy, BandwidthState.PENDING, "Applies after this app is selected and you reconnect.", down, up)
+        }
+        val busy = (policy.downloadBytesPerSecond() > 0 && down >= policy.downloadBytesPerSecond() * 0.9) ||
+            (policy.uploadBytesPerSecond() > 0 && up >= policy.uploadBytesPerSecond() * 0.9)
+        return if (busy) BandwidthStatus(policy, BandwidthState.THROTTLING, "Throttling: the app is using its full limit.", down, up)
+        else BandwidthStatus(policy, BandwidthState.ENFORCED, "Enforced by the traffic gateway for all of the app's connections.", down, up)
+    }
+
+    private fun startGateway(prepared: PreparedConnection) {
+        val routes = prepared.applications.mapIndexed { index, path ->
+            AppGateway.Route(path, index, XrayConfigGenerator.perAppPort(index), XrayConfigGenerator.gatewayUpstreamPort(index))
+        }
+        backend.startGateway(routes)
+        prepared.applications.forEach { path ->
+            val policy = bandwidthPolicy(path)
+            backend.setGatewayLimits(path, policy.downloadBytesPerSecond(), policy.uploadBytesPerSecond())
+        }
+        gatewayActive = true
+        inspector.gatewayActive(true)
+    }
+
+    // ---------------------------------------------------------------- route recovery
+
+    /** Every live route with its own health and recovery timeline. */
+    fun routeHealth(): List<RouteHealthView> {
+        val health = recovery.snapshot()
+        val monitoring = routeMonitoring()
+        return activeRoutes.map { RouteHealthView(it, health[it.id], monitoring) }
+    }
+
+    /** Checks one route again right away; a failed route gets a fresh set of attempts. Other routes are not touched. */
+    fun retryRoute(routeId: String): ActionResult {
+        if (!isConnected()) return ActionResult(false, "Connect to check this route.")
+        return if (recovery.retryNow(routeId)) ActionResult(true, "Checking this route again.")
+        else ActionResult(false, "That route is no longer in use.")
+    }
+
+    private fun probeRoute(target: RouteTarget): RouteProbe {
+        val startedAt = System.currentTimeMillis()
+        val started = System.nanoTime()
+        val result = backend.checkTunnel(target.checkPort)
+        val elapsed = ((System.nanoTime() - started) / 1_000_000L).coerceAtLeast(1L)
+        return RouteProbe(result.success(), if (result.success()) elapsed else -1L, result.detail(), startedAt)
+    }
+
+    private fun onRouteResult(target: RouteTarget, result: RouteProbe, action: RouteHealthTracker.Action, health: RouteHealthTracker.Snapshot) {
+        val route = activeRoutes.firstOrNull { it.id == target.id && it.checkPort == target.checkPort && it.node.key() == target.nodeKey } ?: return
+        quality.recordTunnel(target.nodeKey, result.ok, result.latencyMillis, result.detail)
+        val now = System.currentTimeMillis()
+        val first = synchronized(routeCheckLock) {
+            val current = routeChecks[target.id]
+            // A check the user asked for in the meantime is newer and more detailed; keep it.
+            if (current != null && current.state != RouteCheckState.CHECKING && current.atMillis >= result.startedAt) return@synchronized false
+            val observed = if (result.ok) RouteCheck(RouteCheckState.PASSED, now, result.latencyMillis,
+                    current?.publicIp?.takeIf { current.state == RouteCheckState.PASSED },
+                    current?.country?.takeIf { current.state == RouteCheckState.PASSED }, result.detail)
+                else RouteCheck(RouteCheckState.FAILED, now, detail = result.detail)
+            routeChecks = routeChecks + (target.id to observed)
+            current == null || current.state == RouteCheckState.CHECKING
+        }
+        if (first) {
+            if (result.ok) log("Tunnel health (${target.name}): ${result.detail}") else log("Tunnel health was inconclusive (${target.name}): ${result.detail}")
+        }
+        when (action) {
+            RouteHealthTracker.Action.REFRESH_ROUTE -> Thread.ofVirtual().name("perroute-route-refresh").start { refreshRoute(route) }
+            RouteHealthTracker.Action.EXHAUSTED -> {
+                log("${target.name} did not recover after ${health.maxAttempts()} attempts. It is checked again every few minutes; other routes are not affected.")
+                if (route.auto) Thread.ofVirtual().name("perroute-auto-failover").start { reevaluateAuto(route.applications.first(), routeFailed = true) }
+            }
+            RouteHealthTracker.Action.RECOVERED -> {
+                quality.recordRecovery(target.nodeKey)
+                log("${target.name} recovered on its own route.")
+            }
+            RouteHealthTracker.Action.NONE -> {}
+        }
+    }
+
+    /** Rebuilds one route's outbound in the running core, which drops its stuck connections and nothing else. */
+    private fun refreshRoute(route: ActiveRoute) {
+        val prepared = runningPrepared ?: return
+        val outcome = runCatching { applyRouteChange(route.id, prepared) }
+        if (outcome.getOrNull() == true) log("${cleanName(route.node.name())}: the route was rebuilt; other routes kept running.")
+        else log("${cleanName(route.node.name())} keeps retrying; its route cannot be rebuilt without a reconnect" +
+            (outcome.exceptionOrNull()?.let { " (${message(it)})" } ?: "."))
+    }
+
+    /**
+     * Applies [next] to the running core by replacing only the outbound of route [routeId]: the new outbound is
+     * added, every rule is swapped in one step, then the old outbound is removed. Other routes keep their
+     * outbound, their tag and their open connections. Returns false, changing nothing, when the two configs
+     * differ in anything else (another route, an embedded profile, balancers), because that needs a restart.
+     */
+    @Synchronized
+    private fun applyRouteChange(routeId: String, next: PreparedConnection): Boolean {
+        val current = runningPrepared ?: return false
+        val config = runningConfig ?: return false
+        if (!connectionReady || current.tun || next.tun || current.gateway != next.gateway || !current.runtimeControl) return false
+        if (current.routes.size != next.routes.size || current.applications != next.applications) return false
+        for ((before, after) in current.routes.zip(next.routes)) {
+            if (before.main != after.main || before.auto != after.auto || before.ruleTag != after.ruleTag || before.applications != after.applications) return false
+            if (before.id != routeId && before.id != after.id) return false
+        }
+        val swapped = current.routes.firstOrNull { it.id == routeId } ?: return false
+        val running = XrayConfigGenerator.applicationRouteTargets(config)
+        val planned = XrayConfigGenerator.applicationRouteTargets(next.config)
+        var candidate = next.config
+        for (route in next.routes) {
+            val base = planned[route.ruleTag] ?: return false
+            val live = running[route.ruleTag] ?: return false
+            if (route.ruleTag != swapped.ruleTag && base != live) candidate = XrayConfigGenerator.renameOutbound(candidate, base, live)
+        }
+        val oldTag = running[swapped.ruleTag] ?: return false
+        val base = planned[swapped.ruleTag] ?: return false
+        val newTag = if (oldTag == base) "$base~1" else base
+        candidate = XrayConfigGenerator.renameOutbound(candidate, base, newTag)
+        // Nothing but the replaced outbound may differ, or rules could point at outbounds the core does not have.
+        if (outboundTags(candidate) - newTag != outboundTags(config) - oldTag) return false
+        val change = XrayConfigGenerator.runtimeChange(candidate, newTag) ?: return false
+        backend.validate(candidate, false)
+        backend.applyRuntimeChange(change, newTag, oldTag, candidate)
+        runningConfig = candidate
+        runningPrepared = next
+        activeRoutes = next.routes
+        return true
+    }
+
+    private fun outboundTags(config: String): Set<String> = runCatching {
+        (Json.`object`(config)["outbounds"] as? List<*>).orEmpty().mapNotNull { (it as? Map<*, *>)?.get("tag") as? String }.toSet()
+    }.getOrDefault(emptySet())
+
+    // ---------------------------------------------------------------- connection inspector
+
+    /** Whether connections can be inspected right now: only Smart per-app has per-app inbounds to observe. */
+    fun inspectorAvailable(): Boolean = isConnected() && activeMode == ConnectionMode.NATIVE_PER_APP
+
+    fun inspectorUsesGateway(): Boolean = gatewayActive
+
+    fun inspectorRows(): List<InspectorRow> {
+        val prepared = runningPrepared ?: return emptyList()
+        if (!inspectorAvailable()) return emptyList()
+        val config = runningConfig.orEmpty()
+        val targets = runCatching { XrayConfigGenerator.applicationRouteTargets(config) }.getOrDefault(emptyMap())
+        val routeTags = activeRoutes.mapNotNull { route -> targets[route.ruleTag]?.let { route.id to it } }.toMap()
+        val context = InspectorContext(prepared.applications, activeRoutes, routeTags, rules(), prepared.plan, routeChecks) { serverName(it) }
+        return InspectorView.rows(inspector.snapshot(System.currentTimeMillis()), context)
+    }
+
+    /** Running instances of an executable, for the inspector's details. Process identity is observed, not stored. */
+    fun processIds(path: String): List<Long> = runCatching {
+        ProcessHandle.allProcesses()
+            .filter { handle -> handle.info().command().map { it.equals(path, ignoreCase = true) }.orElse(false) }
+            .limit(16).map { it.pid() }.toList()
+    }.getOrDefault(emptyList())
+
+    // ---------------------------------------------------------------- backup and restore
+
+    private val restoreSnapshotFile: Path get() = AppDirectories.dataDirectory().resolve("restore-rollback.bin")
+
+    private fun preferenceSnapshot(): Map<String, String> =
+        BACKUP_PREFERENCES.keys.mapNotNull { key -> preferences.get(key, null)?.let { key to it } }.toMap()
+
+    private fun applyPreferences(values: Map<String, String>) {
+        values.forEach { (key, value) ->
+            when (BACKUP_PREFERENCES[key]) {
+                PreferenceType.BOOLEAN -> if (value == "true" || value == "false") {
+                    if (key == "perAppKillSwitch") setKillSwitch(value.toBoolean()) else preferences.putBoolean(key, value.toBoolean())
+                }
+                PreferenceType.INT -> value.toIntOrNull()?.let { preferences.putInt(key, it) }
+                PreferenceType.URL -> if (value.isBlank() || value.startsWith("https://", ignoreCase = true)) preferences.put(key, value.trim())
+                null -> {}
+            }
+        }
+        runCatching { preferences.flush() }
+    }
+
+    /** Writes a backup of the chosen sections. Server credentials are inside, so encryption is recommended. */
+    fun exportBackup(file: Path, sections: Set<BackupService.Section>, password: CharArray?): ActionResult = try {
+        val bytes = synchronized(state) {
+            BackupService.export(state, preferenceSnapshot(), sections, password, "PerRoute ${SecureUpdateService.CURRENT_VERSION}", System.currentTimeMillis())
+        }
+        Files.createDirectories(file.toAbsolutePath().parent)
+        val temporary = file.resolveSibling(file.fileName.toString() + ".tmp")
+        Files.write(temporary, bytes)
+        Files.move(temporary, file, java.nio.file.StandardCopyOption.REPLACE_EXISTING)
+        log("Backup saved (${sections.size} ${if (sections.size == 1) "section" else "sections"}, ${if (password?.isNotEmpty() == true) "encrypted" else "not encrypted"}).")
+        ActionResult(true, "Backup saved to ${file.fileName}.")
+    } catch (error: Throwable) {
+        ActionResult(false, "The backup could not be saved: ${message(error)}")
+    } finally {
+        password?.fill('\u0000')
+    }
+
+    /** Reads and checks a backup and describes what restoring it would change. Nothing is changed. */
+    fun openBackup(file: Path, password: CharArray?): Pair<RestoreRequest?, String?> = try {
+        val bytes = Files.readAllBytes(file)
+        val known = runCatching { installedApplications().map { it.path() } + runningApplications().map { it.path() } }.getOrDefault(emptyList())
+        val current = synchronized(state) { store.parse(store.serialize(state)) }
+        RestoreRequest(file, BackupService.preview(bytes, password, current, BackupService::executableExists, known)) to null
+    } catch (error: BackupCodec.BackupException) {
+        null to error.message
+    } catch (error: Throwable) {
+        null to "The backup could not be opened: ${message(error)}"
+    } finally {
+        password?.fill('\u0000')
+    }
+
+    /**
+     * Restores a backup in one step. A rollback snapshot of the current state and preferences is written first;
+     * the new state is then written atomically and only afterwards replaces the state in memory. If anything
+     * fails, memory, the state file and the preferences are put back, so a half-restored setup never remains.
+     */
+    fun restoreBackup(request: RestoreRequest, mode: BackupService.Mode, remap: Map<String, String>): ActionResult {
+        editLock("settings")?.let { return it }
+        val currentBytes = synchronized(state) { store.serialize(state) }
+        val preferencesBefore = preferenceSnapshot()
+        val plan = try {
+            BackupService.plan(request.preview, store.parse(currentBytes), preferencesBefore, mode, remap, BackupService::executableExists)
+        } catch (error: Throwable) {
+            return ActionResult(false, "The backup could not be applied; nothing was changed: ${message(error)}")
+        }
+        try {
+            AppStateStore(restoreSnapshotFile).write(withPreferences(currentBytes, preferencesBefore))
+        } catch (error: Throwable) {
+            return ActionResult(false, "A rollback snapshot could not be written, so nothing was restored: ${message(error)}")
+        }
+        return try {
+            store.write(store.serialize(plan.state()))
+            synchronized(state) { state.replaceWith(plan.state()) }
+            applyPreferences(plan.preferences())
+            afterStateReplaced()
+            log("A backup was restored (${mode.name.lowercase()}). ${plan.summary().joinToString(" ")}")
+            ActionResult(true, "Backup restored. ${plan.summary().joinToString(" ")}")
+        } catch (error: Throwable) {
+            runCatching {
+                synchronized(state) { state.replaceWith(store.parse(currentBytes)) }
+                store.write(currentBytes)
+                applyPreferences(preferencesBefore)
+            }
+            afterStateReplaced()
+            ActionResult(false, "The restore failed and your previous settings were put back: ${message(error)}")
+        }
+    }
+
+    fun hasRestoreSnapshot(): Boolean = Files.isRegularFile(restoreSnapshotFile)
+
+    /** Puts back the state and preferences from before the last restore. */
+    fun undoRestore(): ActionResult {
+        editLock("settings")?.let { return it }
+        if (!hasRestoreSnapshot()) return ActionResult(false, "There is no restore to undo.")
+        return try {
+            val properties = AppStateStore(restoreSnapshotFile).loadProperties()
+            val previous = store.parse(properties)
+            val prefs = properties.stringPropertyNames().filter { it.startsWith(ROLLBACK_PREFIX) }
+                .associate { it.removePrefix(ROLLBACK_PREFIX) to properties.getProperty(it) }
+            store.write(store.serialize(previous))
+            synchronized(state) { state.replaceWith(previous) }
+            applyPreferences(prefs)
+            Files.deleteIfExists(restoreSnapshotFile)
+            afterStateReplaced()
+            log("The last restore was undone.")
+            ActionResult(true, "Your settings from before the restore are back.")
+        } catch (error: Throwable) {
+            ActionResult(false, "The restore could not be undone: ${message(error)}")
+        }
+    }
+
+    private fun withPreferences(stateBytes: ByteArray, values: Map<String, String>): ByteArray {
+        val properties = java.util.Properties()
+        properties.load(java.io.ByteArrayInputStream(stateBytes))
+        values.forEach { (key, value) -> properties.setProperty(ROLLBACK_PREFIX + key, value) }
+        val out = java.io.ByteArrayOutputStream()
+        properties.store(out, "PerRoute rollback snapshot")
+        return out.toByteArray()
+    }
+
+    private fun afterStateReplaced() {
+        val live = nodes().mapTo(hashSetOf()) { it.key() }
+        latencyCache = latencyCache.filterKeys { it in live }
+        speedCache = speedCache.filterKeys { it in live }
+        quality.retain(live)
+        autoRouting.clear()
+        if (deduplicateNodes()) save()
+    }
+
     fun onLog(listener: (String) -> Unit) { logListeners += listener }
     fun onConnectionChanged(listener: (Boolean) -> Unit) { stateListeners += listener }
 
@@ -443,13 +1044,22 @@ class PerRouteController(
             state.profiles().clear()
             state.appRoutes().clear()
             state.appRouteLabels().clear()
+            state.autoApps().clear()
+            state.autoPools().clear()
+            state.autoSelections().clear()
+            state.bandwidthPolicies().clear()
             state.setActiveProfileId("")
             state.setSelectedNodeKey("")
             state.setAdvancedRouting(false)
             state.setConnectionMode(ConnectionMode.SYSTEM_PROXY)
             state.setRoutingMode(RoutingMode.INCLUDE_SELECTED)
+            state.setMigratedFromV2(false)
         }
         runCatching { preferences.clear() }
+        initializeVersionThreeDefaults()
+        runCatching { quality.clear() }
+        autoRouting.clear()
+        runCatching { Files.deleteIfExists(restoreSnapshotFile) }
         latencyCache = emptyMap()
         speedCache = emptyMap()
         dnsObservation = null
@@ -486,13 +1096,26 @@ class PerRouteController(
      * The routes a connection would use right now. With [assumeAdvanced] the saved assignments are
      * resolved even while they are inactive, which is how the UI finds ones that need a replacement.
      */
-    fun routePlan(assumeAdvanced: Boolean = false): RoutePlanner.Plan = synchronized(state) {
-        RoutePlanner.plan(
-            state.nodes().toList(), state.selectedNodeKey(), state.appPaths().toList(),
-            assumeAdvanced || state.advancedRouting(), LinkedHashMap(state.appRoutes()),
-            LinkedHashMap(state.appRouteLabels()),
-            if (assumeAdvanced) ConnectionMode.NATIVE_PER_APP else state.connectionMode()
-        )
+    fun routePlan(assumeAdvanced: Boolean = false): RoutePlanner.Plan {
+        // While connected the plan shows what is running; otherwise what Auto would pick next.
+        val choices = runningPrepared?.autoChoices ?: if (assumeAdvanced) previewAutoChoices() else autoChoices(persist = false)
+        return synchronized(state) {
+            RoutePlanner.plan(
+                state.nodes().toList(), state.selectedNodeKey(), state.appPaths().toList(),
+                assumeAdvanced || state.advancedRouting(), LinkedHashMap(state.appRoutes()),
+                LinkedHashMap(state.appRouteLabels()),
+                if (assumeAdvanced) ConnectionMode.NATIVE_PER_APP else state.connectionMode(), choices
+            )
+        }
+    }
+
+    /** Auto choices as if Advanced routing were on in Smart per-app, for finding problems while it is off. */
+    private fun previewAutoChoices(): Map<String, String> {
+        val keys = synchronized(state) { state.appPaths().map { AppRoutes.normalize(it) }.filter { it in state.autoApps() } }
+        return keys.associateWith { key ->
+            synchronized(state) { state.autoSelections()[key]?.nodeKey()?.takeIf { saved -> state.nodes().any { it.key() == saved } } }
+                ?: decideAuto(key, emptySet()).nodeKey().orEmpty()
+        }
     }
 
     fun activeRoutes(): List<ActiveRoute> = activeRoutes
@@ -518,14 +1141,36 @@ class PerRouteController(
     }
 
     /** The Apps screen saves its whole draft in one step: selection, assignments and the Advanced flag. */
-    fun saveApplicationSetup(paths: Collection<String>, routes: Map<String, String>, advanced: Boolean): ActionResult {
+    fun saveApplicationSetup(paths: Collection<String>, routes: Map<String, String>, advanced: Boolean): ActionResult =
+        saveApplicationSetup(paths, routes, advanced, autoApps(), autoPools())
+
+    /**
+     * Also saves which applications are in Auto mode and their candidate pools. An application's Manual
+     * choice in [routes] is kept while it is in Auto, so switching back restores it.
+     */
+    fun saveApplicationSetup(paths: Collection<String>, routes: Map<String, String>, advanced: Boolean,
+                             autoApps: Set<String>, pools: Map<String, String>): ActionResult {
         editLock("app routes")?.let { return it }
+        val newlyAuto: Boolean
         synchronized(state) {
             storeApplications(paths)
             storeRoutes(routes)
+            val auto = autoApps.map { AppRoutes.normalize(it) }.filter { it.isNotBlank() }.toCollection(LinkedHashSet())
+            newlyAuto = (auto - state.autoApps()).isNotEmpty()
+            state.autoApps().clear()
+            state.autoApps().addAll(auto)
+            state.autoPools().clear()
+            pools.forEach { (path, text) ->
+                val key = AppRoutes.normalize(path)
+                val pool = AutoCandidatePool.decode(text)
+                if (key.isNotBlank() && pool.kind() != AutoCandidatePool.Kind.ALL) state.autoPools()[key] = pool.encode()
+            }
+            state.autoSelections().keys.retainAll(auto)
             state.setAdvancedRouting(advanced)
         }
+        autoRouting.forget(autoApps())
         save()
+        if (newlyAuto && advanced) quality.requestPass()
         return ActionResult(true, "Changes saved.")
     }
 
@@ -674,7 +1319,10 @@ class PerRouteController(
     }
 
     fun pingServers(targets: List<ProxyNode>): Map<String, Long> =
-        measureEndpoints(targets).also { rememberLatencies(it) }
+        measureEndpoints(targets).also { measured ->
+            rememberLatencies(measured)
+            measured.forEach { (key, value) -> quality.recordReachability(key, value) }
+        }
 
     private fun measureEndpoints(targets: List<ProxyNode>): Map<String, Long> {
         if (targets.isEmpty()) return emptyMap()
@@ -707,7 +1355,10 @@ class PerRouteController(
                 if (result.reachable()) result.milliseconds() else -1L
             } }
             futures.mapValues { (_, future) -> runCatching { future.get(35, TimeUnit.SECONDS) }.getOrDefault(-1L) }
-                .mapKeys { it.key.key() }.also { rememberLatencies(it) }
+                .mapKeys { it.key.key() }.also { measured ->
+                    rememberLatencies(measured)
+                    measured.forEach { (key, value) -> quality.recordTunnel(key, value >= 0, value, if (value >= 0) "" else "Real tunnel test failed") }
+                }
         } finally { executor.shutdownNow() }
     }
 
@@ -736,7 +1387,7 @@ class PerRouteController(
             val tasks = mutableListOf<java.util.concurrent.Future<*>>()
             tasks += executor.submit { observeRoute(DIRECT_ROUTE_KEY, null) }
             routes.forEach { route ->
-                tasks += executor.submit { observeRoute(route.node.key(), route.checkPort) }
+                tasks += executor.submit { observeRoute(route.id, route.checkPort, route.node.key()) }
             }
             val servers = executor.submit<List<String>> { backend.systemDnsServers() }
             val resolver = executor.submit<String?> { backend.publicResolver() }
@@ -747,7 +1398,7 @@ class PerRouteController(
                 runCatching { resolver.get(15, TimeUnit.SECONDS) }.getOrNull(),
                 System.currentTimeMillis()
             )
-            val failed = routes.count { routeChecks[it.node.key()]?.state == RouteCheckState.FAILED }
+            val failed = routes.count { routeChecks[it.id]?.state == RouteCheckState.FAILED }
             when {
                 routes.isEmpty() -> ActionResult(true, "Direct route checked. Connect to check your servers.")
                 failed == 0 -> ActionResult(true, "${routes.size} ${if (routes.size == 1) "route" else "routes"} checked.")
@@ -758,17 +1409,18 @@ class PerRouteController(
         }
     }
 
+    /** [key] is a route id: a server key for the main and shared routes, `auto:<path>` for an Auto app, or the direct route. */
     fun checkRoute(key: String): ActionResult {
+        val route = activeRoutes.takeIf { isConnected() }?.firstOrNull { it.id == key }
         val port = if (key == DIRECT_ROUTE_KEY) null
-            else activeRoutes.takeIf { isConnected() }?.firstOrNull { it.node.key() == key }?.checkPort
-                ?: return ActionResult(false, "Connect to check this server.")
-        observeRoute(key, port)
+            else route?.checkPort ?: return ActionResult(false, "Connect to check this server.")
+        observeRoute(key, port, route?.node?.key())
         val check = routeChecks[key]
         return if (check?.state == RouteCheckState.PASSED) ActionResult(true, "Check passed.")
         else ActionResult(false, "Check failed: ${check?.detail.orEmpty()}")
     }
 
-    private fun observeRoute(key: String, socksPort: Int?) {
+    private fun observeRoute(key: String, socksPort: Int?, nodeKey: String? = null) {
         val previous = routeChecks[key]
         setRouteCheck(key, (previous ?: RouteCheck()).copy(state = RouteCheckState.CHECKING))
         val started = System.nanoTime()
@@ -776,32 +1428,8 @@ class PerRouteController(
         val elapsed = ((System.nanoTime() - started) / 1_000_000L).coerceAtLeast(1L)
         setRouteCheck(key, if (report.ip != null) RouteCheck(RouteCheckState.PASSED, System.currentTimeMillis(), elapsed, report.ip, report.country)
             else RouteCheck(RouteCheckState.FAILED, System.currentTimeMillis(), detail = report.error ?: "No answer"))
-    }
-
-    /** A light tunnel check for every route right after the core starts. It is not repeated in the background. */
-    private fun startConnectChecks(routes: List<ActiveRoute>) {
-        routes.forEach { route ->
-            setRouteCheck(route.node.key(), RouteCheck(RouteCheckState.CHECKING))
-            Thread.ofVirtual().name("perroute-route-check").start {
-                val startedAt = System.currentTimeMillis()
-                val started = System.nanoTime()
-                val health = runCatching { backend.checkTunnel(route.checkPort) }
-                val elapsed = ((System.nanoTime() - started) / 1_000_000L).coerceAtLeast(1L)
-                if (activeRoutes.none { it.node.key() == route.node.key() && it.checkPort == route.checkPort }) return@start
-                val ok = health.getOrNull()?.success() == true
-                val detail = health.getOrNull()?.detail() ?: message(health.exceptionOrNull() ?: IllegalStateException("No answer"))
-                val observed = if (ok) RouteCheck(RouteCheckState.PASSED, System.currentTimeMillis(), elapsed, detail = detail)
-                    else RouteCheck(RouteCheckState.FAILED, System.currentTimeMillis(), detail = detail)
-                synchronized(routeCheckLock) {
-                    // A check the user asked for in the meantime is newer and more detailed; keep it.
-                    val current = routeChecks[route.node.key()]
-                    if (current != null && current.state != RouteCheckState.CHECKING && current.atMillis >= startedAt) return@start
-                    routeChecks = routeChecks + (route.node.key() to observed)
-                }
-                val name = cleanName(route.node.name())
-                if (ok) log("Tunnel health ($name): $detail") else log("Tunnel health was inconclusive ($name): $detail")
-            }
-        }
+        // A lookup through a server's own port is an end-to-end use of its tunnel.
+        if (nodeKey != null) quality.recordTunnel(nodeKey, report.ip != null, elapsed, report.error.orEmpty())
     }
 
     fun loadedRuleIds(): Set<String>? {
@@ -1013,7 +1641,8 @@ class PerRouteController(
         synchronized(state) {
             state.profiles().removeIf { it.name().equals(name.trim(), true) }
             val profile = ConnectionProfile("", name.trim(), state.appPaths(), state.selectedNodeKey(),
-                state.connectionMode(), state.routeRules(), state.advancedRouting(), LinkedHashMap(state.appRoutes()))
+                state.connectionMode(), state.routeRules(), state.advancedRouting(), LinkedHashMap(state.appRoutes()),
+                LinkedHashSet(state.autoApps()))
             state.profiles().add(profile); state.setActiveProfileId(profile.id())
         }
         save(); return ActionResult(true, "Profile saved.")
@@ -1031,6 +1660,12 @@ class PerRouteController(
             // A profile saved before Advanced routing existed says nothing about assignments, so the
             // ones saved now are left in place (inactive, because that profile turns Advanced off).
             if (profile.advancedRouting() || profile.appRoutes().isNotEmpty()) storeRoutes(profile.appRoutes())
+            // A profile with Advanced routing describes every app's mode, Auto included.
+            if (profile.advancedRouting()) {
+                state.autoApps().clear()
+                state.autoApps().addAll(profile.autoApps())
+                state.autoSelections().keys.retainAll(profile.autoApps())
+            }
             state.setActiveProfileId(profile.id())
         }
         save()
@@ -1119,6 +1754,7 @@ class PerRouteController(
             state.appRouteLabels().remove(removed)?.let { label -> state.appRouteLabels().putIfAbsent(kept, label) }
         }
         state.appRoutes().replaceAll { _, key -> replacements[key] ?: key }
+        state.autoSelections().replaceAll { _, selection -> replacements[selection.nodeKey()]?.let { AutoSelection(it, selection.changedAt()) } ?: selection }
         replacements[state.selectedNodeKey()]?.let(state::setSelectedNodeKey)
         true
     }
@@ -1143,37 +1779,68 @@ class PerRouteController(
         ActionResult(false, message(e))
     }
 
-    private class PreparedConnection(val config: String, val tun: Boolean, val routes: List<ActiveRoute>)
+    private class PreparedConnection(
+        val config: String,
+        val tun: Boolean,
+        val routes: List<ActiveRoute>,
+        val gateway: Boolean = false,
+        val applications: List<String> = emptyList(),
+        val autoChoices: Map<String, String> = emptyMap(),
+        val plan: RoutePlanner.Plan,
+        val runtimeControl: Boolean = false
+    )
 
     private fun missingRouteMessage(plan: RoutePlanner.Plan): String {
         val first = plan.missing().first()
         val app = displayName(first.applicationPath())
+        if (first.problem() == RoutePlanner.Problem.NO_SERVER) {
+            return "$app is in Auto mode, but no server can be chosen for it: there is no measured server in its pool and no main server. " +
+                "Add a server or choose Main or Manual for it in Apps. It is not released to the direct route."
+        }
         val server = first.label().ifBlank { "its custom server" }
         val reason = "$app is assigned to $server, which is no longer in your server list."
         val more = if (plan.missing().size > 1) " ${plan.missing().size - 1} more ${if (plan.missing().size == 2) "app has" else "apps have"} the same problem." else ""
         return "$reason$more Open Apps and choose a replacement, or turn off Advanced routing to use the main server for every app."
     }
 
-    /** Builds the whole config for a main server, re-applying every per-app assignment that is in effect. */
-    private fun prepare(main: ProxyNode, mode: ConnectionMode, apps: List<String>): PreparedConnection {
+    /**
+     * Builds the whole config for a main server, re-applying every per-app assignment that is in effect. Each
+     * application in Auto mode gets a route of its own (a copy of its server under a key nobody else uses), so
+     * its server can later be replaced in the running core without touching any other application.
+     */
+    private fun prepare(main: ProxyNode, mode: ConnectionMode, apps: List<String>,
+                        autoChoices: Map<String, String> = autoChoices(persist = false)): PreparedConnection {
         val plan = synchronized(state) {
             RoutePlanner.plan(state.nodes().toList(), main.key(), apps, state.advancedRouting(),
-                LinkedHashMap(state.appRoutes()), LinkedHashMap(state.appRouteLabels()), mode)
+                LinkedHashMap(state.appRoutes()), LinkedHashMap(state.appRouteLabels()), mode, autoChoices)
         }
         check(plan.ready()) { missingRouteMessage(plan) }
         val tun = mode == ConnectionMode.TUN_COMPATIBILITY
         val perApp = mode == ConnectionMode.NATIVE_PER_APP
-        val config = if (tun) configGenerator.generate(main, apps, state.routingMode())
-            else configGenerator.generateApplicationProxy(main, if (perApp) apps else emptyList(), rules(),
-                if (perApp) plan.applicationNodes() else emptyList())
-        val customKeys = if (perApp) XrayConfigGenerator.customRouteKeys(main, apps, plan.applicationNodes()) else emptyList()
-        val routes = plan.routes().map { route ->
-            ActiveRoute(route.node(), route.main(), if (perApp) route.applications() else emptyList(),
-                if (route.main()) AppProxyLauncher.SOCKS_PORT
-                else XrayConfigGenerator.routeCheckPort(customKeys.indexOf(route.node().key())))
+        val gateway = perApp && trafficGateway()
+        // The core's control API is only enabled for features that change routes in place.
+        val runtimeControl = !tun && (routeMonitoring() || hasAutoApps())
+        val generator = XrayConfigGenerator(if (gateway) XrayConfigGenerator.GATEWAY_UPSTREAM_PORT_BASE else XrayConfigGenerator.PER_APP_PORT_BASE, runtimeControl)
+        val configNodes = if (!perApp) emptyList() else plan.applicationNodes().mapIndexed { index, node ->
+            if (node != null && plan.routeFor(apps[index])?.auto() == true) autoSlot(apps[index], node) else node
         }
-        return PreparedConnection(config, tun, routes)
+        val config = if (tun) configGenerator.generate(main, apps, state.routingMode())
+            else generator.generateApplicationProxy(main, if (perApp) apps else emptyList(), rules(), configNodes)
+        val customKeys = if (perApp) XrayConfigGenerator.customRouteKeys(main, apps, configNodes) else emptyList()
+        val routes = plan.routes().map { route ->
+            val index = customKeys.indexOf(if (route.auto()) autoSlotKey(route.applications().first()) else route.node().key())
+            ActiveRoute(route.node(), route.main(), if (perApp) route.applications() else emptyList(),
+                if (route.main()) AppProxyLauncher.SOCKS_PORT else XrayConfigGenerator.routeCheckPort(index),
+                id = route.id(), auto = route.auto(),
+                ruleTag = XrayConfigGenerator.applicationRouteRuleTag(if (route.main()) -1 else index))
+        }
+        return PreparedConnection(config, tun, routes, gateway, apps, if (perApp) autoChoices else emptyMap(), plan, runtimeControl)
     }
+
+    private fun autoSlotKey(application: String) = "auto-slot:" + AppRoutes.normalize(application)
+
+    private fun autoSlot(application: String, node: ProxyNode) = ProxyNode(autoSlotKey(application), node.name(), node.protocol(),
+        node.address(), node.port(), node.credential(), node.options(), node.sourceLink())
 
     /**
      * Has Xray check the whole config before anything running is touched. When several servers share
@@ -1198,8 +1865,16 @@ class PerRouteController(
 
     private fun activate(prepared: PreparedConnection) {
         activeRoutes = prepared.routes
-        synchronized(routeCheckLock) { routeChecks = routeChecks.filterKeys { it == DIRECT_ROUTE_KEY } }
-        if (!prepared.tun) startConnectChecks(prepared.routes)
+        runningConfig = prepared.config
+        runningPrepared = prepared
+        inspector.clear()
+        synchronized(routeCheckLock) {
+            routeChecks = routeChecks.filterKeys { it == DIRECT_ROUTE_KEY } +
+                if (prepared.tun) emptyMap() else prepared.routes.associate { it.id to RouteCheck(RouteCheckState.CHECKING) }
+        }
+        if (prepared.tun) recovery.stopWatching()
+        else recovery.start(prepared.routes.map { RouteTarget(it.id, cleanName(it.node.name()), it.node.key(), it.checkPort) }, routeMonitoring())
+        startAutoLoop()
     }
 
     @Synchronized
@@ -1214,6 +1889,8 @@ class PerRouteController(
         if ((mode == ConnectionMode.NATIVE_PER_APP || mode == ConnectionMode.TUN_COMPATIBILITY) && apps.isEmpty()) {
             return ActionResult(false, "Select at least one application for Smart per-app.")
         }
+        // Applications in Auto mode are decided now, from the latest scores, and the choices are saved.
+        val autoChoices = autoChoices(persist = true)
         val plan = routePlan()
         if (!plan.ready()) return ActionResult(false, missingRouteMessage(plan))
         if (!backend.coreReady()) return ActionResult(false, "Xray is not installed. Install it from Settings.")
@@ -1234,17 +1911,22 @@ class PerRouteController(
                     log("Fastest server selected: ${cleanName(node.name())} (${fastest.second} ms).")
                 }
             }
-            val prepared = prepare(node, mode, apps)
+            // A new fastest main server can change what an Auto app without measurements falls back to.
+            val prepared = prepare(node, mode, apps, if (node.key() == plan.main()?.key()) autoChoices else autoChoices(persist = true))
             val tun = prepared.tun
             validate(prepared)
             if (mode == ConnectionMode.NATIVE_PER_APP && killSwitch()) {
                 backend.applyPerApp(apps)
             }
+            backend.stopGateway()
             backend.stop()
             backend.start(prepared.config, tun)
             if (!tun) {
                 Thread.sleep(250)
                 if (!backend.isRunning()) error("Xray stopped immediately after launch.")
+                // The gateway listens where the per-app driver sends each app, and forwards to the app's own
+                // inbound. It must be up before the driver starts, or the apps would point at a closed port.
+                if (prepared.gateway) startGateway(prepared)
                 if (mode == ConnectionMode.SYSTEM_PROXY) {
                     backend.applySystemProxy()
                 } else if (mode == ConnectionMode.NATIVE_PER_APP && !killSwitch()) {
@@ -1267,6 +1949,7 @@ class PerRouteController(
         } catch (e: Throwable) {
             if (mode == ConnectionMode.NATIVE_PER_APP && !killSwitch()) runCatching { backend.restorePerApp() }
             if (mode == ConnectionMode.SYSTEM_PROXY) runCatching { backend.restoreSystemProxy() }
+            runCatching { backend.stopGateway() }
             backend.stop()
             activeMode = null
             connectionReady = false
@@ -1295,16 +1978,35 @@ class PerRouteController(
 
         val previous = selectedNode() ?: return ActionResult(false, "The active server was not found.")
         val mode = activeMode ?: state.connectionMode()
-        val apps = applications()
+        val running = runningPrepared
+        val apps = running?.applications ?: applications()
+        val choices = running?.autoChoices ?: autoChoices(persist = false)
         val prepared: PreparedConnection
         val fallback: PreparedConnection
         try {
-            fallback = prepare(previous, mode, apps)
-            prepared = prepare(target, mode, apps)
+            fallback = prepare(previous, mode, apps, choices)
+            prepared = prepare(target, mode, apps, choices)
             validate(prepared)
         } catch (invalid: Throwable) {
             return ActionResult(false, "Could not switch servers; the current connection was left untouched: ${message(invalid)}")
         }
+        // In place first: only the main route's outbound is replaced, so custom and Auto routes keep their
+        // connections. When that is not possible (embedded profiles, a server that is also a custom route),
+        // the core is restarted as before, with the previous connection restored if the restart fails.
+        val previousRouteId = activeRoutes.firstOrNull { it.main }?.id ?: previous.key()
+        val inPlace = runCatching { applyRouteChange(previousRouteId, prepared) }
+        if (inPlace.getOrNull() == true) {
+            state.setSelectedNodeKey(key)
+            save()
+            val main = activeRoutes.first { it.main }
+            recovery.remove(previousRouteId)
+            recovery.replace(RouteTarget(main.id, cleanName(target.name()), target.key(), main.checkPort))
+            synchronized(routeCheckLock) { routeChecks = routeChecks - previousRouteId + (main.id to RouteCheck(RouteCheckState.CHECKING)) }
+            stateListeners.forEach { it(true) }
+            log("Switched to ${cleanName(target.name())}. Custom and Auto routes kept running.")
+            return ActionResult(true, "Switched to ${cleanName(target.name())}.")
+        }
+        inPlace.exceptionOrNull()?.let { log("The main server could not be replaced in place (${message(it)}); restarting the core.") }
         phase = ConnectionPhase.CONNECTING
         connectionReady = false
         state.setSelectedNodeKey(key)
@@ -1340,6 +2042,7 @@ class PerRouteController(
             } else {
                 if (mode == ConnectionMode.NATIVE_PER_APP && !killSwitch()) runCatching { backend.restorePerApp() }
                 if (mode == ConnectionMode.SYSTEM_PROXY) runCatching { backend.restoreSystemProxy() }
+                runCatching { backend.stopGateway() }
                 backend.stop()
                 activeMode = null
                 connectionReady = false
@@ -1366,6 +2069,7 @@ class PerRouteController(
             backend.restoreSystemProxy()
         }.exceptionOrNull()
         backend.stop()
+        runCatching { backend.stopGateway() }
         activeMode = null
         connectionReady = false
         phase = ConnectionPhase.DISCONNECTED
@@ -1395,9 +2099,12 @@ class PerRouteController(
             var latencyTick = 0
             var failedLatencyChecks = 0
             val lastActive = mutableMapOf<Int, Long>()
+            var qualityTick = 0
             while (telemetryGeneration.get() == generation) {
                 try {
-                    val counters = backend.readInboundCounters()
+                    // With the gateway the per-app byte counts are already in this process, exact and free;
+                    // without it they are read from the core's statistics API.
+                    val counters = if (gatewayActive) gatewayCountersAsInbound(apps) else backend.readInboundCounters()
                     val nowNanos = System.nanoTime()
                     val elapsed = ((nowNanos - previousAt) / 1_000_000_000.0).coerceAtLeast(.2)
                     val nowMillis = System.currentTimeMillis()
@@ -1447,6 +2154,10 @@ class PerRouteController(
                         latencyTick = 0
                         val current = selectedNode()
                         val result = current?.let { latencyProbe.probe(it, 2_000) }
+                        // Every twelfth check (once a minute) also counts as quality evidence for the main server.
+                        if (current != null && result != null && ++qualityTick % 12 == 0) {
+                            quality.recordReachability(current.key(), if (result.reachable()) result.milliseconds() else -1L)
+                        }
                         if (result?.reachable() == true) {
                             latency = result.milliseconds()
                             failedLatencyChecks = 0
@@ -1473,12 +2184,33 @@ class PerRouteController(
         }
     }
 
+    /** The gateway's per-app totals in the same shape as the core's inbound counters. */
+    private fun gatewayCountersAsInbound(apps: List<String>): Map<String, Long> {
+        val counters = backend.gatewayCounters()
+        val byPath = counters.mapKeys { AppRoutes.normalize(it.key) }
+        val result = HashMap<String, Long>()
+        apps.forEachIndexed { index, path ->
+            val app = byPath[AppRoutes.normalize(path)] ?: return@forEachIndexed
+            val tag = XrayConfigGenerator.perAppTag(index)
+            result["inbound>>>$tag>>>traffic>>>downlink"] = app.downloadBytes()
+            result["inbound>>>$tag>>>traffic>>>uplink"] = app.uploadBytes()
+        }
+        return result
+    }
+
     private fun stopTelemetry() {
         markSession(false)
         telemetryGeneration.incrementAndGet()
+        autoLoopGeneration.incrementAndGet()
         connectedAtMillis = 0L
         traffic = TrafficSnapshot()
         activeRoutes = emptyList()
+        runningConfig = null
+        runningPrepared = null
+        gatewayActive = false
+        inspector.gatewayActive(false)
+        inspector.clear()
+        recovery.stopWatching()
         synchronized(routeCheckLock) { routeChecks = routeChecks.filterKeys { it == DIRECT_ROUTE_KEY } }
     }
 
@@ -1510,8 +2242,18 @@ class PerRouteController(
                     if (desiredConnected && isConnected()) {
                         Thread.ofVirtual().name("perroute-network-recheck").start {
                             try { Thread.sleep(1_500) } catch (_: InterruptedException) { return@start }
-                            if (desiredConnected && isConnected() &&
-                                !runCatching { backend.checkTunnel(AppProxyLauncher.SOCKS_PORT).success() }.getOrDefault(false)) {
+                            if (!desiredConnected || !isConnected()) return@start
+                            if (routeMonitoring() && activeRoutes.size > 1) {
+                                // Every route is checked and recovered on its own. Only when none of them
+                                // answers is the core itself assumed stuck and restarted.
+                                val routes = activeRoutes
+                                routes.forEach { recovery.retryNow(it.id) }
+                                val anyAlive = routes.any { runCatching { backend.checkTunnel(it.checkPort).success() }.getOrDefault(false) }
+                                if (!anyAlive && desiredConnected && isConnected()) {
+                                    log("Network changed and no route responds; reconnecting.")
+                                    backend.stop()
+                                }
+                            } else if (!runCatching { backend.checkTunnel(AppProxyLauncher.SOCKS_PORT).success() }.getOrDefault(false)) {
                                 log("Network changed and the tunnel no longer responds; reconnecting.")
                                 backend.stop()
                             }
@@ -1566,14 +2308,46 @@ class PerRouteController(
         connectionReady = false
         stopTelemetry()
         backend.stop()
+        runCatching { backend.stopGateway() }
         phase = ConnectionPhase.DISCONNECTED
+        recovery.close()
+        runCatching { quality.close() }
         history.close()
         saveExecutor.shutdown()
         runCatching { saveExecutor.awaitTermination(20, TimeUnit.SECONDS) }
         saveNow()
     }
 
+    /** How a backed-up preference is validated before it is written back. */
+    private enum class PreferenceType { BOOLEAN, INT, URL }
+
     companion object {
+        private const val PREF_V3_INITIALIZED = "v3.initialized"
+        private const val PREF_QUALITY_BACKGROUND = "v3.qualityBackground"
+        private const val PREF_ROUTE_MONITORING = "v3.routeMonitoring"
+        private const val PREF_TRAFFIC_GATEWAY = "v3.trafficGateway"
+        private const val PREF_AUTO_MARGIN = "v3.autoSwitchMargin"
+        private const val PREF_AUTO_COOLDOWN = "v3.autoCooldownMinutes"
+        private const val ROLLBACK_PREFIX = "rollback.pref."
+        /** How often applications in Auto mode are re-decided while connected. */
+        const val AUTO_INTERVAL_MILLIS = 60_000L
+
+        /** The preferences a backup carries. Anything else (window state, caches) stays on this computer. */
+        private val BACKUP_PREFERENCES = linkedMapOf(
+            "darkTheme" to PreferenceType.BOOLEAN,
+            "autoFailover" to PreferenceType.BOOLEAN,
+            "fastestOnConnect" to PreferenceType.BOOLEAN,
+            "autoSpeedTest" to PreferenceType.BOOLEAN,
+            "autoReconnect" to PreferenceType.BOOLEAN,
+            "perAppKillSwitch" to PreferenceType.BOOLEAN,
+            "updateFeedUrl" to PreferenceType.URL,
+            PREF_QUALITY_BACKGROUND to PreferenceType.BOOLEAN,
+            PREF_ROUTE_MONITORING to PreferenceType.BOOLEAN,
+            PREF_TRAFFIC_GATEWAY to PreferenceType.BOOLEAN,
+            PREF_AUTO_MARGIN to PreferenceType.INT,
+            PREF_AUTO_COOLDOWN to PreferenceType.INT
+        )
+
         const val MANUAL_SOURCE = "__manual__"
         const val IMPORTED_SOURCE = "__imported__"
         const val DIRECT_ROUTE_KEY = "__direct__"

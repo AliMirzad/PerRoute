@@ -8,7 +8,7 @@ plugins {
 }
 
 group = "app.perroute"
-version = "2.0.0"
+version = "3.0.0"
 
 val stageNativeResources = tasks.register<Sync>("stageNativeResources") {
     into(layout.buildDirectory.dir("native-resources"))
@@ -55,7 +55,7 @@ compose.desktop {
             appResourcesRootDir.set(layout.buildDirectory.dir("native-resources"))
             targetFormats(TargetFormat.Exe)
             packageName = "PerRoute"
-            packageVersion = "2.0.0"
+            packageVersion = "3.0.0"
             description = "Modern per-application proxy client"
             vendor = "PerRoute"
             windows {
@@ -109,4 +109,6 @@ tasks.register<JavaExec>("runAllTests") {
     classpath = sourceSets["test"].runtimeClasspath
     mainClass.set("app.perroute.AllTests")
     enableAssertions = true
+    // Shifts every PerRoute port so the real-core integration test can run next to an installed PerRoute.
+    systemProperty("perroute.portOffset", "20000")
 }

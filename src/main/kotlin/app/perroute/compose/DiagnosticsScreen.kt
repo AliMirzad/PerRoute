@@ -54,7 +54,7 @@ import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 
 /** The sections of the Diagnostics screen. */
-internal enum class DiagnosticsTab(val label: String) { Routes("Route checks"), Tester("Rule tester"), Loaded("Loaded rules") }
+internal enum class DiagnosticsTab(val label: String) { Routes("Route checks"), Inspector("Inspector"), Tester("Rule tester"), Loaded("Loaded rules") }
 
 /** Route checks, the rule tester and the list of rules loaded in the running core. */
 @Composable
@@ -92,29 +92,37 @@ internal fun DiagnosticsScreen(shell: Shell) {
         if (controller.routeChecks()[PerRouteController.DIRECT_ROUTE_KEY] == null) recheck(PerRouteController.DIRECT_ROUTE_KEY)
     }
 
+    val inspecting = shell.diagnosticsTab == DiagnosticsTab.Inspector
     ScreenPanel(
-        "Connection diagnostics", "Check your routes and see which rule applies.",
+        if (inspecting) "Connection inspector" else "Connection diagnostics",
+        if (inspecting) "What each app is connected to, which rule applies, and how each connection is routed."
+        else "Check your routes and see which rule applies.",
         actions = { PrimaryButton("Run checks", icon = Icons.Rounded.Refresh, busy = checking) { runChecks() } }
     ) {
         BoxWithConstraints(Modifier.fillMaxSize()) {
             val twoPane = maxWidth >= 820.dp
-            val tabs = if (twoPane) listOf(DiagnosticsTab.Routes, DiagnosticsTab.Loaded) else DiagnosticsTab.entries.toList()
+            val tabs = if (twoPane) listOf(DiagnosticsTab.Routes, DiagnosticsTab.Inspector, DiagnosticsTab.Loaded) else DiagnosticsTab.entries.toList()
             val current = if (shell.diagnosticsTab in tabs) shell.diagnosticsTab else DiagnosticsTab.Routes
             Row(Modifier.fillMaxSize(), horizontalArrangement = Arrangement.spacedBy(12.dp)) {
                 Column(Modifier.weight(1f).fillMaxHeight()) {
                     Segmented(tabs, current, { it.label }, Modifier.fillMaxWidth(), icon = {
-                        when (it) { DiagnosticsTab.Routes -> Icons.Rounded.Search; DiagnosticsTab.Tester -> Icons.Rounded.Description; DiagnosticsTab.Loaded -> Icons.Rounded.Description }
+                        when (it) {
+                            DiagnosticsTab.Routes -> Icons.Rounded.Search
+                            DiagnosticsTab.Inspector -> Icons.Rounded.Apps
+                            DiagnosticsTab.Tester, DiagnosticsTab.Loaded -> Icons.Rounded.Description
+                        }
                     }) { shell.diagnosticsTab = it }
                     Spacer(Modifier.height(9.dp))
                     Box(Modifier.weight(1f).fillMaxWidth()) {
                         when (current) {
                             DiagnosticsTab.Routes -> RouteChecks(shell, dns, now, ::recheck)
+                            DiagnosticsTab.Inspector -> ConnectionInspector(shell)
                             DiagnosticsTab.Tester -> RuleTester(shell)
                             DiagnosticsTab.Loaded -> LoadedRules(shell, rules, loadedRuleIds)
                         }
                     }
                 }
-                if (twoPane) GlassCard(Modifier.width(300.dp).fillMaxHeight(), RowShape) { RuleTester(shell) }
+                if (twoPane && current != DiagnosticsTab.Inspector) GlassCard(Modifier.width(300.dp).fillMaxHeight(), RowShape) { RuleTester(shell) }
             }
         }
     }
@@ -142,8 +150,8 @@ private fun RouteChecks(shell: Shell, dns: DnsObservation?, now: Long, recheck: 
                     row.applications.isEmpty() -> "No selected app uses this server"
                     else -> joinNames(row.applications.map(::appName), 4)
                 },
-                row.main, row.applications, shell.routeChecks[row.node.key()], shell.connected, now
-            ) { recheck(row.node.key()) }
+                row.main, row.applications, shell.routeChecks[row.id], shell.connected, now
+            ) { recheck(row.id) }
         }
         if (!shell.connected && rows.isNotEmpty()) {
             InfoBanner("Not connected: servers can only be checked through the running connection. Their last results are cleared when you disconnect.",

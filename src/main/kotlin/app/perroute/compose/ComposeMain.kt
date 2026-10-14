@@ -158,16 +158,52 @@ internal class AppsDraft {
     val selected = mutableStateListOf<String>()
     var routes by mutableStateOf(mapOf<String, String>())
     var advanced by mutableStateOf(false)
+    /** Normalized paths in Auto mode, and their candidate pools. */
+    var auto by mutableStateOf(setOf<String>())
+    var pools by mutableStateOf(mapOf<String, String>())
+    /** Apps switched to Manual whose server has not been chosen yet; saving waits for a choice. */
+    var manualPending by mutableStateOf(setOf<String>())
+    /** The application whose details the side panel shows. */
+    var focused by mutableStateOf<String?>(null)
 
     fun load(shell: Shell) {
         selected.clear(); selected.addAll(shell.apps)
         routes = shell.appRoutes
         advanced = shell.advanced
+        auto = shell.controller.autoApps()
+        pools = shell.controller.autoPools()
+        manualPending = emptySet()
+        if (focused != null && selected.none { it.equals(focused, true) }) focused = null
     }
 
     fun dirty(shell: Shell): Boolean =
-        advanced != shell.advanced || routes != shell.appRoutes ||
+        advanced != shell.advanced || routes != shell.appRoutes || auto != shell.controller.autoApps() ||
+            pools != shell.controller.autoPools() || manualPending.isNotEmpty() ||
             selected.map { it.lowercase() } != shell.apps.map { it.lowercase() }
+
+    fun mode(path: String): app.perroute.routing.AppRouteMode {
+        val key = AppRoutes.normalize(path)
+        return when {
+            key in auto -> app.perroute.routing.AppRouteMode.AUTO
+            routes.containsKey(key) || key in manualPending -> app.perroute.routing.AppRouteMode.MANUAL
+            else -> app.perroute.routing.AppRouteMode.MAIN
+        }
+    }
+
+    /** Main drops the Manual choice, as in version 2; Auto keeps it so switching back restores it. */
+    fun setMode(path: String, mode: app.perroute.routing.AppRouteMode) {
+        val key = AppRoutes.normalize(path)
+        when (mode) {
+            app.perroute.routing.AppRouteMode.MAIN -> { auto = auto - key; routes = routes - key; manualPending = manualPending - key }
+            app.perroute.routing.AppRouteMode.MANUAL -> { auto = auto - key; if (!routes.containsKey(key)) manualPending = manualPending + key }
+            app.perroute.routing.AppRouteMode.AUTO -> { auto = auto + key; manualPending = manualPending - key }
+        }
+    }
+
+    fun setPool(path: String, pool: app.perroute.routing.AutoCandidatePool) {
+        val key = AppRoutes.normalize(path)
+        pools = if (pool.kind() == app.perroute.routing.AutoCandidatePool.Kind.ALL) pools - key else pools + (key to pool.encode())
+    }
 
     fun isSelected(path: String) = selected.any { it.equals(path, true) }
 
@@ -178,6 +214,7 @@ internal class AppsDraft {
     fun assign(path: String, nodeKey: String?) {
         val key = AppRoutes.normalize(path)
         routes = if (nodeKey == null) routes - key else routes + (key to nodeKey)
+        manualPending = manualPending - key
     }
 }
 
@@ -201,6 +238,7 @@ internal class Shell(
     var traffic by mutableStateOf(controller.trafficSnapshot())
     var routeChecks by mutableStateOf(controller.routeChecks())
     var activeRoutes by mutableStateOf(controller.activeRoutes())
+    var routeHealth by mutableStateOf(controller.routeHealth())
     var busy by mutableStateOf(false)
     var tab by mutableStateOf(Tab.Connection)
     var toast by mutableStateOf(controller.takeStartupProblem())
@@ -234,6 +272,7 @@ internal class Shell(
         traffic = controller.trafficSnapshot()
         routeChecks = controller.routeChecks()
         activeRoutes = controller.activeRoutes()
+        routeHealth = controller.routeHealth()
     }
 
     fun notify(result: ActionResult) { toast = result.message; toastError = !result.ok }
@@ -272,8 +311,15 @@ internal class Shell(
         val paths = draft.selected.toList()
         val routes = draft.routes
         val advancedFlag = draft.advanced
+        val auto = draft.auto
+        val pools = draft.pools
+        val pending = draft.manualPending.filter { key -> paths.any { AppRoutes.normalize(it) == key } }
+        if (advancedFlag && pending.isNotEmpty()) {
+            notify(ActionResult(false, "Choose a server for ${joinNames(pending.map { key -> appName(paths.first { AppRoutes.normalize(it) == key }) })} or pick Main or Auto, then save."))
+            return
+        }
         run(done = { result -> if (result.ok) { draft.load(this); then() } }) {
-            controller.saveApplicationSetup(paths, routes, advancedFlag)
+            controller.saveApplicationSetup(paths, routes, advancedFlag, auto, pools)
         }
     }
 
@@ -688,7 +734,7 @@ internal fun PerRouteWindow(
             if (!shell.busy) shell.phase = controller.connectionPhase()
             shell.routeChecks = controller.routeChecks()
             shell.activeRoutes = controller.activeRoutes()
-            if (++tick % 4 == 0) shell.traffic = controller.trafficSnapshot()
+            if (++tick % 4 == 0) { shell.traffic = controller.trafficSnapshot(); shell.routeHealth = controller.routeHealth() }
         }
     }
 

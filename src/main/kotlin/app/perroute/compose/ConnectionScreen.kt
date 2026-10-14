@@ -22,6 +22,13 @@ import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.rounded.AltRoute
+import androidx.compose.material.icons.rounded.AutoAwesome
+import androidx.compose.material.icons.rounded.Block
+import androidx.compose.material.icons.rounded.ErrorOutline
+import androidx.compose.material.icons.rounded.ExpandLess
+import androidx.compose.material.icons.rounded.ExpandMore
+import androidx.compose.material.icons.rounded.GraphicEq
+import androidx.compose.material.icons.rounded.Info
 import androidx.compose.material.icons.rounded.Apps
 import androidx.compose.material.icons.rounded.CheckCircle
 import androidx.compose.material.icons.rounded.ChevronRight
@@ -40,6 +47,9 @@ import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.State
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.remember
+import androidx.compose.runtime.setValue
 import androidx.compose.runtime.produceState
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
@@ -67,13 +77,22 @@ internal fun rememberNow(): State<Long> = produceState(System.currentTimeMillis(
     while (isActive) { delay(1_000); value = System.currentTimeMillis() }
 }
 
-/** A server in use and the applications on it, as shown in route lists. */
-internal class RouteRow(val node: ProxyNode, val main: Boolean, val applications: List<String>)
+/**
+ * A route in use and the applications on it, as shown in route lists. Main and Manual routes are shared by
+ * the apps on one server; every app in Auto mode has a route of its own. [id] is what checks are stored under.
+ */
+internal class RouteRow(val node: ProxyNode, val main: Boolean, val applications: List<String>, val id: String = node.key(), val auto: Boolean = false)
 
 /** Routes of the running connection, or the ones a connection would use while disconnected. */
 internal fun routeRows(shell: Shell): List<RouteRow> =
-    if (shell.connected) shell.activeRoutes.map { RouteRow(it.node, it.main, it.applications) }
-    else shell.plan.routes().map { RouteRow(it.node(), it.main(), if (shell.perApp) it.applications() else emptyList()) }
+    if (shell.connected) shell.activeRoutes.map { RouteRow(it.node, it.main, it.applications, it.id, it.auto) }
+    else shell.plan.routes().map { RouteRow(it.node(), it.main(), if (shell.perApp) it.applications() else emptyList(), it.id(), it.auto()) }
+
+/** "Main", "Custom" (outlined) or "Auto" (teal): the three never differ by colour alone. */
+@Composable
+internal fun RouteKindBadge(row: RouteRow) {
+    if (row.auto) Badge("Auto", Cyan, icon = Icons.Rounded.AutoAwesome) else RouteBadge(row.main)
+}
 
 /** The connection mode as it is named in the interface. */
 internal fun modeLabel(mode: ConnectionMode): String = when (mode) {
@@ -144,9 +163,11 @@ internal fun ConnectionScreen(shell: Shell) {
     val summary = when {
         main == null -> "No server yet"
         !shell.perApp -> "1 server"
-        else -> "${plural(shell.apps.size, "app")}  •  ${plural(rows.size.coerceAtLeast(1), "server")}"
+        else -> "${plural(shell.apps.size, "app")}  •  ${plural(rows.map { it.node.key() }.distinct().size.coerceAtLeast(1), "server")}"
     }
     val buttonEnabled = !shell.busy || connecting || disconnecting
+    val monitoring = shell.controller.routeMonitoring()
+    val routeRecovering = shell.connected && monitoring && shell.routeHealth.any { it.health?.state() == app.perroute.routing.RouteHealthTracker.State.RECOVERING }
 
     BoxWithConstraints(Modifier.fillMaxSize()) {
         val narrow = maxWidth < 760.dp
@@ -208,6 +229,8 @@ internal fun ConnectionScreen(shell: Shell) {
                     if (shell.connected) formatRate(shell.traffic.uploadBytesPerSecond) else "—", Violet2, large)
                 StatTile(Modifier.weight(1f), Icons.Rounded.Schedule, "Session",
                     if (shell.connected) formatDuration(shell.traffic.connectedSeconds) else "—", White, large)
+                if (!narrow) StatTile(Modifier.weight(1f), Icons.Rounded.GraphicEq, "Main server latency",
+                    if (shell.connected) shell.traffic.latencyMillis?.let { "$it ms" } ?: "Measuring…" else "—", White, large)
             }
         }
         val endpoints: @Composable () -> Unit = {
@@ -235,11 +258,14 @@ internal fun ConnectionScreen(shell: Shell) {
                 Row(Modifier.fillMaxWidth().padding(horizontal = 11.dp)) {
                     Text("Server", color = Muted, fontSize = 10.sp, modifier = Modifier.weight(1.1f))
                     Text("Applications", color = Muted, fontSize = 10.sp, modifier = Modifier.weight(1.3f))
-                    Text("Last check", color = Muted, fontSize = 10.sp, modifier = Modifier.width(150.dp))
+                    Text(if (shell.connected && monitoring) "Status / Last check" else "Last check", color = Muted, fontSize = 10.sp, modifier = Modifier.width(170.dp))
                 }
                 Spacer(Modifier.height(5.dp))
                 Column(list, verticalArrangement = Arrangement.spacedBy(6.dp)) {
-                    rows.forEach { row -> RouteSummaryRow(shell, row, shell.routeChecks[row.node.key()], now) }
+                    rows.forEach { row ->
+                        val health = if (shell.connected) shell.routeHealth.firstOrNull { it.route.id == row.id }?.health else null
+                        RouteSummaryRow(shell, row, shell.routeChecks[row.id], health, monitoring, now)
+                    }
                 }
             }
         }
@@ -259,9 +285,18 @@ internal fun ConnectionScreen(shell: Shell) {
                     ConnectionMode.SYSTEM_PROXY -> "Applications that follow Windows proxy settings use the main server."
                     else -> "Network traffic is routed by the compatibility tunnel."
                 }, Modifier.fillMaxWidth(), icon = Icons.Rounded.Shield) { Badge(modeLabel(shell.mode), Muted) }
+                shell.connected && monitoring && rows.size > 1 -> {
+                    val affected = shell.routeHealth.count { it.health?.affected() == true }
+                    val healthy = shell.routeHealth.count { it.health?.state() == app.perroute.routing.RouteHealthTracker.State.HEALTHY }
+                    InfoBanner(
+                        "${plural(healthy, "route")} healthy" + (if (affected > 0) "  •  $affected recovering  •  Each route recovers on its own; the others keep running."
+                            else "  •  Each route is checked and recovered on its own."),
+                        Modifier.fillMaxWidth(), if (affected > 0) Amber else Muted, Icons.Rounded.AltRoute
+                    ) { Badge("Independent recovery", Cyan) }
+                }
                 shell.plan.advancedEffective() && rows.size > 1 -> InfoBanner(
-                    "${plural(rows.filter { !it.main }.sumOf { it.applications.size }, "app")} use a custom server. Custom servers are not switched automatically, " +
-                        "and changing the main server restarts every route briefly.",
+                    "${plural(rows.filter { !it.main }.sumOf { it.applications.size }, "app")} use their own route. Manual servers are never switched automatically; " +
+                        "changing the main server replaces only the main route.",
                     Modifier.fillMaxWidth(), icon = Icons.Rounded.AltRoute
                 ) { Badge("Advanced routing", Violet2) }
                 shell.plan.advancedEffective() -> InfoBanner("Advanced routing is on, but every selected app follows the main server.",
@@ -316,7 +351,8 @@ internal fun ConnectionScreen(shell: Shell) {
             BoxWithConstraints(card.weight(1f)) {
                 // Heights of the parts that are always there, so the hero and the route list can share the rest.
                 val fixed = 193.dp + if (localProxy) 54.dp else 0.dp
-                val rowsNeeded = if (main == null) 41.dp else 50.dp * rows.size + 6.dp * (rows.size - 1).coerceAtLeast(0)
+                val recovering = routeRecovering
+                val rowsNeeded = (if (main == null) 41.dp else 50.dp * rows.size + 6.dp * (rows.size - 1).coerceAtLeast(0)) + if (recovering) 196.dp else 0.dp
                 val large = maxHeight >= fixed + 150.dp + rowsNeeded
                 val routesMax = (maxHeight - fixed - (if (large) 134.dp else 81.dp)).coerceAtLeast(50.dp)
                 Column(Modifier.fillMaxSize().padding(18.dp)) {
@@ -337,7 +373,8 @@ internal fun ConnectionScreen(shell: Shell) {
                     banner()
                 }
             }
-            shortcuts()
+            // While a route recovers its details need the room more than the shortcuts do.
+            if (!routeRecovering) shortcuts()
         } else Column(Modifier.fillMaxSize().verticalScroll(rememberScrollState()), verticalArrangement = Arrangement.spacedBy(11.dp)) {
             Column(card.padding(16.dp)) {
                 compactHero()
@@ -361,13 +398,24 @@ private fun activeAppSummary(traffic: TrafficSnapshot): String {
     return "Active: " + active.joinToString(", ") { "${appName(it.path)} (${formatBytes(it.downloadBytes + it.uploadBytes)})" }
 }
 
-/** One server with its applications and the result of its own last check. */
+/**
+ * One route with its applications and its own health. A route that is recovering expands to say that only it
+ * is affected, what protects its apps meanwhile, and what has happened so far.
+ */
 @Composable
-private fun RouteSummaryRow(shell: Shell, row: RouteRow, check: RouteCheck?, now: Long) {
+private fun RouteSummaryRow(shell: Shell, row: RouteRow, check: RouteCheck?, health: app.perroute.routing.RouteHealthTracker.Snapshot?,
+                            monitoring: Boolean, now: Long) {
     val activePaths = shell.traffic.applications.filter { it.active }.map { it.path.lowercase() }.toSet()
+    val affected = shell.connected && monitoring && health?.affected() == true
+    var expanded by remember(row.id) { mutableStateOf(false) }
+    val showDetails = affected && (expanded || health?.state() == app.perroute.routing.RouteHealthTracker.State.RECOVERING)
+    val borderColor = if (affected) Amber.copy(.65f) else NeutralOverlay.copy(.07f)
+    Column(
+        Modifier.fillMaxWidth().clip(RowShape).background(if (affected) Amber.copy(.06f) else NeutralOverlay.copy(if (ActivePalette.isDark) .14f else .04f))
+            .border(1.dp, borderColor, RowShape)
+    ) {
     Row(
-        Modifier.fillMaxWidth().clip(RowShape).background(NeutralOverlay.copy(if (ActivePalette.isDark) .14f else .04f))
-            .border(1.dp, NeutralOverlay.copy(.07f), RowShape).padding(horizontal = 11.dp, vertical = 9.dp),
+        Modifier.fillMaxWidth().padding(horizontal = 11.dp, vertical = 9.dp),
         verticalAlignment = Alignment.CenterVertically
     ) {
         Row(Modifier.weight(1.1f), verticalAlignment = Alignment.CenterVertically) {
@@ -375,7 +423,7 @@ private fun RouteSummaryRow(shell: Shell, row: RouteRow, check: RouteCheck?, now
             Spacer(Modifier.width(9.dp))
             EllipsisText(serverName(row.node), White, 12.5.sp, Modifier.weight(1f, fill = false), FontWeight.SemiBold)
             Spacer(Modifier.width(7.dp))
-            RouteBadge(row.main)
+            RouteKindBadge(row)
             Spacer(Modifier.width(8.dp))
         }
         Box(Modifier.weight(1.3f).padding(end = 8.dp)) {
@@ -398,7 +446,97 @@ private fun RouteSummaryRow(shell: Shell, row: RouteRow, check: RouteCheck?, now
                 }
             }
         }
-        RouteCheckStatus(check, shell.connected, now, Modifier.width(150.dp))
+        if (affected && health != null) RouteHealthStatus(health, now, Modifier.width(150.dp))
+        else RouteCheckStatus(check, shell.connected, now, Modifier.width(150.dp))
+        Box(Modifier.width(20.dp)) {
+            if (affected) IconAction(if (showDetails) Icons.Rounded.ExpandLess else Icons.Rounded.ExpandMore,
+                if (showDetails) "Hide recovery details" else "Show recovery details", size = 22.dp) { expanded = !showDetails }
+        }
+    }
+    if (showDetails && health != null) RecoveryDetails(shell, row, health, now)
+    }
+}
+
+/** Recovering (with the attempt and the countdown) or failed, for a route that is not healthy. */
+@Composable
+private fun RouteHealthStatus(health: app.perroute.routing.RouteHealthTracker.Snapshot, now: Long, modifier: Modifier) {
+    val recovering = health.state() == app.perroute.routing.RouteHealthTracker.State.RECOVERING
+    val wait = ((health.nextCheckAt() - now) / 1_000L).coerceAtLeast(0L)
+    Tooltip(health.lastError(), modifier) {
+        Row(verticalAlignment = Alignment.CenterVertically) {
+            if (recovering) CircularProgressIndicator(color = Amber, strokeWidth = 2.dp, modifier = Modifier.size(15.dp))
+            else Icon(Icons.Rounded.ErrorOutline, null, tint = Red, modifier = Modifier.size(16.dp))
+            Spacer(Modifier.width(7.dp))
+            Column {
+                Text(if (recovering) "Recovering" else "Route failed", color = if (recovering) Amber else Red, fontSize = 11.sp, fontWeight = FontWeight.SemiBold, maxLines = 1)
+                Text(if (recovering) "Attempt ${health.attempt()} of ${health.maxAttempts()}  •  Retry in ${wait}s"
+                    else "Checked again in ${wait}s", color = Muted, fontSize = 9.5.sp, maxLines = 1)
+            }
+        }
+    }
+}
+
+/** Why only this route is affected, what protects its apps, the timeline, and what the user can do. */
+@Composable
+private fun RecoveryDetails(shell: Shell, row: RouteRow, health: app.perroute.routing.RouteHealthTracker.Snapshot, now: Long) {
+    val killSwitch = shell.controller.killSwitch()
+    Column(Modifier.fillMaxWidth().padding(start = 11.dp, end = 11.dp, bottom = 11.dp)) {
+        Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(6.dp), verticalAlignment = Alignment.CenterVertically) {
+            if (killSwitch) Badge("Kill switch active", Red, icon = Icons.Rounded.Shield)
+            Badge("No direct fallback", Muted, icon = Icons.Rounded.Block)
+            Spacer(Modifier.weight(1f))
+            PrimaryButton("Retry now", Modifier.height(34.dp)) { shell.run { shell.controller.retryRoute(row.id) } }
+            SecondaryButton("Change server", Modifier.height(34.dp)) {
+                if (row.main) shell.navigate(Tab.Servers) else shell.navigate(Tab.Apps)
+            }
+        }
+        Spacer(Modifier.height(8.dp))
+        Row(
+            Modifier.fillMaxWidth().clip(RoundedCornerShape(14.dp)).background(NeutralOverlay.copy(if (ActivePalette.isDark) .18f else .04f))
+                .padding(12.dp)
+        ) {
+            Column(Modifier.weight(1f)) {
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    Icon(Icons.Rounded.Info, null, tint = Amber, modifier = Modifier.size(16.dp))
+                    Spacer(Modifier.width(7.dp))
+                    Text("Only this route is affected", color = Amber, fontSize = 12.sp, fontWeight = FontWeight.SemiBold)
+                }
+                Spacer(Modifier.height(5.dp))
+                val apps = joinNames(row.applications.map(::appName)).ifBlank { "Apps on this route" }
+                Text("$apps ${if (row.applications.size == 1) "is" else "are"} waiting for ${serverName(row.node)}. " +
+                    "Other apps and routes keep working. " +
+                    (if (killSwitch) "The kill switch keeps these apps offline until the route is back."
+                    else "Their connections fail instead of leaving through your regular connection.") +
+                    (if (row.auto) " Auto moves the app to another working server when this one does not recover." else ""),
+                    color = White.copy(.82f), fontSize = 10.5.sp, lineHeight = 15.sp)
+                if (health.lastError().isNotBlank()) {
+                    Spacer(Modifier.height(5.dp))
+                    Text("Last error: ${health.lastError()}", color = Muted, fontSize = 9.5.sp, lineHeight = 13.sp)
+                }
+            }
+            Spacer(Modifier.width(14.dp))
+            Column(Modifier.weight(1f)) {
+                Text("Recovery timeline", color = Muted, fontSize = 10.sp, fontWeight = FontWeight.SemiBold)
+                Spacer(Modifier.height(5.dp))
+                health.events().takeLast(5).forEach { event ->
+                    val color = when (event.type()) {
+                        app.perroute.routing.RouteHealthTracker.EventType.CHECK_FAILED, app.perroute.routing.RouteHealthTracker.EventType.EXHAUSTED -> Red
+                        app.perroute.routing.RouteHealthTracker.EventType.RECOVERED, app.perroute.routing.RouteHealthTracker.EventType.CHECK_PASSED -> Cyan
+                        else -> Violet2
+                    }
+                    Row(Modifier.padding(vertical = 2.dp), verticalAlignment = Alignment.Top) {
+                        Box(Modifier.padding(top = 4.dp)) { StatusDot(color, 7.dp) }
+                        Spacer(Modifier.width(7.dp))
+                        Text(java.time.Instant.ofEpochMilli(event.atMillis()).atZone(java.time.ZoneId.systemDefault()).toLocalTime()
+                            .withNano(0).toString(), color = Muted, fontSize = 9.5.sp, modifier = Modifier.width(52.dp))
+                        Column {
+                            Text(event.title(), color = White, fontSize = 10.sp, fontWeight = FontWeight.SemiBold)
+                            if (event.detail().isNotBlank()) Text(event.detail(), color = Muted, fontSize = 9.sp, lineHeight = 12.sp)
+                        }
+                    }
+                }
+            }
+        }
     }
 }
 
