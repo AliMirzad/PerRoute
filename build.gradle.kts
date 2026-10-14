@@ -109,4 +109,6 @@ tasks.register<JavaExec>("runAllTests") {
     classpath = sourceSets["test"].runtimeClasspath
     mainClass.set("app.perroute.AllTests")
     enableAssertions = true
+    // Shifts every PerRoute port so the real-core integration test can run next to an installed PerRoute.
+    systemProperty("perroute.portOffset", "20000")
 }

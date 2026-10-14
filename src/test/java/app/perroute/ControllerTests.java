@@ -627,7 +627,7 @@ final class ControllerTests {
         @Override public void restoreSystemProxy() {}
         @Override public ProxyHealthCheck.Result checkTunnel(int socksPort) {
             return failingPorts.contains(socksPort) ? new ProxyHealthCheck.Result(false, "The proxy could not reach the test endpoint")
-                    : new ProxyHealthCheck.Result(true, "SOCKS tunnel reached test:443");
+                    : new ProxyHealthCheck.Result(true, "Tunnel answered from test (HTTP 204)");
         }
         @Override public Map<String, Long> readInboundCounters() { return Map.of(); }
         @Override public app.perroute.compose.RouteReport lookupPublicAddress(Integer socksPort) {

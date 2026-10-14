@@ -101,7 +101,7 @@ private class DemoBackend(private val perAppDriver: Boolean = true) : Connection
     override fun restoreSystemProxy() {}
     override fun checkTunnel(socksPort: Int): ProxyHealthCheck.Result =
         if (socksPort == XrayConfigGenerator.routeCheckPort(1)) ProxyHealthCheck.Result(false, "The proxy could not reach the test endpoint (SOCKS 4).")
-        else ProxyHealthCheck.Result(true, "SOCKS tunnel reached cloudflare.com:443")
+        else ProxyHealthCheck.Result(true, "Tunnel answered from cp.cloudflare.com (HTTP 204)")
     override fun readInboundCounters(): Map<String, Long> {
         val seconds = (System.currentTimeMillis() - startedAt) / 250.0
         val counters = LinkedHashMap<String, Long>()
