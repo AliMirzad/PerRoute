@@ -1,5 +1,10 @@
 package app.perroute.compose
 
+import app.perroute.backend.api.ConnectionBackend
+import app.perroute.backend.api.ApplicationDescriptor
+import app.perroute.backend.api.RouteObservation
+import app.perroute.backend.api.UpdateDescriptor
+
 import app.perroute.model.AppRoutes
 import app.perroute.model.AppState
 import app.perroute.model.ConnectionMode
@@ -11,10 +16,6 @@ import app.perroute.parser.ParseResult
 import app.perroute.persistence.AppStateStore
 import app.perroute.service.AppDirectories
 import app.perroute.service.AppProxyLauncher
-import app.perroute.service.CoreInstaller
-import app.perroute.service.ProcessDiscovery
-import app.perroute.service.InstalledApplicationDiscovery
-import app.perroute.service.ProxiFyreManager
 import app.perroute.service.ServerLatencyProbe
 import app.perroute.service.SecureUpdateService
 import app.perroute.service.SubscriptionService
@@ -95,9 +96,6 @@ data class TrafficPoint(
 
 /** Where the connection is in its life cycle. Routing settings are editable only in DISCONNECTED. */
 enum class ConnectionPhase { DISCONNECTED, CONNECTING, CONNECTED, DISCONNECTING }
-
-/** The public address seen through one route, or why it could not be read. */
-data class RouteReport(val ip: String? = null, val country: String? = null, val error: String? = null)
 
 /** The states a route check can be in. */
 enum class RouteCheckState { NOT_CHECKED, CHECKING, PASSED, FAILED }
@@ -200,13 +198,12 @@ data class ImportOutcome(val preview: ImportPreview? = null, val error: String? 
 class PerRouteController @JvmOverloads constructor(
     private val state: AppState,
     private val store: AppStateStore,
-    private val backend: ConnectionBackend = SystemConnectionBackend(),
+    private val backend: ConnectionBackend,
     private val preferences: Preferences = Preferences.userNodeForPackage(PerRouteController::class.java),
     recoveryPolicy: RouteHealthTracker.Policy = RouteHealthTracker.Policy.DEFAULT,
     private val autoIntervalMillis: Long = AUTO_INTERVAL_MILLIS
 ) : AutoCloseable {
     private val subscriptionService by lazy { SubscriptionService() }
-    private val coreInstaller by lazy { CoreInstaller() }
     private val processDiscovery = Any()
     private val installedApplicationDiscovery = Any()
     private val configGenerator by lazy { XrayConfigGenerator() }
@@ -214,8 +211,6 @@ class PerRouteController @JvmOverloads constructor(
     private val realTunnelProbe by lazy { RealTunnelProbe() }
     private val qrImport by lazy { QrImportService() }
     private val history by lazy { TrafficHistoryStore(AppDirectories.dataDirectory().resolve("traffic-history.json")) }
-    private val updateService by lazy { SecureUpdateService() }
-    private val proxiFyre by lazy { ProxiFyreManager() }
     private val logListeners = CopyOnWriteArrayList<(String) -> Unit>()
     private val stateListeners = CopyOnWriteArrayList<(Boolean) -> Unit>()
     @Volatile private var activeMode: ConnectionMode? = null
@@ -224,7 +219,7 @@ class PerRouteController @JvmOverloads constructor(
     @Volatile private var traffic = TrafficSnapshot()
     @Volatile private var connectedAtMillis = 0L
     private val telemetryGeneration = AtomicLong()
-    @Volatile private var availableUpdate: SecureUpdateService.UpdateInfo? = null
+    @Volatile private var availableUpdate: UpdateDescriptor? = null
     private val updateDownloading = AtomicBoolean(false)
     private val reconnectRunning = AtomicBoolean(false)
     private val trafficPoints = CopyOnWriteArrayList<TrafficPoint>()
@@ -233,9 +228,9 @@ class PerRouteController @JvmOverloads constructor(
     @Volatile private var updateProgress = 0
     @Volatile private var updateDownloadMessage = ""
     @Volatile private var downloadedUpdate: Path? = null
-    @Volatile private var runningAppCache = emptyList<ProcessDiscovery.RunningApplication>()
+    @Volatile private var runningAppCache = emptyList<ApplicationDescriptor>()
     @Volatile private var runningAppCacheAt = 0L
-    @Volatile private var installedAppCache = emptyList<InstalledApplicationDiscovery.InstalledApplication>()
+    @Volatile private var installedAppCache = emptyList<ApplicationDescriptor>()
     @Volatile private var installedAppCacheAt = 0L
     @Volatile private var latencyCache = emptyMap<String, Long>()
     @Volatile private var speedCache = emptyMap<String, Long>()
@@ -381,7 +376,7 @@ class PerRouteController @JvmOverloads constructor(
         val feed = updateFeedUrl()
         if (feed.isBlank()) return ActionResult(false, "Enter your signed HTTPS update feed URL first.")
         return try {
-            val update = updateService.check(feed)
+            val update = backend.checkForUpdate(feed)
             availableUpdate = update.takeIf { it.newer() }
             if (update.newer()) ActionResult(true, "PerRoute ${update.version()} is available.")
             else ActionResult(true, "PerRoute ${SecureUpdateService.CURRENT_VERSION} is up to date.")
@@ -394,7 +389,7 @@ class PerRouteController @JvmOverloads constructor(
     fun downloadAvailableUpdate(progress: (Int) -> Unit): ActionResult {
         val update = availableUpdate ?: return ActionResult(false, "Check for a new version first.")
         return try {
-            val path = updateService.download(update, Consumer(progress))
+            val path = backend.downloadUpdate(update, Consumer(progress))
             downloadedUpdate = path
             ActionResult(true, "Verified update downloaded to ${path.parent}.")
         } catch (error: Throwable) {
@@ -420,7 +415,7 @@ class PerRouteController @JvmOverloads constructor(
         val installer = downloadedUpdatePath()
             ?: return ActionResult(false, "Download and verify an update first.")
         return try {
-            ProcessBuilder(installer.toString()).start()
+            backend.launchUpdate(installer)
             ActionResult(true, "Verified installer started.")
         } catch (error: Throwable) {
             ActionResult(false, message(error))
@@ -1198,7 +1193,7 @@ class PerRouteController @JvmOverloads constructor(
         return ActionResult(true, "Application removed.")
     }
 
-    fun runningApplications(forceRefresh: Boolean = false): List<ProcessDiscovery.RunningApplication> {
+    fun runningApplications(forceRefresh: Boolean = false): List<ApplicationDescriptor> {
         val now = System.currentTimeMillis()
         if (!forceRefresh && now - runningAppCacheAt < 3_000 && runningAppCache.isNotEmpty()) {
             return runningAppCache
@@ -1216,7 +1211,7 @@ class PerRouteController @JvmOverloads constructor(
         }
     }
 
-    fun installedApplications(forceRefresh: Boolean = false): List<InstalledApplicationDiscovery.InstalledApplication> {
+    fun installedApplications(forceRefresh: Boolean = false): List<ApplicationDescriptor> {
         val now = System.currentTimeMillis()
         if (!forceRefresh && now - installedAppCacheAt < 300_000 && installedAppCache.isNotEmpty()) {
             return installedAppCache
@@ -1424,12 +1419,12 @@ class PerRouteController @JvmOverloads constructor(
         val previous = routeChecks[key]
         setRouteCheck(key, (previous ?: RouteCheck()).copy(state = RouteCheckState.CHECKING))
         val started = System.nanoTime()
-        val report = runCatching { backend.lookupPublicAddress(socksPort) }.getOrElse { RouteReport(error = message(it)) }
+        val report = runCatching { backend.lookupPublicAddress(socksPort) }.getOrElse { RouteObservation(null, null, message(it)) }
         val elapsed = ((System.nanoTime() - started) / 1_000_000L).coerceAtLeast(1L)
-        setRouteCheck(key, if (report.ip != null) RouteCheck(RouteCheckState.PASSED, System.currentTimeMillis(), elapsed, report.ip, report.country)
-            else RouteCheck(RouteCheckState.FAILED, System.currentTimeMillis(), detail = report.error ?: "No answer"))
+        setRouteCheck(key, if (report.ip() != null) RouteCheck(RouteCheckState.PASSED, System.currentTimeMillis(), elapsed, report.ip(), report.country())
+            else RouteCheck(RouteCheckState.FAILED, System.currentTimeMillis(), detail = report.error() ?: "No answer"))
         // A lookup through a server's own port is an end-to-end use of its tunnel.
-        if (nodeKey != null) quality.recordTunnel(nodeKey, report.ip != null, elapsed, report.error.orEmpty())
+        if (nodeKey != null) quality.recordTunnel(nodeKey, report.ip() != null, elapsed, report.error().orEmpty())
     }
 
     fun loadedRuleIds(): Set<String>? {
@@ -1760,7 +1755,7 @@ class PerRouteController @JvmOverloads constructor(
     }
 
     fun installCore(progress: (String) -> Unit): ActionResult = try {
-        coreInstaller.install(Consumer { text ->
+        backend.installCore(Consumer { text ->
             progress(text)
             log(text)
         })
@@ -1770,7 +1765,7 @@ class PerRouteController @JvmOverloads constructor(
     }
 
     fun installPerApp(progress: (String) -> Unit): ActionResult = try {
-        proxiFyre.downloadAndInstall(Consumer { text ->
+        backend.installPerApp(Consumer { text ->
             progress(text)
             log(text)
         })
@@ -2414,7 +2409,7 @@ class PerRouteController @JvmOverloads constructor(
             runCatching { Path.of(applicationPath).fileName.toString() }.getOrDefault(applicationPath)
                 .let { if (it.endsWith(".exe", ignoreCase = true)) it.dropLast(4) else it }
 
-        private fun isUserFacingApplication(app: ProcessDiscovery.RunningApplication): Boolean {
+        private fun isUserFacingApplication(app: ApplicationDescriptor): Boolean {
             return isUserFacingApplication(app.name(), app.path())
         }
 

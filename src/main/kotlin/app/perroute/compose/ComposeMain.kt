@@ -95,6 +95,7 @@ import androidx.compose.ui.window.Window
 import androidx.compose.ui.window.WindowPlacement
 import androidx.compose.ui.window.application
 import androidx.compose.ui.window.rememberWindowState
+import app.perroute.platform.bootstrap.PlatformBootstrap
 import app.perroute.model.AppRoutes
 import app.perroute.model.ConnectionMode
 import app.perroute.model.ProxyNode
@@ -369,38 +370,25 @@ internal class Shell(
     }
 }
 
-/** Runs as a small companion process in System proxy mode and restores the Windows proxy settings if PerRoute dies. */
-private fun runProxyGuard(dataDirectory: Path, parentPid: Long?) {
-    val proxy = app.perroute.service.WindowsSystemProxyManager(dataDirectory)
-    val parent = parentPid?.let { ProcessHandle.of(it).orElse(null) }
-    while (parent != null && parent.isAlive) {
-        if (!proxy.hasPendingRestore()) return
-        Thread.sleep(1_000)
-    }
-    Thread.sleep(1_500)
-    if (!proxy.hasPendingRestore()) return
-    val lock = runCatching { SingleInstanceLock.acquire(dataDirectory) }.getOrNull() ?: return
-    try {
-        runCatching { app.perroute.service.XrayProcessManager().stopOrphan() }
-        runCatching { proxy.restore() }
-    } finally {
-        lock.close()
-    }
-}
-
 /** Entry point: single-instance check, state loading, then the main window, the tray icon and the Quick Access panel. */
 fun main(args: Array<String>) {
+    val platform = try {
+        PlatformBootstrap.create()
+    } catch (error: UnsupportedOperationException) {
+        System.err.println(error.message)
+        return
+    }
     Perf.mark("main.enter")
     val dataDirectory = AppDirectories.dataDirectory()
     val guardIndex = args.indexOf("--guard")
     if (guardIndex >= 0) {
-        runProxyGuard(dataDirectory, args.getOrNull(guardIndex + 1)?.toLongOrNull())
+        platform.recovery().runGuard(args.getOrNull(guardIndex + 1)?.toLongOrNull())
         return
     }
     val lock = try { SingleInstanceLock.acquire(dataDirectory) } catch (e: Exception) { null }
     if (lock == null) return
     if ("--recover" in args) {
-        runCatching { app.perroute.service.WindowsSystemProxyManager(dataDirectory).restore() }
+        runCatching { platform.recovery().recover() }
         lock.close()
         return
     }
@@ -416,7 +404,7 @@ fun main(args: Array<String>) {
     val loaded = stateLoader.join()
     val state = loaded.getOrElse { app.perroute.model.AppState() }
     Perf.mark("state.loaded")
-    val controller = PerRouteController(state, store)
+    val controller = PerRouteController(state, store, platform.connections())
     loaded.exceptionOrNull()?.let { controller.reportStartupProblem("Saved settings could not be opened: ${it.message ?: it.javaClass.simpleName}") }
     Perf.mark("controller.ready")
     ActivePalette = if (controller.isDarkTheme()) DarkPalette else LightPalette

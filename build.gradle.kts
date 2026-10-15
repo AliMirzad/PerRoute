@@ -112,3 +112,24 @@ tasks.register<JavaExec>("runAllTests") {
     // Shifts every PerRoute port so the real-core integration test can run next to an installed PerRoute.
     systemProperty("perroute.portOffset", "20000")
 }
+
+// Runs platform selection, diagnostics and fake-backed maintenance/local/system regressions.
+tasks.register<JavaExec>("runPlatformBoundaryTests") {
+    dependsOn(tasks.named("testClasses"))
+    classpath = sourceSets["test"].runtimeClasspath
+    mainClass.set("app.perroute.PlatformBoundaryTests")
+    enableAssertions = true
+    systemProperty("perroute.portOffset", "20000")
+}
+
+// Keep the v3 suites reachable even when a legacy Windows-path test stops runAllTests on another host.
+listOf("Domain" to "domain", "Controller" to "controller").forEach { (name, suite) ->
+    tasks.register<JavaExec>("runV3${name}Tests") {
+        dependsOn(tasks.named("testClasses"))
+        classpath = sourceSets["test"].runtimeClasspath
+        mainClass.set("app.perroute.V3RegressionTests")
+        args(suite)
+        enableAssertions = true
+        systemProperty("perroute.portOffset", "20000")
+    }
+}
