@@ -1,5 +1,6 @@
 package app.perroute
 
+
 import androidx.compose.runtime.Composable
 import androidx.compose.ui.ExperimentalComposeUiApi
 import androidx.compose.ui.ImageComposeScene
@@ -9,20 +10,20 @@ import androidx.compose.ui.input.key.KeyEvent
 import androidx.compose.ui.input.key.KeyEventType
 import androidx.compose.ui.input.pointer.PointerEventType
 import androidx.compose.ui.unit.Density
-import app.perroute.compose.ActivePalette
-import app.perroute.compose.AddServersDialog
-import app.perroute.compose.ConnectionBackend
-import app.perroute.compose.DarkPalette
-import app.perroute.compose.DiagnosticsTab
-import app.perroute.compose.ImportMethod
-import app.perroute.compose.KeyboardNavigation
-import app.perroute.compose.LightPalette
-import app.perroute.compose.PerRouteController
+import app.perroute.compose.ui.components.ActivePalette
+import app.perroute.compose.ui.screens.AddServersDialog
+import app.perroute.backend.api.ConnectionBackend
+import app.perroute.compose.ui.components.DarkPalette
+import app.perroute.compose.ui.screens.DiagnosticsTab
+import app.perroute.compose.ui.screens.ImportMethod
+import app.perroute.compose.ui.components.KeyboardNavigation
+import app.perroute.compose.ui.components.LightPalette
+import app.perroute.compose.controller.PerRouteController
 import app.perroute.compose.PerRouteTheme
 import app.perroute.compose.PerRouteWindow
-import app.perroute.compose.QuickAccessWindow
-import app.perroute.compose.RouteReport
-import app.perroute.compose.SettingsCategory
+import app.perroute.compose.ui.components.QuickAccessWindow
+import app.perroute.backend.api.RouteObservation
+import app.perroute.compose.ui.screens.SettingsCategory
 import app.perroute.compose.Shell
 import app.perroute.compose.Tab
 import app.perroute.model.AppRoutes
@@ -35,9 +36,8 @@ import app.perroute.model.RouteRule
 import app.perroute.parser.SubscriptionParser
 import app.perroute.persistence.AppStateStore
 import app.perroute.service.AppProxyLauncher
-import app.perroute.service.InstalledApplicationDiscovery
-import app.perroute.service.ProcessDiscovery
-import app.perroute.service.ProxyHealthCheck
+import app.perroute.backend.api.ApplicationDescriptor
+import app.perroute.backend.api.TunnelStatus
 import app.perroute.service.XrayConfigGenerator
 import kotlinx.coroutines.CoroutineDispatcher
 import org.jetbrains.skia.EncodedImageFormat
@@ -86,6 +86,15 @@ private class DemoBackend(private val perAppDriver: Boolean = true) : Connection
     @Volatile private var startedAt = 0L
     @Volatile private var gatewayOn = false
     private val logListeners = java.util.concurrent.CopyOnWriteArrayList<Consumer<String>>()
+    override fun installCore(progress: Consumer<String>) { error("Not available in snapshots") }
+    override fun installPerApp(progress: Consumer<String>) { error("Not available in snapshots") }
+    override fun checkForUpdate(feed: String): app.perroute.backend.api.UpdateDescriptor = error("Not available in snapshots")
+    override fun downloadUpdate(update: app.perroute.backend.api.UpdateDescriptor, progress: Consumer<Int>): Path = error("Not available in snapshots")
+    override fun launchUpdate(installer: Path) { error("Not available in snapshots") }
+    override fun applyRuntimeChange(change: XrayConfigGenerator.RuntimeChange, newTag: String, oldTag: String, config: String) {
+        throw UnsupportedOperationException("Snapshot backend cannot change a running core")
+    }
+    override fun setGatewayLimits(applicationPath: String, downloadBytesPerSecond: Long, uploadBytesPerSecond: Long) {}
     override fun coreReady() = true
     override fun perAppReady() = perAppDriver
     override fun elevated() = false
@@ -98,6 +107,7 @@ private class DemoBackend(private val perAppDriver: Boolean = true) : Connection
     fun emit(line: String) = logListeners.forEach { it.accept(line) }
     override fun startGateway(routes: List<app.perroute.gateway.AppGateway.Route>) { gatewayOn = true }
     override fun stopGateway() { gatewayOn = false }
+    override fun addGatewayListener(listener: Consumer<app.perroute.gateway.GatewayConnection>) {}
     override fun gatewayRunning() = gatewayOn
     override fun gatewayCounters(): Map<String, app.perroute.gateway.AppGateway.Counters> {
         val seconds = (System.currentTimeMillis() - startedAt) / 1_000.0
@@ -110,9 +120,9 @@ private class DemoBackend(private val perAppDriver: Boolean = true) : Connection
     override fun stopPerAppSidecar() {}
     override fun applySystemProxy() {}
     override fun restoreSystemProxy() {}
-    override fun checkTunnel(socksPort: Int): ProxyHealthCheck.Result =
-        if (socksPort == XrayConfigGenerator.routeCheckPort(1)) ProxyHealthCheck.Result(false, "The proxy could not reach the test endpoint (SOCKS 4).")
-        else ProxyHealthCheck.Result(true, "Tunnel answered from cp.cloudflare.com (HTTP 204)")
+    override fun checkTunnel(socksPort: Int): TunnelStatus =
+        if (socksPort == XrayConfigGenerator.routeCheckPort(1)) TunnelStatus(false, "The proxy could not reach the test endpoint (SOCKS 4).")
+        else TunnelStatus(true, "Tunnel answered from cp.cloudflare.com (HTTP 204)")
     override fun readInboundCounters(): Map<String, Long> {
         val seconds = (System.currentTimeMillis() - startedAt) / 250.0
         val counters = LinkedHashMap<String, Long>()
@@ -122,27 +132,27 @@ private class DemoBackend(private val perAppDriver: Boolean = true) : Connection
         }
         return counters
     }
-    override fun lookupPublicAddress(socksPort: Int?): RouteReport = when (socksPort) {
-        null -> RouteReport("198.51.100.24", "IR")
-        AppProxyLauncher.SOCKS_PORT -> RouteReport("203.0.113.10", "DE")
-        XrayConfigGenerator.routeCheckPort(0) -> RouteReport("203.0.113.20", "NL")
-        else -> RouteReport(error = "The proxy could not reach www.cloudflare.com (SOCKS 4).")
+    override fun lookupPublicAddress(socksPort: Int?): RouteObservation = when (socksPort) {
+        null -> RouteObservation("198.51.100.24", "IR", null)
+        AppProxyLauncher.SOCKS_PORT -> RouteObservation("203.0.113.10", "DE", null)
+        XrayConfigGenerator.routeCheckPort(0) -> RouteObservation("203.0.113.20", "NL", null)
+        else -> RouteObservation(null, null, "The proxy could not reach www.cloudflare.com (SOCKS 4).")
     }
     override fun systemDnsServers() = listOf("192.0.2.53", "192.0.2.54")
     override fun publicResolver(): String? = "192.0.2.80"
     override fun installedApplications() = listOf(
-        InstalledApplicationDiscovery.InstalledApplication("Google Chrome", CHROME),
-        InstalledApplicationDiscovery.InstalledApplication("Telegram", TELEGRAM),
-        InstalledApplicationDiscovery.InstalledApplication("Discord", DISCORD),
-        InstalledApplicationDiscovery.InstalledApplication("Spotify", SPOTIFY),
-        InstalledApplicationDiscovery.InstalledApplication("Visual Studio Code", "C:\\Program Files\\Microsoft VS Code\\Code.exe"),
-        InstalledApplicationDiscovery.InstalledApplication("Mozilla Firefox", "C:\\Program Files\\Mozilla Firefox\\firefox.exe"),
-        InstalledApplicationDiscovery.InstalledApplication("Steam", "C:\\Program Files (x86)\\Steam\\steam.exe"),
-        InstalledApplicationDiscovery.InstalledApplication("A media player with a remarkably long product name, Professional Edition",
+        ApplicationDescriptor("Google Chrome", CHROME),
+        ApplicationDescriptor("Telegram", TELEGRAM),
+        ApplicationDescriptor("Discord", DISCORD),
+        ApplicationDescriptor("Spotify", SPOTIFY),
+        ApplicationDescriptor("Visual Studio Code", "C:\\Program Files\\Microsoft VS Code\\Code.exe"),
+        ApplicationDescriptor("Mozilla Firefox", "C:\\Program Files\\Mozilla Firefox\\firefox.exe"),
+        ApplicationDescriptor("Steam", "C:\\Program Files (x86)\\Steam\\steam.exe"),
+        ApplicationDescriptor("A media player with a remarkably long product name, Professional Edition",
             "C:\\Program Files\\Example Software Company\\Remarkably Long Product Folder\\Professional Edition\\bin\\x64\\player.exe")
     )
     override fun runningApplications() = listOf(
-        ProcessDiscovery.RunningApplication("chrome.exe", CHROME), ProcessDiscovery.RunningApplication("Telegram.exe", TELEGRAM))
+        ApplicationDescriptor("chrome.exe", CHROME), ApplicationDescriptor("Telegram.exe", TELEGRAM))
 }
 
 private class Demo(
@@ -359,7 +369,7 @@ fun main(args: Array<String>) {
         val file = Files.createTempFile("perroute-demo-", ".prb")
         shell.controller.exportBackup(file, app.perroute.backup.BackupService.Section.entries.toSet(), null)
         val request = shell.controller.openBackup(file, null).first!!
-        shell.showDialog { app.perroute.compose.RestorePreviewDialog(shell, request) {} }
+        shell.showDialog { app.perroute.compose.ui.screens.RestorePreviewDialog(shell, request) {} }
     }
     val scenes = listOf(
         Scene("100-servers-quality", advanced, tab = Tab.Servers, settleMillis = 2_500),

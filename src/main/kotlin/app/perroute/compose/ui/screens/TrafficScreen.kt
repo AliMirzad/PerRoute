@@ -1,4 +1,35 @@
-package app.perroute.compose
+package app.perroute.compose.ui.screens
+
+import app.perroute.compose.Shell
+import app.perroute.compose.controller.BandwidthState
+import app.perroute.compose.controller.BandwidthStatus
+import app.perroute.compose.controller.TrafficPoint
+import app.perroute.compose.ui.components.Amber
+import app.perroute.compose.ui.components.AppAvatar
+import app.perroute.compose.ui.components.ConfirmDialog
+import app.perroute.compose.ui.components.Cyan
+import app.perroute.compose.ui.components.DialogCard
+import app.perroute.compose.ui.components.EllipsisText
+import app.perroute.compose.ui.components.MenuButton
+import app.perroute.compose.ui.components.MenuEntry
+import app.perroute.compose.ui.components.MenuIcon
+import app.perroute.compose.ui.components.Muted
+import app.perroute.compose.ui.components.NeutralOverlay
+import app.perroute.compose.ui.components.PrimaryButton
+import app.perroute.compose.ui.components.Red
+import app.perroute.compose.ui.components.RowShape
+import app.perroute.compose.ui.components.ScreenPanel
+import app.perroute.compose.ui.components.Segmented
+import app.perroute.compose.ui.components.StatusDot
+import app.perroute.compose.ui.components.SurfaceHigh
+import app.perroute.compose.ui.components.Tooltip
+import app.perroute.compose.ui.components.Violet2
+import app.perroute.compose.ui.components.White
+import app.perroute.compose.ui.components.appName
+import app.perroute.compose.ui.components.fileName
+import app.perroute.compose.ui.components.formatBytes
+import app.perroute.compose.ui.components.formatRate
+import app.perroute.compose.ui.components.plural
 
 import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.background

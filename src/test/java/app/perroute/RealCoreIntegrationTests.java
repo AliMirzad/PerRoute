@@ -1,12 +1,16 @@
 package app.perroute;
 
-import app.perroute.compose.ActiveRoute;
-import app.perroute.compose.ConnectionBackend;
-import app.perroute.compose.InspectorRow;
-import app.perroute.compose.PerRouteController;
-import app.perroute.compose.RouteKind;
-import app.perroute.compose.RouteReport;
-import app.perroute.compose.SystemConnectionBackend;
+import app.perroute.compose.controller.ActiveRoute;
+import app.perroute.backend.api.ApplicationDescriptor;
+import app.perroute.backend.api.ConnectionBackend;
+import app.perroute.backend.api.RouteObservation;
+import app.perroute.backend.api.TunnelStatus;
+import app.perroute.backend.api.UpdateDescriptor;
+import app.perroute.compose.inspector.InspectorRow;
+import app.perroute.compose.controller.PerRouteController;
+import app.perroute.compose.inspector.RouteKind;
+
+import app.perroute.platform.windows.WindowsConnectionBackend;
 import app.perroute.gateway.AppGateway;
 import app.perroute.gateway.GatewayConnection;
 import app.perroute.model.AppRoutes;
@@ -18,10 +22,8 @@ import app.perroute.model.ProxyNode;
 import app.perroute.persistence.AppStateStore;
 import app.perroute.quality.QualitySample;
 import app.perroute.routing.RouteHealthTracker;
-import app.perroute.service.InstalledApplicationDiscovery;
+import app.perroute.service.AppDirectories;
 import app.perroute.service.PortOffset;
-import app.perroute.service.ProcessDiscovery;
-import app.perroute.service.ProxyHealthCheck;
 import app.perroute.service.XrayConfigGenerator;
 
 import java.io.ByteArrayOutputStream;
@@ -141,14 +143,19 @@ final class RealCoreIntegrationTests {
 
     /** The real core and gateway; the per-app driver, Windows proxy settings and discovery are left alone. */
     private static final class LoopbackBackend implements ConnectionBackend {
-        final SystemConnectionBackend real = new SystemConnectionBackend();
+        final WindowsConnectionBackend real = new WindowsConnectionBackend(AppDirectories.dataDirectory());
         volatile int starts;
+        @Override public void installCore(Consumer<String> progress) { throw new UnsupportedOperationException("Not used by loopback tests"); }
+        @Override public void installPerApp(Consumer<String> progress) { throw new UnsupportedOperationException("Not used by loopback tests"); }
+        @Override public UpdateDescriptor checkForUpdate(String feed) { throw new UnsupportedOperationException("Not used by loopback tests"); }
+        @Override public Path downloadUpdate(UpdateDescriptor update, Consumer<Integer> progress) { throw new UnsupportedOperationException("Not used by loopback tests"); }
+        @Override public void launchUpdate(Path installer) { throw new UnsupportedOperationException("Not used by loopback tests"); }
 
         @Override public boolean coreReady() { return true; }
         @Override public boolean perAppReady() { return true; }
         @Override public boolean elevated() { return false; }
-        @Override public void validate(String config, boolean tun) { real.validate(config, tun); }
-        @Override public void start(String config, boolean tun) { starts++; real.start(config, tun); }
+        @Override public void validate(String config, boolean tun) throws Exception { real.validate(config, tun); }
+        @Override public void start(String config, boolean tun) throws Exception { starts++; real.start(config, tun); }
         @Override public void stop() { real.stop(); }
         @Override public boolean isRunning() { return real.isRunning(); }
         @Override public void stopOrphan() { }
@@ -159,17 +166,17 @@ final class RealCoreIntegrationTests {
         @Override public void stopPerAppSidecar() { }
         @Override public void applySystemProxy() { }
         @Override public void restoreSystemProxy() { }
-        @Override public ProxyHealthCheck.Result checkTunnel(int socksPort) { return real.checkTunnel(socksPort); }
-        @Override public Map<String, Long> readInboundCounters() { return real.readInboundCounters(); }
-        @Override public RouteReport lookupPublicAddress(Integer socksPort) { return new RouteReport(null, null, "not used"); }
+        @Override public TunnelStatus checkTunnel(int socksPort) { return real.checkTunnel(socksPort); }
+        @Override public Map<String, Long> readInboundCounters() throws Exception { return real.readInboundCounters(); }
+        @Override public RouteObservation lookupPublicAddress(Integer socksPort) { return new RouteObservation(null, null, "not used"); }
         @Override public List<String> systemDnsServers() { return List.of(); }
         @Override public String publicResolver() { return null; }
-        @Override public List<InstalledApplicationDiscovery.InstalledApplication> installedApplications() { return List.of(); }
-        @Override public List<ProcessDiscovery.RunningApplication> runningApplications() { return List.of(); }
-        @Override public void applyRuntimeChange(XrayConfigGenerator.RuntimeChange change, String newTag, String oldTag, String config) {
+        @Override public List<ApplicationDescriptor> installedApplications() { return List.of(); }
+        @Override public List<ApplicationDescriptor> runningApplications() { return List.of(); }
+        @Override public void applyRuntimeChange(XrayConfigGenerator.RuntimeChange change, String newTag, String oldTag, String config) throws Exception {
             real.applyRuntimeChange(change, newTag, oldTag, config);
         }
-        @Override public void startGateway(List<AppGateway.Route> routes) { real.startGateway(routes); }
+        @Override public void startGateway(List<AppGateway.Route> routes) throws Exception { real.startGateway(routes); }
         @Override public void stopGateway() { real.stopGateway(); }
         @Override public void setGatewayLimits(String path, long down, long up) { real.setGatewayLimits(path, down, up); }
         @Override public Map<String, AppGateway.Counters> gatewayCounters() { return real.gatewayCounters(); }

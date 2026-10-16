@@ -1,11 +1,11 @@
 package app.perroute;
 
-import app.perroute.compose.ActionResult;
-import app.perroute.compose.ConnectionBackend;
-import app.perroute.compose.ConnectionPhase;
-import app.perroute.compose.ImportPreview;
-import app.perroute.compose.PerRouteController;
-import app.perroute.compose.RouteCheckState;
+import app.perroute.compose.controller.ActionResult;
+import app.perroute.backend.api.ConnectionBackend;
+import app.perroute.compose.controller.ConnectionPhase;
+import app.perroute.compose.controller.ImportPreview;
+import app.perroute.compose.controller.PerRouteController;
+import app.perroute.compose.controller.RouteCheckState;
 import app.perroute.model.AppRoutes;
 import app.perroute.model.AppState;
 import app.perroute.model.ConnectionMode;
@@ -14,7 +14,7 @@ import app.perroute.model.ProxyNode;
 import app.perroute.model.RouteRule;
 import app.perroute.parser.ParseResult;
 import app.perroute.persistence.AppStateStore;
-import app.perroute.service.ProxyHealthCheck;
+import app.perroute.backend.api.TunnelStatus;
 import app.perroute.service.RoutePlanner;
 import app.perroute.service.XrayConfigGenerator;
 import app.perroute.util.Json;
@@ -40,7 +40,15 @@ final class ControllerTests {
 
     static int assertions() { return assertions; }
 
+    static void runPlatformBoundaryChecks() throws Exception {
+        run("Controller: platform maintenance is injected", ControllerTests::testPlatformMaintenance);
+        run("Controller: system proxy lifecycle and rollback", ControllerTests::testSystemProxyLifecycle);
+        run("Controller: local proxy lifecycle", ControllerTests::testLocalProxyLifecycle);
+        run("Controller: v3 live main switch and restart fallback", ControllerTests::testLiveMainSwitch);
+    }
+
     static void runAll() throws Exception {
+        runPlatformBoundaryChecks();
         run("Controller: Advanced routing is optional", ControllerTests::testAdvancedIsOptional);
         run("Controller: per-app servers reach the core", ControllerTests::testConnectAppliesAssignments);
         run("Controller: mutation locks", ControllerTests::testMutationLocks);
@@ -53,6 +61,97 @@ final class ControllerTests {
         run("Controller: import preview", ControllerTests::testImportPreview);
         run("Controller: route-specific checks", ControllerTests::testRouteSpecificChecks);
         run("Controller: reset to initial state", ControllerTests::testReset);
+    }
+
+    private static void testSystemProxyLifecycle(Fixture f) {
+        f.state.appPaths().clear();
+        f.controller.setMode(ConnectionMode.SYSTEM_PROXY);
+        check(f.controller.connect().getOk(), "System proxy connects through the injected backend");
+        equal(ConnectionPhase.CONNECTED, f.controller.connectionPhase());
+        equal(1, f.backend.proxyApplications);
+        int restorations = f.backend.proxyRestorations;
+        int stops = f.backend.stopCount;
+        f.backend.rejectValidation = "second.example";
+        check(!f.controller.switchNode("second").getOk(), "Invalid switch must fail before stopping the core");
+        equal(stops, f.backend.stopCount);
+        check(f.controller.isConnected(), "Rejected validation leaves the connection running");
+        f.backend.rejectValidation = null;
+        f.backend.failStart = "second.example";
+        check(!f.controller.switchNode("second").getOk(), "Failed switch reports rollback");
+        check(f.controller.isConnected(), "The previous server is restored after a failed switch");
+        equal("main", f.controller.selectedNodeKey());
+        equal(restorations, f.backend.proxyRestorations);
+        equal(1, f.backend.proxyApplications);
+        check(f.controller.disconnect().getOk(), "System proxy disconnect succeeds");
+        equal(restorations + 1, f.backend.proxyRestorations);
+        check(!f.backend.running, "Disconnect stops the backend core");
+        equal(ConnectionPhase.DISCONNECTED, f.controller.connectionPhase());
+        f.backend.failStart = "main.example";
+        check(!f.controller.connect().getOk(), "Initial startup failure is reported");
+        equal(ConnectionPhase.DISCONNECTED, f.controller.connectionPhase());
+        equal(restorations + 2, f.backend.proxyRestorations);
+    }
+
+    private static void testLocalProxyLifecycle(Fixture f) {
+        f.state.appPaths().clear();
+        f.controller.setMode(ConnectionMode.BROWSER_PROXY);
+        check(f.controller.connect().getOk(), "Local proxy connects through the injected backend");
+        check(f.backend.running, "Local core is running");
+        equal(0, f.backend.proxyApplications);
+        check(f.controller.disconnect().getOk(), "Local proxy disconnect succeeds");
+        check(!f.backend.running, "Local core stops");
+    }
+
+    private static void testLiveMainSwitch(Fixture f) {
+        f.state.appPaths().clear();
+        f.controller.setMode(ConnectionMode.SYSTEM_PROXY);
+        f.controller.setRouteMonitoring(true);
+        f.backend.supportsRuntimeChange = true;
+        check(f.controller.connect().getOk(), "Connect with runtime control");
+        int starts = f.backend.startCount;
+        int stops = f.backend.stopCount;
+        check(f.controller.switchNode("second").getOk(), "Live main switch succeeds");
+        equal(starts, f.backend.startCount);
+        equal(stops, f.backend.stopCount);
+        equal(1, f.backend.runtimeChanges.size());
+        String[] change = f.backend.runtimeChanges.get(0);
+        equal("proxy~1", change[0]);
+        equal("proxy", change[1]);
+        check(change[3].contains("second.example"), "Runtime outbound contains the chosen server");
+        check(change[4].contains("proxy~1"), "Runtime routing targets the new outbound");
+        equal("second", f.controller.selectedNodeKey());
+        f.backend.failRuntimeChange = "Runtime change refused";
+        check(f.controller.switchNode("third").getOk(), "A refused live change falls back to restart");
+        equal(starts + 1, f.backend.startCount);
+        check(f.controller.isConnected(), "Restart fallback retains a working connection");
+        equal("third", f.controller.selectedNodeKey());
+        equal(1, f.backend.proxyApplications);
+        check(f.controller.disconnect().getOk(), "Disconnect after live switch and fallback");
+    }
+
+    private static void testPlatformMaintenance(Fixture f) throws Exception {
+        var installProgress = new ArrayList<String>();
+        check(f.controller.installCore(text -> { installProgress.add(text); return kotlin.Unit.INSTANCE; }).getOk(), "Core install delegates to the backend");
+        check(f.controller.installPerApp(text -> { installProgress.add(text); return kotlin.Unit.INSTANCE; }).getOk(), "Per-app install delegates to the backend");
+        equal(List.of("core installed", "per-app installed"), installProgress);
+        f.backend.failInstall = true;
+        check(!f.controller.installCore(text -> kotlin.Unit.INSTANCE).getOk(), "Installer failure must reach the UI result");
+        f.backend.failInstall = false;
+
+        f.backend.update = new app.perroute.backend.api.UpdateDescriptor("9.0.0", java.net.URI.create("https://updates.example/app.exe"), "a".repeat(64), 4, true);
+        f.controller.setUpdateFeedUrl("https://updates.example/feed.json");
+        check(f.controller.checkForUpdate().getOk(), "Update lookup delegates to the backend");
+        equal("https://updates.example/feed.json", f.backend.checkedFeed);
+        equal("9.0.0", f.controller.availableUpdateVersion());
+        check(!f.controller.launchDownloadedUpdate().getOk(), "An update cannot launch before a download");
+        f.backend.download = f.directory.resolve("verified-update.exe");
+        Files.writeString(f.backend.download, "fake");
+        var progress = new ArrayList<Integer>();
+        check(f.controller.downloadAvailableUpdate(value -> { progress.add(value); return kotlin.Unit.INSTANCE; }).getOk(), "Download delegates to the backend");
+        equal(List.of(100), progress);
+        equal(f.backend.update, f.backend.downloadedDescriptor);
+        check(f.controller.launchDownloadedUpdate().getOk(), "Launch delegates to the backend without executing a host process");
+        equal(f.backend.download, f.backend.launchedInstaller);
     }
 
     private static void testReset(Fixture f) throws Exception {
@@ -263,8 +362,8 @@ final class ControllerTests {
         f.controller.disconnect();
         check(f.controller.routeChecks().get("second") == null, "Route observations must not outlive the connection");
         check(f.controller.connect().getOk(), "Reconnect must succeed");
-        waitFor(() -> f.controller.routeChecks().getOrDefault("second", new app.perroute.compose.RouteCheck()).getState() == RouteCheckState.FAILED);
-        waitFor(() -> f.controller.routeChecks().getOrDefault("main", new app.perroute.compose.RouteCheck()).getState() == RouteCheckState.PASSED);
+        waitFor(() -> f.controller.routeChecks().getOrDefault("second", new app.perroute.compose.controller.RouteCheck()).getState() == RouteCheckState.FAILED);
+        waitFor(() -> f.controller.routeChecks().getOrDefault("main", new app.perroute.compose.controller.RouteCheck()).getState() == RouteCheckState.PASSED);
         equal(RouteCheckState.PASSED, f.controller.routeChecks().get("main").getState());
         equal(RouteCheckState.FAILED, f.controller.routeChecks().get("second").getState());
 
@@ -546,13 +645,34 @@ final class ControllerTests {
         volatile String lastValidated = "";
         volatile String rejectValidation;
         volatile String failStart;
-        volatile int startCount, stopCount, validateCount;
+        volatile int startCount, stopCount, validateCount, proxyApplications, proxyRestorations;
         volatile List<String> perAppApplications = List.of();
         volatile CountDownLatch blockStart;
         volatile CountDownLatch startEntered;
 
         void release() { CountDownLatch latch = blockStart; if (latch != null) latch.countDown(); }
 
+        boolean failInstall;
+        app.perroute.backend.api.UpdateDescriptor update, downloadedDescriptor;
+        String checkedFeed;
+        Path download, launchedInstaller;
+        @Override public void installCore(Consumer<String> progress) {
+            if (failInstall) throw new IllegalStateException("Installation failed");
+            progress.accept("core installed");
+        }
+        @Override public void installPerApp(Consumer<String> progress) { progress.accept("per-app installed"); }
+        @Override public app.perroute.backend.api.UpdateDescriptor checkForUpdate(String feed) {
+            checkedFeed = feed;
+            if (update == null) throw new UnsupportedOperationException("No update configured in this fake");
+            return update;
+        }
+        @Override public Path downloadUpdate(app.perroute.backend.api.UpdateDescriptor update, Consumer<Integer> progress) {
+            downloadedDescriptor = update;
+            if (download == null) throw new UnsupportedOperationException("No download configured in this fake");
+            progress.accept(100);
+            return download;
+        }
+        @Override public void launchUpdate(Path installer) { launchedInstaller = installer; }
         @Override public boolean coreReady() { return true; }
         @Override public boolean perAppReady() { return true; }
         @Override public boolean elevated() { return false; }
@@ -622,26 +742,27 @@ final class ControllerTests {
         @Override public void setGatewayLimits(String path, long down, long up) { gatewayLimits.put(path.toLowerCase(), new long[]{down, up}); }
         @Override public Map<String, app.perroute.gateway.AppGateway.Counters> gatewayCounters() { return Map.copyOf(gatewayCounters); }
         @Override public boolean gatewayRunning() { return gatewayRunning; }
+        @Override public void addGatewayListener(Consumer<app.perroute.gateway.GatewayConnection> listener) {}
         @Override public void stopPerAppSidecar() {}
-        @Override public void applySystemProxy() {}
-        @Override public void restoreSystemProxy() {}
-        @Override public ProxyHealthCheck.Result checkTunnel(int socksPort) {
-            return failingPorts.contains(socksPort) ? new ProxyHealthCheck.Result(false, "The proxy could not reach the test endpoint")
-                    : new ProxyHealthCheck.Result(true, "Tunnel answered from test (HTTP 204)");
+        @Override public void applySystemProxy() { proxyApplications++; }
+        @Override public void restoreSystemProxy() { proxyRestorations++; }
+        @Override public TunnelStatus checkTunnel(int socksPort) {
+            return failingPorts.contains(socksPort) ? new TunnelStatus(false, "The proxy could not reach the test endpoint")
+                    : new TunnelStatus(true, "Tunnel answered from test (HTTP 204)");
         }
         @Override public Map<String, Long> readInboundCounters() { return Map.of(); }
-        @Override public app.perroute.compose.RouteReport lookupPublicAddress(Integer socksPort) {
+        @Override public app.perroute.backend.api.RouteObservation lookupPublicAddress(Integer socksPort) {
             lookups.add(socksPort == null ? -1 : socksPort);
             if (socksPort != null && failingPorts.contains(socksPort)) {
-                return new app.perroute.compose.RouteReport(null, null, "The proxy could not reach www.cloudflare.com");
+                return new app.perroute.backend.api.RouteObservation(null, null, "The proxy could not reach www.cloudflare.com");
             }
             // Documentation addresses, one per route, so a mixed-up result would be visible.
-            return new app.perroute.compose.RouteReport(socksPort == null ? "198.51.100.24" : "203.0.113." + (socksPort % 250), "ZZ", null);
+            return new app.perroute.backend.api.RouteObservation(socksPort == null ? "198.51.100.24" : "203.0.113." + (socksPort % 250), "ZZ", null);
         }
         @Override public List<String> systemDnsServers() { return List.of("192.0.2.53"); }
         @Override public String publicResolver() { return "192.0.2.54"; }
-        @Override public List<app.perroute.service.InstalledApplicationDiscovery.InstalledApplication> installedApplications() { return List.of(); }
-        @Override public List<app.perroute.service.ProcessDiscovery.RunningApplication> runningApplications() { return List.of(); }
+        @Override public List<app.perroute.backend.api.ApplicationDescriptor> installedApplications() { return List.of(); }
+        @Override public List<app.perroute.backend.api.ApplicationDescriptor> runningApplications() { return List.of(); }
         final List<Integer> lookups = new java.util.concurrent.CopyOnWriteArrayList<>();
     }
 

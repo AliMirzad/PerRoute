@@ -1,4 +1,7 @@
-package app.perroute.compose
+package app.perroute.compose.ui.components
+
+import app.perroute.compose.Shell
+import app.perroute.compose.controller.PerRouteController
 
 import androidx.compose.foundation.ExperimentalFoundationApi
 import androidx.compose.foundation.Image
