@@ -1,15 +1,15 @@
 package app.perroute;
 
 import app.perroute.backup.BackupService;
-import app.perroute.compose.ActionResult;
-import app.perroute.compose.ActiveRoute;
-import app.perroute.compose.BandwidthState;
-import app.perroute.compose.InspectorRow;
-import app.perroute.compose.PerRouteController;
-import app.perroute.compose.RestoreRequest;
-import app.perroute.compose.RouteCheckState;
-import app.perroute.compose.RouteHealthView;
-import app.perroute.compose.RouteKind;
+import app.perroute.compose.controller.ActionResult;
+import app.perroute.compose.controller.ActiveRoute;
+import app.perroute.compose.controller.BandwidthState;
+import app.perroute.compose.inspector.InspectorRow;
+import app.perroute.compose.controller.PerRouteController;
+import app.perroute.compose.controller.RestoreRequest;
+import app.perroute.compose.controller.RouteCheckState;
+import app.perroute.compose.controller.RouteHealthView;
+import app.perroute.compose.inspector.RouteKind;
 import app.perroute.gateway.AppGateway;
 import app.perroute.model.AppRoutes;
 import app.perroute.model.AppState;
@@ -378,7 +378,7 @@ final class V3ControllerTests {
         var status = f.controller.bandwidthStatus(f.telegram);
         equal(BandwidthState.NOT_ENFORCED, status.getState());
         check(status.getDetail().contains("gateway is off"), status.getDetail());
-        waitFor(() -> f.controller.routeChecks().getOrDefault("main", new app.perroute.compose.RouteCheck()).getState() == RouteCheckState.PASSED);
+        waitFor(() -> f.controller.routeChecks().getOrDefault("main", new app.perroute.compose.controller.RouteCheck()).getState() == RouteCheckState.PASSED);
         f.backend.failingPorts.add(app.perroute.service.AppProxyLauncher.SOCKS_PORT);
         Thread.sleep(600);
         equal(RouteCheckState.PASSED, f.controller.routeChecks().get("main").getState());

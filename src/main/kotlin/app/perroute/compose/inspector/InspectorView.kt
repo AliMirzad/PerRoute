@@ -1,4 +1,9 @@
-package app.perroute.compose
+package app.perroute.compose.inspector
+
+import app.perroute.compose.controller.ActiveRoute
+import app.perroute.compose.controller.PerRouteController
+import app.perroute.compose.controller.RouteCheck
+import app.perroute.compose.controller.RouteCheckState
 
 import app.perroute.inspector.ConnectionInspector
 import app.perroute.model.RouteRule

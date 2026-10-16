@@ -1,14 +1,14 @@
 package app.perroute;
 
-import app.perroute.compose.ActiveRoute;
+import app.perroute.compose.controller.ActiveRoute;
 import app.perroute.backend.api.ApplicationDescriptor;
 import app.perroute.backend.api.ConnectionBackend;
 import app.perroute.backend.api.RouteObservation;
 import app.perroute.backend.api.TunnelStatus;
 import app.perroute.backend.api.UpdateDescriptor;
-import app.perroute.compose.InspectorRow;
-import app.perroute.compose.PerRouteController;
-import app.perroute.compose.RouteKind;
+import app.perroute.compose.inspector.InspectorRow;
+import app.perroute.compose.controller.PerRouteController;
+import app.perroute.compose.inspector.RouteKind;
 
 import app.perroute.platform.windows.WindowsConnectionBackend;
 import app.perroute.gateway.AppGateway;

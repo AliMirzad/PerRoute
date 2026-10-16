@@ -1,4 +1,9 @@
-package app.perroute.compose
+package app.perroute.compose.controller
+
+import app.perroute.compose.inspector.InspectorContext
+import app.perroute.compose.inspector.InspectorRow
+import app.perroute.compose.inspector.InspectorView
+import app.perroute.compose.ui.components.serverName
 
 import app.perroute.backend.api.ConnectionBackend
 import app.perroute.backend.api.ApplicationDescriptor

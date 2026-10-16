@@ -1,4 +1,6 @@
-package app.perroute.compose
+package app.perroute.compose.controller
+
+import app.perroute.compose.ui.components.serverName
 
 import app.perroute.model.ProxyNode
 import app.perroute.routing.AutoCandidatePool

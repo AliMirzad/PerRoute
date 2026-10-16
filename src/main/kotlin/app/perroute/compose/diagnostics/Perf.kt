@@ -1,4 +1,4 @@
-package app.perroute.compose
+package app.perroute.compose.diagnostics
 
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.withFrameNanos

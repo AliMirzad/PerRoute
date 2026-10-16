@@ -1,11 +1,11 @@
 package app.perroute;
 
-import app.perroute.compose.ActionResult;
+import app.perroute.compose.controller.ActionResult;
 import app.perroute.backend.api.ConnectionBackend;
-import app.perroute.compose.ConnectionPhase;
-import app.perroute.compose.ImportPreview;
-import app.perroute.compose.PerRouteController;
-import app.perroute.compose.RouteCheckState;
+import app.perroute.compose.controller.ConnectionPhase;
+import app.perroute.compose.controller.ImportPreview;
+import app.perroute.compose.controller.PerRouteController;
+import app.perroute.compose.controller.RouteCheckState;
 import app.perroute.model.AppRoutes;
 import app.perroute.model.AppState;
 import app.perroute.model.ConnectionMode;
@@ -362,8 +362,8 @@ final class ControllerTests {
         f.controller.disconnect();
         check(f.controller.routeChecks().get("second") == null, "Route observations must not outlive the connection");
         check(f.controller.connect().getOk(), "Reconnect must succeed");
-        waitFor(() -> f.controller.routeChecks().getOrDefault("second", new app.perroute.compose.RouteCheck()).getState() == RouteCheckState.FAILED);
-        waitFor(() -> f.controller.routeChecks().getOrDefault("main", new app.perroute.compose.RouteCheck()).getState() == RouteCheckState.PASSED);
+        waitFor(() -> f.controller.routeChecks().getOrDefault("second", new app.perroute.compose.controller.RouteCheck()).getState() == RouteCheckState.FAILED);
+        waitFor(() -> f.controller.routeChecks().getOrDefault("main", new app.perroute.compose.controller.RouteCheck()).getState() == RouteCheckState.PASSED);
         equal(RouteCheckState.PASSED, f.controller.routeChecks().get("main").getState());
         equal(RouteCheckState.FAILED, f.controller.routeChecks().get("second").getState());
 
