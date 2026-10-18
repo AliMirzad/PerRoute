@@ -346,6 +346,12 @@ class PerRouteController @JvmOverloads constructor(
     fun nodeSource(key: String): String = synchronized(state) { state.nodeSources()[key] ?: IMPORTED_SOURCE }
     fun isDarkTheme(): Boolean = preferences.getBoolean("darkTheme", true)
     fun setDarkTheme(value: Boolean) { preferences.putBoolean("darkTheme", value) }
+    /**
+     * The interface design, kept apart from the theme and every other preference. Nothing saved means
+     * the New design, on a fresh install and after an upgrade alike; anything unrecognised also reads as New.
+     */
+    fun uiStyle(): String = if (preferences.get(PREF_UI_STYLE, UI_STYLE_NEW) == UI_STYLE_SIMPLE) UI_STYLE_SIMPLE else UI_STYLE_NEW
+    fun setUiStyle(value: String) { preferences.put(PREF_UI_STYLE, if (value == UI_STYLE_SIMPLE) UI_STYLE_SIMPLE else UI_STYLE_NEW) }
     fun selectedNodeKey(): String = state.selectedNodeKey()
     fun connectionMode(): ConnectionMode = state.connectionMode()
     fun routingMode(): RoutingMode = state.routingMode()
@@ -2409,6 +2415,10 @@ class PerRouteController @JvmOverloads constructor(
         private const val PREF_AUTO_MARGIN = "v3.autoSwitchMargin"
         private const val PREF_AUTO_COOLDOWN = "v3.autoCooldownMinutes"
         private const val ROLLBACK_PREFIX = "rollback.pref."
+        /** The interface design. A per-computer appearance choice, so backups do not carry it. */
+        const val PREF_UI_STYLE = "ui.style"
+        const val UI_STYLE_NEW = "new"
+        const val UI_STYLE_SIMPLE = "simple"
         /** How often applications in Auto mode are re-decided while connected. */
         const val AUTO_INTERVAL_MILLIS = 60_000L
 

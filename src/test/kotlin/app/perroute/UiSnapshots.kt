@@ -9,16 +9,19 @@ import androidx.compose.ui.input.key.KeyEvent
 import androidx.compose.ui.input.key.KeyEventType
 import androidx.compose.ui.input.pointer.PointerEventType
 import androidx.compose.ui.unit.Density
-import app.perroute.compose.ActivePalette
-import app.perroute.compose.AddServersDialog
+import app.perroute.compose.Appearance
 import app.perroute.compose.ConnectionBackend
-import app.perroute.compose.DarkPalette
 import app.perroute.compose.DiagnosticsTab
 import app.perroute.compose.ImportMethod
+import app.perroute.compose.ImportSession
+import app.perroute.compose.RestoreSession
+import app.perroute.compose.UiStyle
+import app.perroute.compose.backupModel
+import app.perroute.compose.serversModel
+import app.perroute.compose.rulesModel
+import app.perroute.compose.RuleEditor
 import app.perroute.compose.KeyboardNavigation
-import app.perroute.compose.LightPalette
 import app.perroute.compose.PerRouteController
-import app.perroute.compose.PerRouteTheme
 import app.perroute.compose.PerRouteWindow
 import app.perroute.compose.QuickAccessWindow
 import app.perroute.compose.RouteReport
@@ -153,7 +156,8 @@ private class Demo(
     val mode: ConnectionMode = ConnectionMode.NATIVE_PER_APP,
     val dark: Boolean = true,
     val auto: Boolean = false,
-    val gateway: Boolean = true
+    val gateway: Boolean = true,
+    val style: UiStyle = UiStyle.NEW
 )
 
 /** Quality history for the demonstration servers: excellent, good, fair, unavailable, stale and unmeasured. */
@@ -256,8 +260,8 @@ private fun seedHistory(directory: Path) {
 private class Scene(
     val name: String,
     val demo: Demo = Demo(),
-    val width: Int = 940,
-    val height: Int = 710,
+    val width: Int = 1180,
+    val height: Int = 790,
     val scale: Float = 1f,
     val tab: Tab = Tab.Connection,
     val runChecks: Boolean = false,
@@ -277,11 +281,13 @@ private fun render(scene: Scene, output: Path) {
         putBoolean("darkTheme", scene.demo.dark); putBoolean("autoSpeedTest", false); putBoolean("autoFailover", false); putBoolean("autoReconnect", false)
         putBoolean("v3.initialized", true); putBoolean("v3.trafficGateway", scene.demo.gateway); putBoolean("v3.routeMonitoring", true)
         putBoolean("v3.qualityBackground", true)
+        put("ui.style", scene.demo.style.key)
     }
     val backend = DemoBackend()
     val controller = PerRouteController(demoState(scene.demo), AppStateStore(data.resolve("state.bin")), backend, preferences)
     if (!scene.demo.empty) seedQuality(controller)
-    ActivePalette = if (scene.demo.dark) DarkPalette else LightPalette
+    Appearance.style = scene.demo.style
+    Appearance.dark = scene.demo.dark
     if (scene.demo.connected) {
         val result = controller.connect()
         check(result.ok) { "${scene.name}: ${result.message}" }
@@ -291,7 +297,7 @@ private fun render(scene: Scene, output: Path) {
     if (scene.runChecks) controller.checkRoutes()
     val dispatcher = QueueDispatcher()
     val content: @Composable () -> Unit = {
-        if (scene.quick) PerRouteTheme(scene.demo.dark) {
+        if (scene.quick) app.perroute.compose.PerRouteTheme(scene.demo.style, scene.demo.dark) {
             val nodes = controller.nodes()
             QuickAccessWindow(
                 connected = controller.isConnected(), busy = false, working = false,
@@ -343,108 +349,93 @@ fun main(args: Array<String>) {
     val output = Path.of(args.getOrElse(0) { "build/ui-snapshots" }).toAbsolutePath()
     val only = args.drop(1).toSet()
     Files.createDirectories(output)
-    val standard = Demo()
-    val standardOn = Demo(connected = true)
-    val advanced = Demo(advanced = true)
-    val advancedOn = Demo(advanced = true, connected = true)
     val pastePreview: (Shell) -> Unit = { shell ->
         val outcome = shell.controller.previewPasted(
             "vless://11111111-1111-1111-1111-111111111111@fr1.example.net:443?security=tls#France FR-01\n" +
                 "trojan://secret@sg1.example.net:443?security=tls#Singapore SG-02\nwireguard://not-supported\nvless://broken")
-        shell.showDialog { AddServersDialog(shell, ImportMethod.PASTE, outcome) { shell.closeDialog() } }
+        serversModel(shell).import = ImportSession(shell, ImportMethod.PASTE, outcome)
     }
-    val autoDraft = Demo(advanced = true, auto = true)
-    val autoOn = Demo(advanced = true, connected = true, auto = true)
+    val addServersSource: (Shell) -> Unit = { shell -> serversModel(shell).import = ImportSession(shell, ImportMethod.SUBSCRIPTION) }
     val restorePreview: (Shell) -> Unit = { shell ->
+        shell.settingsCategory = SettingsCategory.Backup
         val file = Files.createTempFile("perroute-demo-", ".prb")
         shell.controller.exportBackup(file, app.perroute.backup.BackupService.Section.entries.toSet(), null)
         val request = shell.controller.openBackup(file, null).first!!
-        shell.showDialog { app.perroute.compose.RestorePreviewDialog(shell, request) {} }
+        backupModel(shell).restore = RestoreSession(shell, request)
     }
-    val scenes = listOf(
-        Scene("100-servers-quality", advanced, tab = Tab.Servers, settleMillis = 2_500),
-        Scene("101-servers-quality-expanded", advanced, tab = Tab.Servers, settleMillis = 2_500, clicks = listOf(876 to 361)),
-        Scene("102-apps-auto", autoDraft, tab = Tab.Apps, settleMillis = 3_500),
-        Scene("103-apps-auto-focused", autoDraft, tab = Tab.Apps, settleMillis = 3_500, prepare = { it.draft.focused = TELEGRAM }),
-        Scene("104-connection-recovery", autoOn, settleMillis = 1_500),
-        Scene("105-diagnostics-inspector", Demo(advanced = true, connected = true, auto = true, gateway = false), tab = Tab.Diagnostics,
-            prepare = { it.diagnosticsTab = DiagnosticsTab.Inspector }),
-        Scene("106-traffic-bandwidth", autoOn, tab = Tab.Traffic, settleMillis = 3_000),
-        Scene("107-settings-routing", standard, tab = Tab.Settings, prepare = { it.settingsCategory = SettingsCategory.Routing }),
-        Scene("108-settings-backup", standard, tab = Tab.Settings, prepare = { it.settingsCategory = SettingsCategory.Backup }),
-        Scene("109-restore-preview", advanced, tab = Tab.Settings, prepare = { it.settingsCategory = SettingsCategory.Backup; restorePreview(it) }),
-        Scene("110-light-apps-auto", Demo(advanced = true, auto = true, dark = false), tab = Tab.Apps, settleMillis = 3_500, prepare = { it.draft.focused = TELEGRAM }),
-        Scene("111-light-connection-recovery", Demo(advanced = true, connected = true, auto = true, dark = false), settleMillis = 1_500),
-        Scene("112-narrow-apps-auto", autoDraft, 820, 620, tab = Tab.Apps, settleMillis = 3_500, prepare = { it.draft.focused = TELEGRAM }),
-        Scene("01-connection-standard-ready", standard),
-        Scene("02-connection-standard-connected", standardOn),
-        Scene("03-connection-advanced-connected", advancedOn),
-        Scene("04-connection-missing-server", Demo(advanced = true, missing = true)),
-        Scene("05-connection-empty", Demo(empty = true)),
-        Scene("06-connection-local-proxy", Demo(connected = true, mode = ConnectionMode.BROWSER_PROXY)),
-        Scene("10-apps-standard", standard, tab = Tab.Apps, settleMillis = 3_500),
-        Scene("11-apps-advanced", advanced, tab = Tab.Apps, settleMillis = 3_500),
-        Scene("12-apps-advanced-missing", Demo(advanced = true, missing = true), tab = Tab.Apps, settleMillis = 3_500),
-        Scene("13-apps-locked", advancedOn, tab = Tab.Apps, settleMillis = 3_500),
-        Scene("14-apps-unsaved-leave", advanced, tab = Tab.Apps, settleMillis = 3_000, prepare = { it.draft.advanced = false; it.navigate(Tab.Servers) }),
-        Scene("15-apps-picker-open", advanced, tab = Tab.Apps, settleMillis = 3_500, clicks = listOf(565 to 400)),
-        Scene("16-apps-picker-chosen", advanced, tab = Tab.Apps, settleMillis = 3_500, clicks = listOf(565 to 400, 600 to 560)),
-        Scene("17-apps-row-toggled", advanced, tab = Tab.Apps, settleMillis = 3_500, clicks = listOf(200 to 400)),
-        Scene("25-servers-test-menu", advanced, tab = Tab.Servers, settleMillis = 2_500, clicks = listOf(838 to 237)),
-        Scene("26-servers-row-menu", advanced, tab = Tab.Servers, settleMillis = 2_500, clicks = listOf(876 to 422)),
-        Scene("27-servers-tag-menu", advanced, tab = Tab.Servers, settleMillis = 2_500, clicks = listOf(839 to 483)),
-        Scene("28-servers-tag-dialog", advanced, tab = Tab.Servers, settleMillis = 2_500, clicks = listOf(839 to 483, 760 to 566)),
-        Scene("33-rules-editor", advanced, tab = Tab.Rules, clicks = listOf(850 to 183)),
-        Scene("34-rules-edit-existing", advanced, tab = Tab.Rules, clicks = listOf(569 to 407, 600 to 430)),
-        Scene("42-profiles-preview", advanced, tab = Tab.Profiles, clicks = listOf(190 to 403)),
-        Scene("53-diagnostics-tester", advancedOn, tab = Tab.Diagnostics, runChecks = true, clicks = listOf(750 to 308)),
-        Scene("20-servers-advanced", advanced, tab = Tab.Servers, settleMillis = 2_500),
-        Scene("90-keyboard-focus", advanced, tab = Tab.Rules, tabs = 5),
-        Scene("93-keyboard-rules-list", advanced, tab = Tab.Rules, tabs = 17),
-        Scene("91-keyboard-dialog-2", advanced, tab = Tab.Profiles, clicks = listOf(190 to 403), tabs = 2),
-        Scene("92-keyboard-dialog-9", advanced, tab = Tab.Profiles, clicks = listOf(190 to 403), tabs = 9),
-        Scene("21-servers-standard-connected", standardOn, tab = Tab.Servers, settleMillis = 2_500),
-        Scene("22-servers-empty", Demo(empty = true), tab = Tab.Servers),
-        Scene("23-add-servers-qr", advanced, tab = Tab.Servers, prepare = { shell -> shell.showDialog { AddServersDialog(shell, ImportMethod.QR) { shell.closeDialog() } } }),
-        Scene("24-add-servers-review", advanced, tab = Tab.Servers, prepare = pastePreview),
-        Scene("30-rules", advanced, tab = Tab.Rules),
-        Scene("31-rules-locked", advancedOn, tab = Tab.Rules),
-        Scene("32-rules-empty", Demo(empty = true), tab = Tab.Rules),
-        Scene("40-profiles", advanced, tab = Tab.Profiles),
-        Scene("41-profiles-empty", Demo(empty = true), tab = Tab.Profiles),
-        Scene("50-diagnostics-connected", advancedOn, tab = Tab.Diagnostics, runChecks = true),
-        Scene("51-diagnostics-disconnected", advanced, tab = Tab.Diagnostics),
-        Scene("52-diagnostics-loaded-rules", advancedOn, tab = Tab.Diagnostics, prepare = { it.diagnosticsTab = DiagnosticsTab.Loaded }),
-        Scene("60-traffic", advancedOn, tab = Tab.Traffic, settleMillis = 3_000),
-        Scene("61-traffic-empty", Demo(empty = true), tab = Tab.Traffic),
-        Scene("70-settings-general", standard, tab = Tab.Settings),
-        Scene("71-settings-connection", standard, tab = Tab.Settings, prepare = { it.settingsCategory = SettingsCategory.Connection }),
-        Scene("72-settings-connection-locked", advancedOn, tab = Tab.Settings, prepare = { it.settingsCategory = SettingsCategory.Connection }),
-        Scene("73-settings-automation", standard, tab = Tab.Settings, prepare = { it.settingsCategory = SettingsCategory.Automation }),
-        Scene("74-settings-updates", standard, tab = Tab.Settings, prepare = { it.settingsCategory = SettingsCategory.Updates }),
-        Scene("75-settings-components", standard, tab = Tab.Settings, prepare = { it.settingsCategory = SettingsCategory.Components }),
-        Scene("76-settings-log", standardOn, tab = Tab.Settings, prepare = { it.settingsCategory = SettingsCategory.ActivityLog }),
-        Scene("80-quick-standard", standardOn, 390, 600, quick = true),
-        Scene("81-quick-advanced", advancedOn, 390, 600, quick = true),
-        Scene("82-quick-disconnected-light", Demo(dark = false), 390, 600, quick = true),
-        Scene("narrow-connection", advancedOn, 820, 620),
-        Scene("narrow-apps", advanced, 820, 620, tab = Tab.Apps, settleMillis = 3_500),
-        Scene("narrow-servers", advanced, 820, 620, tab = Tab.Servers, settleMillis = 2_500),
-        Scene("narrow-rules", advanced, 820, 620, tab = Tab.Rules),
-        Scene("narrow-diagnostics", advancedOn, 820, 620, tab = Tab.Diagnostics, runChecks = true),
-        Scene("narrow-settings", standard, 820, 620, tab = Tab.Settings, prepare = { it.settingsCategory = SettingsCategory.Connection }),
-        Scene("narrow-traffic", advancedOn, 820, 620, tab = Tab.Traffic, settleMillis = 3_000),
-        Scene("scaled150-connection", advancedOn, scale = 1.5f),
-        Scene("scaled150-apps", advanced, scale = 1.5f, tab = Tab.Apps, settleMillis = 3_500),
-        Scene("scaled150-servers", advanced, scale = 1.5f, tab = Tab.Servers, settleMillis = 2_500),
-        Scene("light-connection", Demo(advanced = true, connected = true, dark = false)),
-        Scene("light-apps", Demo(advanced = true, dark = false), tab = Tab.Apps, settleMillis = 3_500),
-        Scene("light-servers", Demo(advanced = true, dark = false), tab = Tab.Servers, settleMillis = 2_500),
-        Scene("light-rules", Demo(advanced = true, dark = false), tab = Tab.Rules),
-        Scene("light-diagnostics", Demo(advanced = true, connected = true, dark = false), tab = Tab.Diagnostics, runChecks = true),
-        Scene("light-settings", Demo(dark = false), tab = Tab.Settings, prepare = { it.settingsCategory = SettingsCategory.Connection })
-    )
-    scenes.filter { only.isEmpty() || it.name in only }.forEach { render(it, output) }
+    val ruleEditor: (Shell) -> Unit = { shell -> rulesModel(shell).let { it.editor = RuleEditor(it.rules.first()) } }
+
+    /** The scenes of one design; every scene is rendered in both designs so they can be compared page by page. */
+    fun scenes(style: UiStyle): List<Scene> {
+        val p = if (style == UiStyle.NEW) "new" else "simple"
+        fun d(advanced: Boolean = false, connected: Boolean = false, missing: Boolean = false, empty: Boolean = false,
+              mode: ConnectionMode = ConnectionMode.NATIVE_PER_APP, dark: Boolean = false, auto: Boolean = false, gateway: Boolean = true) =
+            Demo(advanced, connected, missing, empty, mode, dark, auto, gateway, style)
+        val advanced = d(advanced = true, auto = true)
+        val advancedOn = d(advanced = true, connected = true, auto = true)
+        return listOf(
+            Scene("$p-01-connection-connected", advancedOn, settleMillis = 1_800),
+            Scene("$p-02-connection-disconnected", advanced),
+            Scene("$p-03-connection-empty", d(empty = true)),
+            Scene("$p-04-connection-missing", d(advanced = true, missing = true)),
+            Scene("$p-05-connection-local-proxy", d(connected = true, mode = ConnectionMode.BROWSER_PROXY)),
+            Scene("$p-06-connection-dark", d(advanced = true, connected = true, auto = true, dark = true), settleMillis = 1_800),
+            Scene("$p-10-apps", advanced, tab = Tab.Apps, settleMillis = 3_000),
+            Scene("$p-11-apps-focused", advanced, tab = Tab.Apps, settleMillis = 3_000, prepare = { it.draft.focused = TELEGRAM }),
+            Scene("$p-12-apps-locked", advancedOn, tab = Tab.Apps, settleMillis = 3_000, prepare = { it.draft.focused = CHROME }),
+            Scene("$p-13-apps-unsaved", advanced, tab = Tab.Apps, settleMillis = 3_000, prepare = { it.draft.advanced = false }),
+            Scene("$p-14-apps-missing", d(advanced = true, missing = true), tab = Tab.Apps, settleMillis = 3_000, prepare = { it.draft.focused = TELEGRAM }),
+            Scene("$p-20-servers", advanced, tab = Tab.Servers, settleMillis = 2_500),
+            Scene("$p-21-servers-empty", d(empty = true), tab = Tab.Servers),
+            Scene("$p-22-add-servers-source", advanced, tab = Tab.Servers, prepare = addServersSource),
+            Scene("$p-23-add-servers-review", advanced, tab = Tab.Servers, prepare = pastePreview, settleMillis = 2_000),
+            Scene("$p-30-rules", advanced, tab = Tab.Rules),
+            Scene("$p-31-rules-editor", advanced, tab = Tab.Rules, prepare = ruleEditor),
+            Scene("$p-32-rules-locked", advancedOn, tab = Tab.Rules),
+            Scene("$p-33-rules-empty", d(empty = true), tab = Tab.Rules),
+            Scene("$p-40-profiles", advanced, tab = Tab.Profiles),
+            Scene("$p-41-profiles-preview", advanced, tab = Tab.Profiles, prepare = { shell ->
+                val model = app.perroute.compose.profilesModel(shell)
+                if (style == UiStyle.NEW) model.preview(PerRouteController.SCENARIOS[0])
+                else app.perroute.compose.showPresetDialog(shell, model, PerRouteController.SCENARIOS[0])
+            }),
+            Scene("$p-50-diagnostics-routes", advancedOn, tab = Tab.Diagnostics, runChecks = true),
+            Scene("$p-51-diagnostics-inspector", advancedOn, tab = Tab.Diagnostics, settleMillis = 2_500, prepare = { it.diagnosticsTab = DiagnosticsTab.Inspector }),
+            Scene("$p-52-diagnostics-loaded", advancedOn, tab = Tab.Diagnostics, prepare = { it.diagnosticsTab = DiagnosticsTab.Loaded }),
+            Scene("$p-53-diagnostics-tester", advancedOn, tab = Tab.Diagnostics, prepare = { shell ->
+                shell.diagnosticsTab = DiagnosticsTab.Tester
+                app.perroute.compose.diagnosticsModel(shell).tester.let { it.app = CHROME; it.destination = "github.com"; it.check() }
+            }),
+            Scene("$p-54-diagnostics-disconnected", advanced, tab = Tab.Diagnostics),
+            Scene("$p-60-traffic", advancedOn, tab = Tab.Traffic, settleMillis = 3_200),
+            Scene("$p-61-traffic-empty", d(empty = true), tab = Tab.Traffic),
+            Scene("$p-70-settings-general", d(), tab = Tab.Settings),
+            Scene("$p-71-settings-connection", advanced, tab = Tab.Settings, prepare = { it.settingsCategory = SettingsCategory.Connection }),
+            Scene("$p-72-settings-routing", d(), tab = Tab.Settings, prepare = { it.settingsCategory = SettingsCategory.Routing }),
+            Scene("$p-73-settings-automation", d(), tab = Tab.Settings, prepare = { it.settingsCategory = SettingsCategory.Automation }),
+            Scene("$p-74-settings-updates", d(), tab = Tab.Settings, prepare = { it.settingsCategory = SettingsCategory.Updates }),
+            Scene("$p-75-settings-components", d(), tab = Tab.Settings, prepare = { it.settingsCategory = SettingsCategory.Components }),
+            Scene("$p-76-settings-backup", d(), tab = Tab.Settings, prepare = { it.settingsCategory = SettingsCategory.Backup }),
+            Scene("$p-77-restore-review", advanced, tab = Tab.Settings, prepare = restorePreview),
+            Scene("$p-78-settings-log", advancedOn, tab = Tab.Settings, prepare = { it.settingsCategory = SettingsCategory.ActivityLog }),
+            Scene("$p-79-settings-connection-locked", advancedOn, tab = Tab.Settings, prepare = { it.settingsCategory = SettingsCategory.Connection }),
+            Scene("$p-80-quick-connected", advancedOn, 390, 640, quick = true),
+            Scene("$p-81-quick-disconnected", d(), 390, 640, quick = true),
+            Scene("$p-82-quick-dark", d(advanced = true, connected = true, auto = true, dark = true), 390, 640, quick = true),
+            Scene("$p-90-min-connection", advancedOn, 820, 620),
+            Scene("$p-91-min-apps", advanced, 820, 620, tab = Tab.Apps, settleMillis = 3_000, prepare = { it.draft.focused = TELEGRAM }),
+            Scene("$p-92-min-servers", advanced, 820, 620, tab = Tab.Servers, settleMillis = 2_500),
+            Scene("$p-93-min-settings", d(), 820, 620, tab = Tab.Settings),
+            Scene("$p-94-scaled150-connection", advancedOn, 1180, 790, scale = 1.5f),
+            Scene("$p-95-scaled150-servers", advanced, 1180, 790, scale = 1.5f, tab = Tab.Servers, settleMillis = 2_500),
+            Scene("$p-96-dark-apps", d(advanced = true, auto = true, dark = true), tab = Tab.Apps, settleMillis = 3_000, prepare = { it.draft.focused = TELEGRAM }),
+            Scene("$p-97-dark-servers", d(advanced = true, dark = true), tab = Tab.Servers, settleMillis = 2_500),
+            Scene("$p-98-dark-settings", d(dark = true), tab = Tab.Settings),
+            Scene("$p-99-keyboard-focus", advanced, tab = Tab.Rules, tabs = 6)
+        )
+    }
+    val all = scenes(UiStyle.NEW) + scenes(UiStyle.SIMPLE)
+    all.filter { scene -> only.isEmpty() || only.any { scene.name == it || (it.endsWith("*") && scene.name.startsWith(it.dropLast(1))) } }.forEach { render(it, output) }
     println("Snapshots written to $output")
     kotlin.system.exitProcess(0)
 }

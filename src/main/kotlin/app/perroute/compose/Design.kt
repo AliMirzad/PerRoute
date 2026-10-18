@@ -1,6 +1,7 @@
 package app.perroute.compose
 
 import androidx.compose.foundation.ExperimentalFoundationApi
+import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.Image
 import androidx.compose.foundation.ScrollState
 import androidx.compose.foundation.TooltipArea
@@ -9,19 +10,20 @@ import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.gestures.detectHorizontalDragGestures
-import androidx.compose.foundation.interaction.MutableInteractionSource
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.BoxScope
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.ColumnScope
+import androidx.compose.foundation.layout.IntrinsicSize
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.RowScope
 import androidx.compose.foundation.layout.Spacer
-import androidx.compose.foundation.layout.fillMaxSize
+import androidx.compose.foundation.layout.fillMaxHeight
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.heightIn
+import androidx.compose.foundation.layout.offset
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
@@ -34,11 +36,13 @@ import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.text.BasicTextField
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.automirrored.rounded.ArrowForward
 import androidx.compose.material.icons.rounded.Check
 import androidx.compose.material.icons.rounded.Close
 import androidx.compose.material.icons.rounded.Info
+import androidx.compose.material.icons.rounded.KeyboardArrowDown
+import androidx.compose.material.icons.rounded.NorthEast
 import androidx.compose.material.icons.rounded.Public
-import androidx.compose.material.icons.rounded.UnfoldMore
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.DropdownMenu
 import androidx.compose.material3.DropdownMenuItem
@@ -57,13 +61,19 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.composed
 import androidx.compose.ui.draw.alpha
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.draw.drawWithContent
 import androidx.compose.ui.draw.shadow
 import androidx.compose.ui.focus.onFocusChanged
+import androidx.compose.ui.geometry.Offset
+import androidx.compose.ui.graphics.BlendMode
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.CompositingStrategy
 import androidx.compose.ui.graphics.ImageBitmap
 import androidx.compose.ui.graphics.Shape
 import androidx.compose.ui.graphics.SolidColor
+import androidx.compose.ui.graphics.StrokeCap
+import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.graphics.toComposeImageBitmap
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.input.pointer.PointerEventType
@@ -71,6 +81,7 @@ import androidx.compose.ui.input.pointer.PointerIcon
 import androidx.compose.ui.input.pointer.pointerHoverIcon
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.platform.LocalLayoutDirection
+import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.semantics.Role
 import androidx.compose.ui.semantics.contentDescription
 import androidx.compose.ui.semantics.semantics
@@ -78,8 +89,10 @@ import androidx.compose.ui.semantics.stateDescription
 import androidx.compose.ui.text.TextStyle
 import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.font.FontWeight
-import androidx.compose.ui.text.platform.Font
+import androidx.compose.ui.text.style.TextAlign
+import androidx.compose.ui.text.style.TextDecoration
 import androidx.compose.ui.text.style.TextOverflow
+import androidx.compose.ui.text.input.PasswordVisualTransformation
 import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.DpOffset
 import androidx.compose.ui.unit.LayoutDirection
@@ -92,70 +105,26 @@ import kotlinx.coroutines.withContext
 import java.nio.file.Path
 import java.util.concurrent.ConcurrentHashMap
 
-/** The colours of one theme. */
-internal data class Palette(
-    val background: Color,
-    val surface: Color,
-    val surfaceHigh: Color,
-    val foreground: Color,
-    val muted: Color,
-    val primary: Color,
-    val primaryBright: Color,
-    val success: Color,
-    val danger: Color,
-    val warning: Color,
-    val isDark: Boolean
-)
-
-internal val DarkPalette = Palette(
-    Color(0xFF080A12), Color(0xFF111522), Color(0xFF181D2D), Color(0xFFF5F7FF),
-    Color(0xFF98A2B8), Color(0xFF806CFF), Color(0xFFAE7CFF), Color(0xFF5AE6D0),
-    Color(0xFFFF6985), Color(0xFFFFC766), true
-)
-internal val LightPalette = Palette(
-    Color(0xFFF3F5FA), Color(0xFFFFFFFF), Color(0xFFE9EDF5), Color(0xFF171A26),
-    Color(0xFF5E687B), Color(0xFF5848D6), Color(0xFF6A50DF), Color(0xFF087B6B),
-    Color(0xFFB72E4A), Color(0xFF865900), false
-)
-private val activePaletteState = mutableStateOf(DarkPalette)
-internal var ActivePalette: Palette
-    get() = activePaletteState.value
-    set(value) { activePaletteState.value = value }
-internal val Ink get() = ActivePalette.background
-internal val Surface get() = ActivePalette.surface
-internal val SurfaceHigh get() = ActivePalette.surfaceHigh
-internal val White get() = ActivePalette.foreground
-internal val Muted get() = ActivePalette.muted
-internal val Violet get() = ActivePalette.primary
-internal val Violet2 get() = ActivePalette.primaryBright
-internal val Cyan get() = ActivePalette.success
-internal val Red get() = ActivePalette.danger
-internal val Amber get() = ActivePalette.warning
-internal val NeutralOverlay get() = if (ActivePalette.isDark) Color.White else Color.Black
-internal val GlassShape = RoundedCornerShape(22.dp)
-internal val ControlShape = RoundedCornerShape(13.dp)
-internal val RowShape = RoundedCornerShape(15.dp)
-internal val UiFont = FontFamily(
-    Font("fonts/Inter-Variable.ttf", FontWeight.Normal),
-    Font("fonts/Inter-Variable.ttf", FontWeight.SemiBold),
-    Font("fonts/Inter-Variable.ttf", FontWeight.Bold)
-)
-
 /** True after the keyboard was used to move around, so focus is only outlined for keyboard users. */
 internal val KeyboardNavigation = mutableStateOf(false)
 
 /** Open menus. While one is open, Escape belongs to that menu and must not reach the window. */
 internal val OpenMenus = mutableStateOf(0)
 
+/** The colour of the keyboard focus outline: lime on charcoal, ink on bone, violet in the Simple design. */
+internal val FocusColor: Color
+    @Composable get() = if (Tok.isNew) (if (IsDark) NewColors.Lime else Color(0xFF131514)) else Violet2
+
 internal fun Modifier.focusRing(shape: Shape): Modifier = composed {
     var focused by remember { mutableStateOf(false) }
+    val color = FocusColor
     onFocusChanged { focused = it.isFocused }
-        .then(if (focused && KeyboardNavigation.value) Modifier.border(2.dp, Violet2, shape) else Modifier)
+        .then(if (focused && KeyboardNavigation.value) Modifier.border(2.dp, color, shape) else Modifier)
 }
 
 /** A clickable surface with a hand cursor, an accessible label and role, and a keyboard focus outline. */
 internal fun Modifier.pressable(
-    shape: Shape = ControlShape,
+    shape: Shape,
     enabled: Boolean = true,
     role: Role = Role.Button,
     label: String? = null,
@@ -171,15 +140,18 @@ internal fun Modifier.pressable(
 @Composable
 internal fun Tooltip(text: String, modifier: Modifier = Modifier, content: @Composable () -> Unit) {
     if (text.isBlank()) { Box(modifier) { content() }; return }
+    val tokens = Tok
     TooltipArea(
         tooltip = {
-            Text(
-                text, color = White, fontSize = 10.5.sp, lineHeight = 14.sp,
-                modifier = Modifier.widthIn(max = 360.dp).shadow(8.dp, RoundedCornerShape(9.dp))
-                    .clip(RoundedCornerShape(9.dp)).background(SurfaceHigh)
-                    .border(1.dp, NeutralOverlay.copy(.12f), RoundedCornerShape(9.dp))
-                    .padding(horizontal = 9.dp, vertical = 6.dp)
-            )
+            ProvideTokens(tokens) {
+                Text(
+                    text, color = White, fontSize = 10.5.sp, lineHeight = 14.sp,
+                    modifier = Modifier.widthIn(max = 360.dp).shadow(8.dp, RoundedCornerShape(8.dp))
+                        .clip(RoundedCornerShape(8.dp)).background(SurfaceHigh)
+                        .border(1.dp, Line, RoundedCornerShape(8.dp))
+                        .padding(horizontal = 9.dp, vertical = 6.dp)
+                )
+            }
         },
         modifier = modifier,
         delayMillis = 450,
@@ -195,26 +167,30 @@ internal fun EllipsisText(
     fontSize: TextUnit,
     modifier: Modifier = Modifier,
     fontWeight: FontWeight = FontWeight.Normal,
-    fontFamily: FontFamily? = null
+    fontFamily: FontFamily? = null,
+    textDecoration: TextDecoration? = null
 ) {
     var clipped by remember(text) { mutableStateOf(false) }
     Tooltip(if (clipped) text else "", modifier) {
         Text(text, color = color, fontSize = fontSize, fontWeight = fontWeight, fontFamily = fontFamily, maxLines = 1,
-            overflow = TextOverflow.Ellipsis, onTextLayout = { clipped = it.hasVisualOverflow })
+            overflow = TextOverflow.Ellipsis, textDecoration = textDecoration, onTextLayout = { clipped = it.hasVisualOverflow })
     }
 }
 
-/** The translucent rounded surface used for panels and cards. */
+/** A card on the page: white on bone or on the Simple page, a raised graphite card on dark pages. */
 @Composable
-internal fun GlassCard(modifier: Modifier = Modifier, shape: Shape = GlassShape, content: @Composable BoxScope.() -> Unit) {
-    Box(
-        modifier.clip(shape).background(if (ActivePalette.isDark) Color.White.copy(.055f) else Color.White.copy(.78f))
-            .border(1.dp, if (ActivePalette.isDark) Color.White.copy(.09f) else Color.Black.copy(.08f), shape),
-        content = content
-    )
+internal fun SurfaceCard(modifier: Modifier = Modifier, shape: Shape = CardShape, content: @Composable BoxScope.() -> Unit) {
+    Box(modifier.clip(shape).background(Surface).border(1.dp, Line, shape), content = content)
 }
 
-/** The main action of a screen or dialog. */
+/** A one-pixel rule between rows or sections. */
+@Composable
+internal fun Divider(modifier: Modifier = Modifier, vertical: Boolean = false) {
+    if (vertical) Box(modifier.width(1.dp).fillMaxHeight().background(Line))
+    else Box(modifier.fillMaxWidth().height(1.dp).background(Line))
+}
+
+/** The main action of a screen or dialog: lime with ink text in New, violet with white text in Simple. */
 @Composable
 internal fun PrimaryButton(
     label: String,
@@ -222,27 +198,36 @@ internal fun PrimaryButton(
     icon: ImageVector? = null,
     enabled: Boolean = true,
     busy: Boolean = false,
+    height: Dp = 40.dp,
+    color: Color? = null,
+    contentColor: Color? = null,
     onClick: () -> Unit
 ) {
+    // A disabled main action turns neutral grey, as both designs show it, instead of a faded accent.
+    val fill = if (enabled) color ?: Violet else NeutralOverlay.copy(if (IsDark) .10f else .09f)
+    val content = if (enabled) contentColor ?: OnPrimary else Muted.copy(.85f)
+    val shape = ControlShape
+    val large = height >= 48.dp
     Row(
-        modifier.height(42.dp).alpha(if (enabled) 1f else .45f)
-            .pressable(ControlShape, enabled && !busy, label = label, onClick = onClick)
-            .background(Brush.horizontalGradient(listOf(Violet, Color(0xFF9B65E9))))
+        modifier.height(height)
+            .pressable(shape, enabled && !busy, label = label, onClick = onClick)
+            .background(fill)
             .padding(horizontal = 16.dp),
         verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.Center
     ) {
         if (busy) {
-            CircularProgressIndicator(color = Color.White, strokeWidth = 2.dp, modifier = Modifier.size(15.dp))
+            CircularProgressIndicator(color = content, strokeWidth = 2.dp, modifier = Modifier.size(15.dp))
             Spacer(Modifier.width(8.dp))
         } else if (icon != null) {
-            Icon(icon, null, tint = Color.White, modifier = Modifier.size(16.dp))
-            Spacer(Modifier.width(7.dp))
+            Icon(icon, null, tint = content, modifier = Modifier.size(if (large) 21.dp else 17.dp))
+            Spacer(Modifier.width(if (large) 10.dp else 8.dp))
         }
-        Text(label, color = Color.White, fontSize = 12.sp, fontWeight = FontWeight.Bold, maxLines = 1, overflow = TextOverflow.Ellipsis)
+        Text(label, color = content, fontSize = if (large) 15.5.sp else 12.5.sp, fontWeight = if (Tok.isNew) FontWeight.Bold else FontWeight.SemiBold,
+            maxLines = 1, overflow = TextOverflow.Ellipsis)
     }
 }
 
-/** A lower-emphasis action. */
+/** A lower-emphasis action: an outlined button on the page or in a panel. */
 @Composable
 internal fun SecondaryButton(
     label: String,
@@ -250,23 +235,54 @@ internal fun SecondaryButton(
     icon: ImageVector? = null,
     enabled: Boolean = true,
     trailing: ImageVector? = null,
+    height: Dp = 40.dp,
+    tint: Color? = null,
     onClick: () -> Unit
 ) {
+    val shape = ControlShape
+    val text = tint ?: White
     Row(
-        modifier.height(42.dp).alpha(if (enabled) 1f else .45f)
-            .pressable(ControlShape, enabled, label = label, onClick = onClick)
-            .background(NeutralOverlay.copy(.055f)).border(1.dp, NeutralOverlay.copy(.10f), ControlShape)
+        modifier.height(height).alpha(if (enabled) 1f else .45f)
+            .pressable(shape, enabled, label = label, onClick = onClick)
+            .background(if (Tok.isNew && IsDark) Color.Transparent else Field)
+            .border(1.dp, if (tint != null) tint.copy(.6f) else if (Tok.isNew) White.copy(if (IsDark) .45f else .32f) else Line, shape)
             .padding(horizontal = 14.dp),
         verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.Center
     ) {
         if (icon != null) {
-            Icon(icon, null, tint = Muted, modifier = Modifier.size(16.dp))
-            Spacer(Modifier.width(7.dp))
+            Icon(icon, null, tint = tint ?: White.copy(.8f), modifier = Modifier.size(16.dp))
+            Spacer(Modifier.width(8.dp))
         }
-        Text(label, color = White.copy(.88f), fontSize = 11.5.sp, fontWeight = FontWeight.SemiBold, maxLines = 1, overflow = TextOverflow.Ellipsis)
+        Text(label, color = text, fontSize = 12.sp, fontWeight = FontWeight.Medium, maxLines = 1, overflow = TextOverflow.Ellipsis)
         if (trailing != null) {
             Spacer(Modifier.width(6.dp))
-            Icon(trailing, null, tint = Muted, modifier = Modifier.size(15.dp))
+            Icon(trailing, null, tint = text.copy(.8f), modifier = Modifier.size(15.dp))
+        }
+    }
+}
+
+/** An underlined text action, with the north-east arrow both designs use for "go there". */
+@Composable
+internal fun LinkAction(
+    label: String,
+    modifier: Modifier = Modifier,
+    color: Color? = null,
+    arrow: Boolean = true,
+    enabled: Boolean = true,
+    fontSize: TextUnit = 12.sp,
+    onClick: () -> Unit
+) {
+    val tint = color ?: if (Tok.isNew) White else Violet2
+    Row(
+        modifier.alpha(if (enabled) 1f else .45f).pressable(RoundedCornerShape(4.dp), enabled, label = label, onClick = onClick)
+            .padding(horizontal = 2.dp, vertical = 2.dp),
+        verticalAlignment = Alignment.CenterVertically
+    ) {
+        Text(label, color = tint, fontSize = fontSize, fontWeight = FontWeight.Medium, maxLines = 1,
+            textDecoration = if (Tok.isNew) TextDecoration.Underline else null)
+        if (arrow) {
+            Spacer(Modifier.width(5.dp))
+            Icon(Icons.Rounded.NorthEast, null, tint = tint, modifier = Modifier.size(14.dp))
         }
     }
 }
@@ -280,95 +296,140 @@ internal fun IconAction(
     tint: Color = Muted,
     enabled: Boolean = true,
     size: Dp = 32.dp,
+    bordered: Boolean = true,
     onClick: () -> Unit
 ) {
+    val shape = RoundedCornerShape(if (Tok.isNew) 6.dp else 9.dp)
     Tooltip(label, modifier) {
         Box(
             Modifier.size(size).alpha(if (enabled) 1f else .4f)
-                .pressable(RoundedCornerShape(10.dp), enabled, label = label, onClick = onClick)
-                .background(NeutralOverlay.copy(.045f)).border(1.dp, NeutralOverlay.copy(.08f), RoundedCornerShape(10.dp)),
+                .pressable(shape, enabled, label = label, onClick = onClick)
+                .then(if (bordered) Modifier.background(if (Tok.isNew && IsDark) Color.Transparent else Field).border(1.dp, Line, shape) else Modifier),
             contentAlignment = Alignment.Center
-        ) { Icon(icon, null, tint = tint, modifier = Modifier.size(size * .52f)) }
+        ) { Icon(icon, null, tint = tint, modifier = Modifier.size(size * .54f)) }
     }
 }
 
-/** An on/off switch. The label is announced to assistive technology together with its state. */
+/** An on/off switch. The label is announced together with its state; New also writes the state beside it. */
 @Composable
-internal fun ToggleSwitch(checked: Boolean, label: String, enabled: Boolean = true, onToggle: (Boolean) -> Unit) {
-    val track = if (checked) Violet else NeutralOverlay.copy(.16f)
-    Box(
+internal fun ToggleSwitch(checked: Boolean, label: String, enabled: Boolean = true, showState: Boolean = Tok.switchStateText, onToggle: (Boolean) -> Unit) {
+    val track = if (checked) Violet else if (IsDark) Color.White.copy(.18f) else Color(0xFFD5D6D0)
+    Row(
         Modifier.alpha(if (enabled) 1f else .45f).focusRing(CircleShape).clip(CircleShape)
             .toggleable(checked, enabled = enabled, role = Role.Switch, onValueChange = onToggle)
             .then(if (enabled) Modifier.pointerHoverIcon(PointerIcon.Hand) else Modifier)
-            .semantics { contentDescription = label; stateDescription = if (checked) "On" else "Off" }
-            .size(width = 40.dp, height = 23.dp).background(track).border(1.dp, NeutralOverlay.copy(.10f), CircleShape)
-            .padding(3.dp),
-        contentAlignment = if (checked) Alignment.CenterEnd else Alignment.CenterStart
-    ) { Box(Modifier.size(17.dp).clip(CircleShape).background(if (checked) Color.White else Muted)) }
+            .semantics { contentDescription = label; stateDescription = if (checked) "On" else "Off" },
+        verticalAlignment = Alignment.CenterVertically
+    ) {
+        Box(
+            Modifier.size(width = 44.dp, height = 24.dp).clip(CircleShape).background(track).padding(3.dp),
+            contentAlignment = if (checked) Alignment.CenterEnd else Alignment.CenterStart
+        ) {
+            Box(Modifier.size(18.dp).shadow(1.dp, CircleShape).clip(CircleShape)
+                .background(if (checked && Tok.isNew) Color(0xFF141614) else Color.White))
+        }
+        if (showState) {
+            Spacer(Modifier.width(8.dp))
+            Text(if (checked) "On" else "Off", color = White.copy(.85f), fontSize = 12.sp, modifier = Modifier.width(26.dp))
+        }
+    }
 }
 
 /** The visual of a check box; the surrounding row handles the toggling. */
 @Composable
 internal fun CheckMark(selected: Boolean) {
+    val shape = RoundedCornerShape(if (Tok.isNew) 4.dp else 5.dp)
     Box(
-        Modifier.size(20.dp).clip(RoundedCornerShape(6.dp))
-            .background(if (selected) Violet else NeutralOverlay.copy(.05f))
-            .border(1.dp, if (selected) Violet2 else NeutralOverlay.copy(.22f), RoundedCornerShape(6.dp)),
+        Modifier.size(19.dp).clip(shape)
+            .background(if (selected) Violet else Field)
+            .border(1.5.dp, if (selected) Violet else White.copy(.38f), shape),
         contentAlignment = Alignment.Center
-    ) { if (selected) Icon(Icons.Rounded.Check, null, tint = Color.White, modifier = Modifier.size(14.dp)) }
+    ) { if (selected) Icon(Icons.Rounded.Check, null, tint = OnPrimary, modifier = Modifier.size(14.dp)) }
 }
 
 /** The visual of a radio button; the surrounding row handles the selection. */
 @Composable
-internal fun RadioMark(selected: Boolean) {
-    Box(
-        Modifier.size(18.dp).clip(CircleShape).border(1.5.dp, if (selected) Violet2 else NeutralOverlay.copy(.30f), CircleShape),
-        contentAlignment = Alignment.Center
-    ) { if (selected) Box(Modifier.size(9.dp).clip(CircleShape).background(Violet2)) }
+internal fun RadioMark(selected: Boolean, size: Dp = 20.dp) {
+    if (Tok.isNew) {
+        Box(
+            Modifier.size(size).clip(CircleShape).background(if (selected) Violet else Color.Transparent)
+                .border(1.5.dp, if (selected) Violet else White.copy(.45f), CircleShape),
+            contentAlignment = Alignment.Center
+        ) { if (selected) Box(Modifier.size(size * .5f).clip(CircleShape).background(Color(0xFF141614))) }
+    } else {
+        Box(
+            Modifier.size(size).clip(CircleShape).border(1.5.dp, if (selected) Violet2 else White.copy(.38f), CircleShape),
+            contentAlignment = Alignment.Center
+        ) { if (selected) Box(Modifier.size(size * .5f).clip(CircleShape).background(Violet2)) }
+    }
 }
 
 /** A small labelled pill, optionally with an icon. */
 @Composable
-internal fun Badge(label: String, color: Color, filled: Boolean = false, icon: ImageVector? = null) {
-    val shape = RoundedCornerShape(8.dp)
+internal fun Badge(label: String, color: Color, filled: Boolean = false, icon: ImageVector? = null, outlined: Boolean = false) {
+    val shape = RoundedCornerShape(if (Tok.isNew) 5.dp else 7.dp)
+    val content = if (filled) (if (color == Violet) OnPrimary else Color.White) else color
     Row(
-        Modifier.clip(shape).background(if (filled) color else color.copy(.12f))
-            .then(if (filled) Modifier else Modifier.border(1.dp, color.copy(.30f), shape))
+        Modifier.clip(shape).background(if (filled) color else if (outlined) Color.Transparent else color.copy(.12f))
+            .then(if (outlined) Modifier.border(1.dp, color.copy(.55f), shape) else Modifier)
             .padding(horizontal = 7.dp, vertical = 3.dp),
         verticalAlignment = Alignment.CenterVertically
     ) {
         if (icon != null) {
-            Icon(icon, null, tint = if (filled) Color.White else color, modifier = Modifier.size(11.dp))
+            Icon(icon, null, tint = content, modifier = Modifier.size(11.dp))
             Spacer(Modifier.width(4.dp))
         }
-        Text(label, color = if (filled) Color.White else color, fontSize = 9.5.sp, fontWeight = FontWeight.SemiBold, maxLines = 1)
+        Text(label, color = content, fontSize = 10.sp, fontWeight = FontWeight.SemiBold, maxLines = 1)
     }
 }
 
-/** "Main" is a solid violet pill and "Custom" an outlined one, so the two never differ by colour alone. */
+/** "Main", "Custom" and "Auto" never differ by colour alone: each says its name, and New draws them as outlined capsules. */
+@Composable
+internal fun RoutePill(kind: RouteKindLabel, modifier: Modifier = Modifier) {
+    if (Tok.isNew) {
+        Box(
+            modifier.clip(CircleShape).background(Surface).border(1.dp, White.copy(.42f), CircleShape).padding(horizontal = 12.dp, vertical = 4.dp),
+            contentAlignment = Alignment.Center
+        ) { Text(kind.label, color = White, fontSize = 11.sp, fontWeight = FontWeight.Medium, maxLines = 1) }
+    } else when (kind) {
+        RouteKindLabel.MAIN -> Badge("Main", Violet, filled = true)
+        RouteKindLabel.CUSTOM -> Badge("Custom", White.copy(.8f), outlined = true)
+        RouteKindLabel.AUTO -> Badge("Auto", Cyan)
+    }
+}
+
+internal enum class RouteKindLabel(val label: String) { MAIN("Main"), CUSTOM("Custom"), AUTO("Auto") }
+
+/** The older two-way badge: the main server, or a custom one. */
 @Composable
 internal fun RouteBadge(main: Boolean, long: Boolean = false) {
-    if (main) Badge(if (long) "Main server" else "Main", Violet, filled = true)
-    else Badge("Custom", Violet2)
+    if (main && long && !Tok.isNew) Badge("Main server", Violet, filled = true)
+    else RoutePill(if (main) RouteKindLabel.MAIN else RouteKindLabel.CUSTOM)
 }
 
-/** A selectable chip used for filters and list sources. */
+/** A selectable chip used for filters: lime when chosen in New, violet in Simple. */
 @Composable
-internal fun FilterChip(label: String, selected: Boolean, modifier: Modifier = Modifier, enabled: Boolean = true, onClick: () -> Unit) {
-    val shape = RoundedCornerShape(11.dp)
-    Box(
-        modifier.alpha(if (enabled) 1f else .45f).focusRing(shape).clip(shape)
+internal fun FilterChip(label: String, selected: Boolean, modifier: Modifier = Modifier, enabled: Boolean = true, trailing: ImageVector? = null, onClick: () -> Unit) {
+    val shape = ControlShape
+    Row(
+        modifier.height(34.dp).alpha(if (enabled) 1f else .45f).focusRing(shape).clip(shape)
             .selectable(selected, enabled = enabled, role = Role.Tab, onClick = onClick)
             .pointerHoverIcon(PointerIcon.Hand)
-            .background(if (selected) Violet else NeutralOverlay.copy(.05f))
-            .border(1.dp, if (selected) Violet2.copy(.55f) else NeutralOverlay.copy(.07f), shape)
-            .padding(horizontal = 11.dp, vertical = 7.dp)
+            .background(if (selected) (if (Tok.isNew) Violet else Selection) else Field)
+            .border(1.dp, if (selected) (if (Tok.isNew) Violet else Violet2.copy(.4f)) else Line, shape)
+            .padding(horizontal = 13.dp),
+        verticalAlignment = Alignment.CenterVertically
     ) {
-        Text(label, color = if (selected) Color.White else Muted, fontSize = 10.5.sp, fontWeight = FontWeight.SemiBold, maxLines = 1)
+        Text(label, color = if (selected) (if (Tok.isNew) OnPrimary else Violet2) else White.copy(.85f), fontSize = 11.5.sp,
+            fontWeight = if (selected) FontWeight.SemiBold else FontWeight.Medium, maxLines = 1)
+        if (trailing != null) {
+            Spacer(Modifier.width(5.dp))
+            Icon(trailing, null, tint = if (selected && Tok.isNew) OnPrimary else Muted, modifier = Modifier.size(15.dp))
+        }
     }
 }
 
-/** A row of mutually exclusive choices. */
+/** A row of mutually exclusive choices drawn as one bordered group. */
 @Composable
 internal fun <T> Segmented(
     options: List<T>,
@@ -377,30 +438,58 @@ internal fun <T> Segmented(
     modifier: Modifier = Modifier,
     icon: ((T) -> ImageVector?)? = null,
     enabled: Boolean = true,
+    height: Dp = 36.dp,
     onSelect: (T) -> Unit
 ) {
+    val outer = ControlShape
     Row(
-        modifier.clip(ControlShape).background(NeutralOverlay.copy(.045f)).border(1.dp, NeutralOverlay.copy(.08f), ControlShape).padding(4.dp),
-        horizontalArrangement = Arrangement.spacedBy(4.dp)
+        modifier.height(height).clip(outer).background(Field).border(1.dp, Line, outer).padding(if (Tok.isNew) 0.dp else 3.dp),
+        horizontalArrangement = Arrangement.spacedBy(if (Tok.isNew) 0.dp else 3.dp)
     ) {
-        options.forEach { option ->
+        options.forEachIndexed { index, option ->
             val active = option == selected
-            val shape = RoundedCornerShape(10.dp)
+            val shape = if (Tok.isNew) RoundedCornerShape(0.dp) else RoundedCornerShape(8.dp)
+            if (Tok.isNew && index > 0 && !active && options.getOrNull(index - 1) != selected) Divider(Modifier.padding(vertical = 7.dp), vertical = true)
             Row(
-                Modifier.weight(1f).height(32.dp).alpha(if (enabled || active) 1f else .5f).focusRing(shape).clip(shape)
+                Modifier.weight(1f).fillMaxHeight().alpha(if (enabled || active) 1f else .5f).focusRing(shape).clip(shape)
                     .selectable(active, enabled = enabled, role = Role.Tab) { onSelect(option) }
                     .pointerHoverIcon(PointerIcon.Hand)
-                    .background(if (active) Violet else Color.Transparent).padding(horizontal = 8.dp),
+                    .background(if (active) (if (Tok.isNew) Violet else Selection) else Color.Transparent).padding(horizontal = 8.dp),
                 verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.Center
             ) {
+                val color = if (active) (if (Tok.isNew) OnPrimary else Violet2) else White.copy(.75f)
                 icon?.invoke(option)?.let {
-                    Icon(it, null, tint = if (active) Color.White else Muted, modifier = Modifier.size(14.dp))
+                    Icon(it, null, tint = color, modifier = Modifier.size(15.dp))
                     Spacer(Modifier.width(6.dp))
                 }
-                Text(label(option), color = if (active) Color.White else Muted, fontSize = 11.sp,
-                    fontWeight = FontWeight.SemiBold, maxLines = 1, overflow = TextOverflow.Ellipsis)
+                Text(label(option), color = color, fontSize = 12.sp,
+                    fontWeight = if (active) FontWeight.SemiBold else FontWeight.Medium, maxLines = 1, overflow = TextOverflow.Ellipsis)
             }
         }
+    }
+}
+
+/** Tabs drawn as labels with an accent underline, as the Simple design and the New diagnostics do. */
+@Composable
+internal fun <T> UnderlineTabs(options: List<T>, selected: T, label: (T) -> String, modifier: Modifier = Modifier, onSelect: (T) -> Unit) {
+    val accent = if (Tok.isNew) White else Violet2
+    Column(modifier) {
+        Row(horizontalArrangement = Arrangement.spacedBy(if (Tok.isNew) 30.dp else 28.dp)) {
+            options.forEach { option ->
+                val active = option == selected
+                val shape = RoundedCornerShape(4.dp)
+                Column(
+                    Modifier.width(IntrinsicSize.Max).focusRing(shape).clip(shape).selectable(active, role = Role.Tab) { onSelect(option) }
+                        .pointerHoverIcon(PointerIcon.Hand)
+                ) {
+                    Text(label(option), color = if (active) accent else White.copy(.66f), fontSize = 13.sp,
+                        fontWeight = if (active) FontWeight.SemiBold else FontWeight.Medium, maxLines = 1,
+                        modifier = Modifier.padding(horizontal = 4.dp, vertical = 8.dp))
+                    Box(Modifier.fillMaxWidth().height(if (active) 2.5.dp else 0.dp).background(if (Tok.isNew) NewColors.Lime else Violet2))
+                }
+            }
+        }
+        Divider()
     }
 }
 
@@ -413,44 +502,56 @@ internal fun TextInput(
     modifier: Modifier = Modifier.fillMaxWidth(),
     icon: ImageVector? = null,
     enabled: Boolean = true,
-    monospace: Boolean = false
+    monospace: Boolean = false,
+    height: Dp = 40.dp,
+    password: Boolean = false,
+    trailing: (@Composable () -> Unit)? = null
 ) {
+    val shape = ControlShape
+    val cursor = if (Tok.isNew) White else Violet2
     Row(
-        modifier.height(42.dp).alpha(if (enabled) 1f else .5f).focusRing(ControlShape).clip(ControlShape)
-            .background(NeutralOverlay.copy(.045f)).border(1.dp, NeutralOverlay.copy(.10f), ControlShape).padding(horizontal = 12.dp),
+        modifier.height(height).alpha(if (enabled) 1f else .5f).focusRing(shape).clip(shape)
+            .background(Field).border(1.dp, if (Tok.isNew && !IsDark) Color(0xFFD3D4CC) else Line, shape).padding(horizontal = 12.dp),
         verticalAlignment = Alignment.CenterVertically
     ) {
         if (icon != null) {
-            Icon(icon, null, tint = Muted, modifier = Modifier.size(16.dp))
-            Spacer(Modifier.width(8.dp))
+            Icon(icon, null, tint = Muted, modifier = Modifier.size(17.dp))
+            Spacer(Modifier.width(9.dp))
         }
         BasicTextField(
             value, onValueChange, singleLine = true, enabled = enabled,
-            textStyle = TextStyle(color = White, fontSize = 12.sp, fontFamily = if (monospace) FontFamily.Monospace else UiFont),
-            cursorBrush = SolidColor(Violet2),
+            visualTransformation = if (password) PasswordVisualTransformation() else androidx.compose.ui.text.input.VisualTransformation.None,
+            textStyle = TextStyle(color = White, fontSize = 12.5.sp, fontFamily = if (monospace) FontFamily.Monospace else UiFont),
+            cursorBrush = SolidColor(cursor),
             modifier = Modifier.weight(1f).semantics { contentDescription = hint },
             decorationBox = { inner ->
-                Box {
-                    if (value.isEmpty()) Text(hint, color = Muted.copy(.75f), fontSize = 11.5.sp, maxLines = 1, overflow = TextOverflow.Ellipsis)
+                Box(contentAlignment = Alignment.CenterStart) {
+                    if (value.isEmpty()) Text(hint, color = Muted.copy(.8f), fontSize = 12.sp, maxLines = 1, overflow = TextOverflow.Ellipsis)
                     inner()
                 }
             }
         )
+        if (trailing != null) { Spacer(Modifier.width(6.dp)); trailing() }
     }
 }
+
+/** A password field whose content is never shown. */
+@Composable
+internal fun PasswordField(value: String, onValueChange: (String) -> Unit, hint: String, modifier: Modifier = Modifier.fillMaxWidth()) =
+    TextInput(value, { onValueChange(it.take(128)) }, hint, modifier, password = true)
 
 /** A multi-line monospace text field. */
 @Composable
 internal fun TextArea(value: String, onValueChange: (String) -> Unit, hint: String, modifier: Modifier = Modifier.fillMaxWidth().height(96.dp), enabled: Boolean = true) {
+    val shape = ControlShape
     BasicTextField(
         value, onValueChange, enabled = enabled,
         textStyle = TextStyle(color = White, fontSize = 11.5.sp, fontFamily = FontFamily.Monospace),
-        cursorBrush = SolidColor(Violet2),
-        modifier = modifier.alpha(if (enabled) 1f else .5f).focusRing(ControlShape).clip(ControlShape)
-            .background(NeutralOverlay.copy(if (ActivePalette.isDark) .16f else .045f))
-            .border(1.dp, NeutralOverlay.copy(.10f), ControlShape).padding(11.dp)
+        cursorBrush = SolidColor(if (Tok.isNew) White else Violet2),
+        modifier = modifier.alpha(if (enabled) 1f else .5f).focusRing(shape).clip(shape)
+            .background(Field).border(1.dp, if (Tok.isNew && !IsDark) Color(0xFFD3D4CC) else Line, shape).padding(11.dp)
             .semantics { contentDescription = hint },
-        decorationBox = { inner -> Box { if (value.isEmpty()) Text(hint, color = Muted.copy(.7f), fontSize = 10.5.sp); inner() } }
+        decorationBox = { inner -> Box { if (value.isEmpty()) Text(hint, color = Muted.copy(.75f), fontSize = 11.sp); inner() } }
     )
 }
 
@@ -467,41 +568,46 @@ internal class MenuEntry(
 
 /** A themed dropdown menu with an optional header, for example a filter field. */
 @Composable
-internal fun PopupMenu(expanded: Boolean, onDismiss: () -> Unit, entries: List<MenuEntry>, minWidth: Dp = 190.dp, header: (@Composable () -> Unit)? = null) {
+internal fun PopupMenu(expanded: Boolean, onDismiss: () -> Unit, entries: List<MenuEntry>, minWidth: Dp = 200.dp, header: (@Composable () -> Unit)? = null) {
     DisposableEffect(expanded) {
         if (expanded) OpenMenus.value++
         onDispose { if (expanded) OpenMenus.value-- }
     }
-    DropdownMenu(
-        expanded = expanded, onDismissRequest = onDismiss,
-        modifier = Modifier.widthIn(min = minWidth, max = 380.dp).heightIn(max = 340.dp)
-            .background(SurfaceHigh).border(1.dp, NeutralOverlay.copy(.10f), RoundedCornerShape(4.dp))
-    ) {
-        header?.invoke()
-        entries.forEach { entry ->
-            val color = when {
-                entry.danger -> Red
-                entry.selected -> Violet2
-                else -> White
-            }
-            DropdownMenuItem(
-                enabled = entry.enabled,
-                onClick = { onDismiss(); entry.onClick() },
-                leadingIcon = entry.icon?.let { icon -> { Icon(icon, null, tint = if (entry.enabled) color else Muted, modifier = Modifier.size(16.dp)) } },
-                trailingIcon = if (entry.selected) ({ Icon(Icons.Rounded.Check, "Selected", tint = Violet2, modifier = Modifier.size(15.dp)) }) else null,
-                text = {
-                    Column {
-                        Text(entry.label, color = if (entry.enabled) color else Muted, fontSize = 12.sp,
-                            fontWeight = if (entry.selected) FontWeight.SemiBold else FontWeight.Normal, maxLines = 1, overflow = TextOverflow.Ellipsis)
-                        if (entry.detail.isNotBlank()) Text(entry.detail, color = Muted, fontSize = 9.5.sp, maxLines = 1, overflow = TextOverflow.Ellipsis)
-                    }
+    // Menus are drawn in the page colours even when opened from a charcoal panel, so they stay readable.
+    val page = tokensFor(Tok.style, IsDark)
+    ProvideTokens(if (Tok.isNew && IsDark) Tok else page) {
+        val selectedColor = if (Tok.isNew) (if (IsDark) NewColors.Lime else White) else Violet2
+        DropdownMenu(
+            expanded = expanded, onDismissRequest = onDismiss,
+            modifier = Modifier.widthIn(min = minWidth, max = 400.dp).heightIn(max = 360.dp)
+                .background(SurfaceHigh).border(1.dp, Line, RoundedCornerShape(4.dp))
+        ) {
+            header?.invoke()
+            entries.forEach { entry ->
+                val color = when {
+                    entry.danger -> Red
+                    entry.selected -> selectedColor
+                    else -> White
                 }
-            )
+                DropdownMenuItem(
+                    enabled = entry.enabled,
+                    onClick = { onDismiss(); entry.onClick() },
+                    leadingIcon = entry.icon?.let { icon -> { Icon(icon, null, tint = if (entry.enabled) color else Muted, modifier = Modifier.size(16.dp)) } },
+                    trailingIcon = if (entry.selected) ({ Icon(Icons.Rounded.Check, "Selected", tint = selectedColor, modifier = Modifier.size(15.dp)) }) else null,
+                    text = {
+                        Column {
+                            Text(entry.label, color = if (entry.enabled) color else Muted, fontSize = 12.sp,
+                                fontWeight = if (entry.selected) FontWeight.SemiBold else FontWeight.Normal, maxLines = 1, overflow = TextOverflow.Ellipsis)
+                            if (entry.detail.isNotBlank()) Text(entry.detail, color = Muted, fontSize = 9.5.sp, maxLines = 1, overflow = TextOverflow.Ellipsis)
+                        }
+                    }
+                )
+            }
         }
     }
 }
 
-/** A button that opens a menu and shows the current choice. */
+/** A field-like button that opens a menu and shows the current choice. */
 @Composable
 internal fun MenuButton(
     label: String,
@@ -510,36 +616,44 @@ internal fun MenuButton(
     icon: ImageVector? = null,
     accessibleLabel: String = label,
     enabled: Boolean = true,
-    height: Dp = 42.dp
+    height: Dp = 40.dp,
+    prefix: String = "",
+    header: (@Composable () -> Unit)? = null,
+    menuWidth: Dp = 220.dp
 ) {
     var open by remember { mutableStateOf(false) }
+    val shape = ControlShape
     Box(modifier) {
         Row(
             Modifier.fillMaxWidth().height(height).alpha(if (enabled) 1f else .45f)
-                .pressable(ControlShape, enabled, label = accessibleLabel) { open = true }
-                .background(NeutralOverlay.copy(.055f)).border(1.dp, NeutralOverlay.copy(.10f), ControlShape)
-                .padding(start = 12.dp, end = 8.dp),
+                .pressable(shape, enabled, label = accessibleLabel) { open = true }
+                .background(Field).border(1.dp, if (Tok.isNew && !IsDark) Color(0xFFD3D4CC) else Line, shape)
+                .padding(start = 12.dp, end = 9.dp),
             verticalAlignment = Alignment.CenterVertically
         ) {
             if (icon != null) {
-                Icon(icon, null, tint = Muted, modifier = Modifier.size(15.dp))
-                Spacer(Modifier.width(7.dp))
+                Icon(icon, null, tint = Muted, modifier = Modifier.size(16.dp))
+                Spacer(Modifier.width(8.dp))
             }
-            Text(label, color = White.copy(.9f), fontSize = 11.5.sp, fontWeight = FontWeight.SemiBold, maxLines = 1,
+            if (prefix.isNotBlank()) {
+                Text(prefix, color = Muted, fontSize = 12.sp, maxLines = 1)
+                Spacer(Modifier.width(5.dp))
+            }
+            Text(label, color = White, fontSize = 12.sp, fontWeight = FontWeight.Medium, maxLines = 1,
                 overflow = TextOverflow.Ellipsis, modifier = Modifier.weight(1f))
             Spacer(Modifier.width(4.dp))
-            Icon(Icons.Rounded.UnfoldMore, null, tint = Muted, modifier = Modifier.size(15.dp))
+            Icon(Icons.Rounded.KeyboardArrowDown, null, tint = White.copy(.7f), modifier = Modifier.size(18.dp))
         }
-        PopupMenu(open, { open = false }, entries)
+        PopupMenu(open, { open = false }, entries, minWidth = menuWidth, header = header)
     }
 }
 
 /** An icon button that opens a menu, for overflow actions. */
 @Composable
-internal fun MenuIcon(icon: ImageVector, label: String, entries: List<MenuEntry>, modifier: Modifier = Modifier, size: Dp = 32.dp, tint: Color = Muted) {
+internal fun MenuIcon(icon: ImageVector, label: String, entries: List<MenuEntry>, modifier: Modifier = Modifier, size: Dp = 32.dp, tint: Color = Muted, bordered: Boolean = true) {
     var open by remember { mutableStateOf(false) }
     Box(modifier) {
-        IconAction(icon, label, tint = tint, size = size) { open = true }
+        IconAction(icon, label, tint = tint, size = size, bordered = bordered) { open = true }
         PopupMenu(open, { open = false }, entries)
     }
 }
@@ -548,16 +662,27 @@ internal fun MenuIcon(icon: ImageVector, label: String, entries: List<MenuEntry>
 @Composable
 internal fun InfoBanner(text: String, modifier: Modifier = Modifier, color: Color = Muted, icon: ImageVector = Icons.Rounded.Info, action: (@Composable RowScope.() -> Unit)? = null) {
     val tinted = color != Muted
+    val shape = RowShape
     Row(
-        modifier.clip(RowShape).background(if (tinted) color.copy(.09f) else NeutralOverlay.copy(.04f))
-            .border(1.dp, if (tinted) color.copy(.26f) else NeutralOverlay.copy(.07f), RowShape)
+        modifier.clip(shape).background(if (tinted) color.copy(if (IsDark) .12f else .09f) else NeutralOverlay.copy(if (IsDark) .05f else .03f))
+            .border(1.dp, if (tinted) color.copy(.32f) else Line, shape)
             .padding(horizontal = 12.dp, vertical = 9.dp),
         verticalAlignment = Alignment.CenterVertically
     ) {
+        Icon(icon, null, tint = if (tinted) color else White.copy(.7f), modifier = Modifier.size(17.dp))
+        Spacer(Modifier.width(10.dp))
+        Text(text, color = White.copy(.82f), fontSize = 11.sp, lineHeight = 15.sp, modifier = Modifier.weight(1f))
+        if (action != null) { Spacer(Modifier.width(9.dp)); action() }
+    }
+}
+
+/** A quiet note: an outlined info icon and muted text, without a box. */
+@Composable
+internal fun Note(text: String, modifier: Modifier = Modifier, icon: ImageVector = Icons.Rounded.Info, color: Color = Muted) {
+    Row(modifier, verticalAlignment = Alignment.CenterVertically) {
         Icon(icon, null, tint = color, modifier = Modifier.size(16.dp))
         Spacer(Modifier.width(9.dp))
-        Text(text, color = if (tinted) color else White.copy(.78f), fontSize = 10.5.sp, lineHeight = 14.sp, modifier = Modifier.weight(1f))
-        if (action != null) { Spacer(Modifier.width(9.dp)); action() }
+        Text(text, color = color, fontSize = 11.sp, lineHeight = 15.sp)
     }
 }
 
@@ -565,14 +690,15 @@ internal fun InfoBanner(text: String, modifier: Modifier = Modifier, color: Colo
 @Composable
 internal fun EmptyState(icon: ImageVector, title: String, detail: String, modifier: Modifier = Modifier, action: (@Composable () -> Unit)? = null) {
     Column(modifier.padding(24.dp), horizontalAlignment = Alignment.CenterHorizontally, verticalArrangement = Arrangement.Center) {
-        Box(Modifier.size(52.dp).clip(RoundedCornerShape(17.dp)).background(Violet.copy(.13f)), contentAlignment = Alignment.Center) {
-            Icon(icon, null, tint = Violet2, modifier = Modifier.size(25.dp))
+        Box(Modifier.size(52.dp).clip(RoundedCornerShape(if (Tok.isNew) 10.dp else 16.dp))
+            .background(if (Tok.isNew) (if (IsDark) Color.White.copy(.07f) else NewColors.Charcoal) else Selection), contentAlignment = Alignment.Center) {
+            Icon(icon, null, tint = if (Tok.isNew) NewColors.Lime else Violet2, modifier = Modifier.size(25.dp))
         }
         Spacer(Modifier.height(12.dp))
-        Text(title, color = White, fontSize = 14.sp, fontWeight = FontWeight.Bold)
+        Text(title, color = White, fontSize = 15.sp, fontWeight = FontWeight.Bold, textAlign = TextAlign.Center)
         Spacer(Modifier.height(5.dp))
-        Text(detail, color = Muted, fontSize = 11.sp, lineHeight = 15.sp, textAlign = androidx.compose.ui.text.style.TextAlign.Center,
-            modifier = Modifier.widthIn(max = 380.dp))
+        Text(detail, color = Muted, fontSize = 11.5.sp, lineHeight = 16.sp, textAlign = TextAlign.Center,
+            modifier = Modifier.widthIn(max = 400.dp))
         if (action != null) { Spacer(Modifier.height(14.dp)); action() }
     }
 }
@@ -581,9 +707,9 @@ internal fun EmptyState(icon: ImageVector, title: String, detail: String, modifi
 @Composable
 internal fun LoadingState(text: String, modifier: Modifier = Modifier) {
     Column(modifier.padding(24.dp), horizontalAlignment = Alignment.CenterHorizontally, verticalArrangement = Arrangement.Center) {
-        CircularProgressIndicator(color = Violet2, strokeWidth = 2.dp, modifier = Modifier.size(28.dp))
+        CircularProgressIndicator(color = if (Tok.isNew) White else Violet2, strokeWidth = 2.dp, modifier = Modifier.size(28.dp))
         Spacer(Modifier.height(11.dp))
-        Text(text, color = Muted, fontSize = 11.sp)
+        Text(text, color = Muted, fontSize = 11.5.sp)
     }
 }
 
@@ -593,50 +719,32 @@ internal fun StatusDot(color: Color, size: Dp = 8.dp) {
     Box(Modifier.size(size).clip(CircleShape).background(color))
 }
 
-/** An upper-case heading for a group of rows. */
+/** An upper-case, letter-spaced heading for a group of rows. */
 @Composable
-internal fun SectionLabel(text: String) {
-    Text(text.uppercase(), color = Muted, fontSize = 9.5.sp, fontWeight = FontWeight.Bold, letterSpacing = .8.sp)
+internal fun SectionLabel(text: String, color: Color = Muted) {
+    Text(text.uppercase(), color = color, fontSize = 10.5.sp, fontWeight = FontWeight.SemiBold, letterSpacing = 1.4.sp, maxLines = 1)
 }
 
 /** The label above a form field. */
 @Composable
 internal fun FieldLabel(text: String) {
-    Text(text, color = Muted, fontSize = 10.5.sp, fontWeight = FontWeight.SemiBold)
-    Spacer(Modifier.height(5.dp))
+    Text(text, color = White.copy(.8f), fontSize = 11.5.sp, fontWeight = FontWeight.Medium)
+    Spacer(Modifier.height(6.dp))
 }
 
-/** The frame every screen shares: a fixed heading with actions, scrolling content and a fixed action bar. */
+/** A label and its value on one line. */
 @Composable
-internal fun ScreenPanel(
-    title: String,
-    subtitle: String,
-    modifier: Modifier = Modifier,
-    actions: (@Composable RowScope.() -> Unit)? = null,
-    footer: (@Composable RowScope.() -> Unit)? = null,
-    content: @Composable ColumnScope.() -> Unit
-) {
-    GlassCard(modifier.fillMaxSize()) {
-        Column(Modifier.fillMaxSize().padding(16.dp)) {
-            Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
-                Column(Modifier.weight(1f)) {
-                    Text(title, color = White, fontSize = 18.sp, fontWeight = FontWeight.Bold, maxLines = 1, overflow = TextOverflow.Ellipsis)
-                    Spacer(Modifier.height(2.dp))
-                    Text(subtitle, color = Muted, fontSize = 11.sp, maxLines = 2, overflow = TextOverflow.Ellipsis)
-                }
-                if (actions != null) {
-                    Spacer(Modifier.width(12.dp))
-                    Row(horizontalArrangement = Arrangement.spacedBy(8.dp), verticalAlignment = Alignment.CenterVertically, content = actions)
-                }
-            }
-            Spacer(Modifier.height(12.dp))
-            Column(Modifier.weight(1f).fillMaxWidth(), content = content)
-            if (footer != null) {
-                Spacer(Modifier.height(11.dp))
-                Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(9.dp), verticalAlignment = Alignment.CenterVertically, content = footer)
-            }
-        }
+internal fun DetailLine(label: String, value: String, labelWidth: Dp = 150.dp, valueColor: Color = White) {
+    Row(Modifier.fillMaxWidth().padding(vertical = 3.dp)) {
+        Text(label, color = Muted, fontSize = 11.sp, modifier = Modifier.width(labelWidth))
+        Text(value, color = valueColor, fontSize = 11.5.sp, lineHeight = 15.sp, modifier = Modifier.weight(1f))
     }
+}
+
+/** A table header cell. */
+@Composable
+internal fun HeaderText(text: String, modifier: Modifier = Modifier) {
+    Text(text, color = Muted, fontSize = 11.sp, fontWeight = FontWeight.Medium, maxLines = 1, overflow = TextOverflow.Ellipsis, modifier = modifier)
 }
 
 /** A modal card with a fixed title, scrolling body and fixed actions. It is shown through [Shell.showDialog]. */
@@ -649,25 +757,26 @@ internal fun DialogCard(
     actions: @Composable RowScope.() -> Unit,
     content: @Composable ColumnScope.() -> Unit
 ) {
+    val shape = RoundedCornerShape(if (Tok.isNew) 10.dp else 18.dp)
     Box(
-        Modifier.padding(22.dp).widthIn(max = width).fillMaxWidth().shadow(30.dp, GlassShape).clip(GlassShape)
-            .background(Surface).border(1.dp, NeutralOverlay.copy(.11f), GlassShape)
+        Modifier.padding(22.dp).widthIn(max = width).fillMaxWidth().shadow(30.dp, shape).clip(shape)
+            .background(Surface).border(1.dp, Line, shape)
     ) {
-        Column(Modifier.padding(18.dp)) {
+        Column(Modifier.padding(20.dp)) {
             Row(verticalAlignment = Alignment.CenterVertically) {
                 Column(Modifier.weight(1f)) {
-                    Text(title, color = White, fontSize = 17.sp, fontWeight = FontWeight.Bold)
+                    Text(title, color = White, fontSize = 17.sp, fontWeight = if (Tok.isNew) FontWeight.ExtraBold else FontWeight.Bold)
                     if (subtitle.isNotBlank()) {
                         Spacer(Modifier.height(3.dp))
-                        Text(subtitle, color = Muted, fontSize = 11.sp, lineHeight = 15.sp)
+                        Text(subtitle, color = Muted, fontSize = 11.5.sp, lineHeight = 16.sp)
                     }
                 }
                 Spacer(Modifier.width(10.dp))
-                IconAction(Icons.Rounded.Close, "Close", onClick = onClose)
+                IconAction(Icons.Rounded.Close, "Close", bordered = false, onClick = onClose)
             }
-            Spacer(Modifier.height(13.dp))
-            Column(Modifier.weight(1f, fill = false).verticalScroll(rememberScrollState()), content = content)
             Spacer(Modifier.height(14.dp))
+            Column(Modifier.weight(1f, fill = false).verticalScroll(rememberScrollState()), content = content)
+            Spacer(Modifier.height(16.dp))
             Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(9.dp, Alignment.End),
                 verticalAlignment = Alignment.CenterVertically, content = actions)
         }
@@ -677,12 +786,12 @@ internal fun DialogCard(
 /** Asks for confirmation before an action that cannot be undone. */
 @Composable
 internal fun ConfirmDialog(title: String, message: String, confirm: String, onCancel: () -> Unit, danger: Boolean = false, onConfirm: () -> Unit) {
-    DialogCard(title, "", onCancel, width = 430.dp, actions = {
+    DialogCard(title, "", onCancel, width = 440.dp, actions = {
         SecondaryButton("Cancel", onClick = onCancel)
-        if (danger) SecondaryButton(confirm, icon = Icons.Rounded.Close, onClick = onConfirm)
+        if (danger) PrimaryButton(confirm, color = Red, contentColor = Color.White, onClick = onConfirm)
         else PrimaryButton(confirm, onClick = onConfirm)
     }) {
-        Text(message, color = White.copy(.82f), fontSize = 12.sp, lineHeight = 17.sp)
+        Text(message, color = White.copy(.85f), fontSize = 12.sp, lineHeight = 17.sp)
     }
 }
 
@@ -713,29 +822,38 @@ private fun rememberAppIcon(path: String): ImageBitmap? {
 
 /** The application icon, or a coloured initial when Windows has none for it. */
 @Composable
-internal fun AppAvatar(name: String, path: String = "", size: Dp = 34.dp) {
+internal fun AppAvatar(name: String, path: String = "", size: Dp = 34.dp, framed: Boolean = false) {
     val icon = if (path.isBlank()) null else rememberAppIcon(path)
-    val shape = RoundedCornerShape(size * .32f)
+    val shape = RoundedCornerShape(size * .26f)
+    val frame = if (framed) Modifier.border(1.dp, Line, shape) else Modifier
     if (icon != null) {
-        Box(Modifier.size(size).clip(shape).background(NeutralOverlay.copy(.05f)), contentAlignment = Alignment.Center) {
-            Image(icon, null, Modifier.size(size * .68f))
+        Box(Modifier.size(size).clip(shape).background(if (framed) Surface else Color.Transparent).then(frame), contentAlignment = Alignment.Center) {
+            Image(icon, null, Modifier.size(size * if (framed) .62f else .82f))
         }
         return
     }
-    val colors = listOf(Cyan, Violet2, Amber, Color(0xFFFF7C8E), Color(0xFF79A9FF))
+    val colors = listOf(Color(0xFF2F9E6B), Color(0xFF6C55E0), Color(0xFFC8861A), Color(0xFFD9566A), Color(0xFF3F7FD9))
     val color = colors[kotlin.math.abs(name.hashCode()) % colors.size]
-    Box(Modifier.size(size).clip(shape).background(color.copy(.14f)), contentAlignment = Alignment.Center) {
-        Text(name.firstOrNull()?.uppercase() ?: "A", color = color, fontSize = (size.value * .4f).sp, fontWeight = FontWeight.Bold)
+    Box(Modifier.size(size).clip(shape).background(color.copy(if (IsDark) .22f else .13f)).then(frame), contentAlignment = Alignment.Center) {
+        Text(name.firstOrNull()?.uppercase() ?: "A", color = if (IsDark) color.copy(alpha = 1f).let { Color(it.red * .6f + .4f, it.green * .6f + .4f, it.blue * .6f + .4f) } else color,
+            fontSize = (size.value * .42f).sp, fontWeight = FontWeight.Bold)
     }
 }
 
-/** Country code of a server when its name or address reveals one; a globe otherwise. */
+/**
+ * Country code of a server when its name or address reveals one; a globe otherwise. New draws a charcoal tile with
+ * white letters, Simple a soft grey tile. Flag emoji are not drawn: Windows fonts cannot render them.
+ */
 @Composable
 internal fun ServerAvatar(node: ProxyNode?, size: Dp = 34.dp) {
     val code = node?.let(::avatarCode).orEmpty()
-    Box(Modifier.size(size).clip(RoundedCornerShape(size * .32f)).background(Violet.copy(.15f)), contentAlignment = Alignment.Center) {
-        if (code.isBlank()) Icon(Icons.Rounded.Public, null, tint = Violet2, modifier = Modifier.size(size * .52f))
-        else Text(code, color = Violet2, fontSize = (size.value * .32f).sp, fontWeight = FontWeight.Bold)
+    val shape = RoundedCornerShape(size * if (Tok.isNew) .16f else .24f)
+    val (back, front) = if (Tok.isNew) (if (IsDark && Ink != NewColors.Charcoal) Color(0xFF0E0F0F) else Color(0xFF131514)) to Color.White
+        else (if (IsDark) Color.White.copy(.08f) else Color(0xFFEEEEF4)) to White
+    Box(Modifier.size(size).clip(shape).background(back)
+        .then(if (Tok.isNew) Modifier.border(1.dp, Color.White.copy(.14f), shape) else Modifier), contentAlignment = Alignment.Center) {
+        if (code.isBlank()) Icon(Icons.Rounded.Public, null, tint = front.copy(.85f), modifier = Modifier.size(size * .5f))
+        else Text(code, color = front, fontSize = (size.value * .36f).sp, fontWeight = FontWeight.Bold)
     }
 }
 
@@ -764,7 +882,7 @@ internal fun serverName(node: ProxyNode): String {
 
 /** The protocol as users know it; an embedded Xray JSON profile is shown as "Xray JSON". */
 internal fun protocolLabel(node: ProxyNode): String =
-    if (node.protocol() == app.perroute.model.Protocol.XRAY_PROFILE) "Xray JSON" else node.protocol().name
+    if (node.protocol() == app.perroute.model.Protocol.XRAY_PROFILE) "Xray JSON" else node.protocol().label()
 
 /** An executable path as a readable application name. */
 internal fun appName(path: String): String = PerRouteController.displayName(path)
@@ -803,6 +921,9 @@ internal fun formatDuration(seconds: Long): String {
     else "%02d:%02d".format(minutes, remaining)
 }
 
+/** A session length as hours, minutes and seconds, always with hours: 00:24:18. */
+internal fun formatClock(seconds: Long): String = "%02d:%02d:%02d".format(seconds / 3600, (seconds % 3600) / 60, seconds % 60)
+
 /** How long ago something happened, in words. */
 internal fun formatAgo(atMillis: Long, now: Long = System.currentTimeMillis()): String {
     val seconds = ((now - atMillis) / 1_000L).coerceAtLeast(0L)
@@ -814,6 +935,10 @@ internal fun formatAgo(atMillis: Long, now: Long = System.currentTimeMillis()): 
         else -> "${seconds / 3_600} h ago"
     }
 }
+
+/** A clock time of day for timelines: 14:32. */
+internal fun formatTimeOfDay(atMillis: Long): String =
+    java.time.Instant.ofEpochMilli(atMillis).atZone(java.time.ZoneId.systemDefault()).toLocalTime().withNano(0).toString().take(5)
 
 /** Lets a horizontal row be scrolled with the mouse wheel and by dragging. */
 internal fun Modifier.wheelAndDragScroll(state: ScrollState): Modifier = this
@@ -840,3 +965,49 @@ internal fun Modifier.wheelAndDragScroll(state: ScrollState): Modifier = this
 @Composable
 internal fun CompositionLtr(content: @Composable () -> Unit) =
     CompositionLocalProvider(LocalLayoutDirection provides LayoutDirection.Ltr, content = content)
+
+/** The New design's mark: a lime route that branches from one line into several. */
+@Composable
+internal fun NewMark(size: Dp = 26.dp, color: Color = NewColors.Lime) {
+    Canvas(Modifier.size(size).semantics { contentDescription = "PerRoute" }) {
+        val w = this.size.width
+        val stroke = w * .085f
+        val dot = w * .105f
+        val cx = w * .5f
+        drawLine(color, Offset(cx, w * .14f), Offset(cx, w * .86f), stroke, StrokeCap.Round)
+        drawLine(color, Offset(cx, w * .46f), Offset(w * .2f, w * .46f), stroke, StrokeCap.Round)
+        drawLine(color, Offset(cx, w * .62f), Offset(w * .8f, w * .62f), stroke, StrokeCap.Round)
+        drawCircle(color, dot, Offset(cx, w * .12f))
+        drawCircle(color, dot, Offset(cx, w * .88f))
+        drawCircle(color, dot, Offset(w * .14f, w * .46f))
+        drawCircle(color, dot, Offset(w * .86f, w * .62f))
+    }
+}
+
+/** The Simple design's mark: the PerRoute "P" in violet tones. */
+@Composable
+internal fun SimpleMark(size: Dp = 30.dp) {
+    val tint = Violet
+    Image(
+        painterResource("icons/perroute-icon-256.png"), "PerRoute",
+        Modifier.size(size).graphicsLayer(compositingStrategy = CompositingStrategy.Offscreen)
+            .drawWithContent {
+                drawContent()
+                drawRect(Brush.linearGradient(listOf(tint, Color(0xFF8E6BFF), tint)), blendMode = BlendMode.Color)
+            }
+    )
+}
+
+/** A horizontal bar showing a share, with an optional track colour. */
+@Composable
+internal fun ProgressBar(fraction: Float, color: Color, modifier: Modifier = Modifier, height: Dp = 6.dp) {
+    Box(modifier.height(height).clip(CircleShape).background(NeutralOverlay.copy(if (IsDark) .12f else .08f))) {
+        Box(Modifier.fillMaxWidth(fraction.coerceIn(0f, 1f)).height(height).clip(CircleShape).background(color))
+    }
+}
+
+/** The arrow drawn between an app and its server. */
+@Composable
+internal fun ArrowGlyph(color: Color = Muted, size: Dp = 16.dp) {
+    Icon(Icons.AutoMirrored.Rounded.ArrowForward, null, tint = color, modifier = Modifier.size(size).offset(y = 0.dp))
+}
