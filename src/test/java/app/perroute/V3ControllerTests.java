@@ -53,6 +53,7 @@ final class V3ControllerTests {
         run("V3: Auto fails over in place", false, V3ControllerTests::testAutoFailover);
         run("V3: main switch replaces only the main route", false, V3ControllerTests::testInPlaceMainSwitch);
         run("V3: a refused runtime change keeps the connection", false, V3ControllerTests::testRuntimeChangeRefused);
+        run("V3: a failed route changes server while connected", false, V3ControllerTests::testChangeRouteServer);
         run("V3: traffic gateway and live limits", false, V3ControllerTests::testGatewayAndLimits);
         run("V3: gateway start failure rolls back", false, V3ControllerTests::testGatewayFailure);
         run("V3: migrated installations keep version 2 behavior", true, V3ControllerTests::testMigratedDefaults);
@@ -293,6 +294,56 @@ final class V3ControllerTests {
         equal(starts + 1, f.backend.startCount);
         check(f.controller.isConnected(), "Still connected");
         check(f.logs.stream().anyMatch(line -> line.contains("could not be replaced in place")), "The fallback is logged");
+    }
+
+    private static void testChangeRouteServer(Fixture f) throws Exception {
+        f.good(f.third, 20);
+        f.setup(Map.of(f.chrome, "second"), Set.of(f.telegram));
+        f.backend.supportsRuntimeChange = true;
+        check(f.controller.connect().getOk(), "Connect");
+        int starts = f.backend.startCount;
+        ActiveRoute custom = f.controller.activeRoutes().stream().filter(r -> r.getId().equals("second")).findFirst().orElseThrow();
+        f.backend.failingPorts.add(custom.getCheckPort());
+        f.controller.retryRoute("second");
+        waitFor(() -> f.health("second") != null && f.health("second").state() == RouteHealthTracker.State.FAILED);
+        f.backend.failingPorts.clear();
+
+        // The failed custom route moves to another server in place; the Apps screen is locked while connected.
+        int changes = f.backend.runtimeChanges.size();
+        check(f.controller.changeRouteServer("second", "third").getOk(), "Change the failed route's server");
+        check(f.controller.isConnected(), "Still connected");
+        equal(starts, f.backend.startCount);
+        equal(changes + 1, f.backend.runtimeChanges.size());
+        check(f.backend.runtimeChanges.get(changes)[3].contains("third.example"), "The new outbound carries the new server");
+        equal(Map.of(AppRoutes.normalize(f.chrome), "third"), f.controller.appRoutes());
+        check(f.controller.activeRoutes().stream().anyMatch(r -> r.getId().equals("third") && !r.getMain() && !r.getAuto()), "The route now uses the new server");
+        check(f.controller.activeRoutes().stream().noneMatch(r -> r.getId().equals("second")), "The old route is gone");
+        check(f.health("third") != null, "The moved route is watched");
+        equal("main", f.controller.activeRoutes().get(0).getNode().key());
+        waitFor(() -> "third".equals(savedRoute(f, f.chrome)));
+
+        // Moving it onto the main server merges two routes, which needs a restart.
+        check(f.controller.changeRouteServer("third", "main").getOk(), "Move onto the main server");
+        equal(starts + 1, f.backend.startCount);
+        check(f.controller.isConnected(), "Still connected after the restart");
+        equal(Map.of(AppRoutes.normalize(f.chrome), "main"), f.controller.appRoutes());
+
+        // An Auto route is pinned to the chosen server in place.
+        String autoId = f.autoRoute(f.telegram).getId();
+        check(f.controller.changeRouteServer(autoId, "second").getOk(), "Change the Auto route's server");
+        equal("second", f.autoRoute(f.telegram).getNode().key());
+        equal(starts + 1, f.backend.startCount);
+        waitFor(() -> "second".equals(f.savedSelection(f.telegram)));
+
+        check(!f.controller.changeRouteServer("missing", "second").getOk(), "An unknown route is refused");
+        check(!f.controller.changeRouteServer(autoId, "nowhere").getOk(), "An unknown server is refused");
+        f.controller.disconnect();
+        check(!f.controller.changeRouteServer(autoId, "third").getOk(), "Needs a connection");
+    }
+
+    private static String savedRoute(Fixture f, String path) {
+        try { return f.store.load().appRoutes().get(AppRoutes.normalize(path)); }
+        catch (IOException e) { return null; }
     }
 
     // ------------------------------------------------------------------ gateway and bandwidth

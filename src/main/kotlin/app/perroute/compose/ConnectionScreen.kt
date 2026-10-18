@@ -37,7 +37,9 @@ import androidx.compose.material.icons.rounded.Download
 import androidx.compose.material.icons.rounded.PowerSettingsNew
 import androidx.compose.material.icons.rounded.RadioButtonUnchecked
 import androidx.compose.material.icons.rounded.Schedule
+import androidx.compose.material.icons.rounded.Search
 import androidx.compose.material.icons.rounded.Shield
+import androidx.compose.material.icons.rounded.Star
 import androidx.compose.material.icons.rounded.Storage
 import androidx.compose.material.icons.rounded.Upload
 import androidx.compose.material.icons.rounded.WarningAmber
@@ -476,6 +478,36 @@ private fun RouteHealthStatus(health: app.perroute.routing.RouteHealthTracker.Sn
     }
 }
 
+/**
+ * Picks another server for one live route and moves it right away. The Apps screen is locked while
+ * connected, so a failed route is fixed here instead of sending the user to a screen they cannot edit.
+ */
+@Composable
+private fun ChangeServerButton(shell: Shell, row: RouteRow) {
+    var open by remember { mutableStateOf(false) }
+    var filter by remember { mutableStateOf("") }
+    val latencies = remember(open) { if (open) shell.controller.cachedLatencies() else emptyMap() }
+    val favorites = remember(open) { if (open) shell.nodes.filter { shell.controller.isFavorite(it.key()) }.mapTo(hashSetOf()) { it.key() } else emptySet() }
+    Box {
+        SecondaryButton("Change server", Modifier.height(34.dp), enabled = !shell.busy && shell.nodes.size > 1) { filter = ""; open = true }
+        val entries = shell.nodes
+            .filter { it.key() != row.node.key() }
+            .filter { node -> filter.isBlank() || serverName(node).contains(filter, true) || node.endpoint().contains(filter, true) }
+            .sortedByDescending { it.key() in favorites }
+            .map { node ->
+                MenuEntry(serverName(node), icon = if (node.key() in favorites) Icons.Rounded.Star else null,
+                    detail = listOfNotNull(protocolLabel(node), latencies[node.key()]?.takeIf { it >= 0 }?.let { "$it ms" },
+                        if (node.key() == shell.mainNode?.key() && !row.main) "Main server" else null).joinToString("  •  ")
+                ) { shell.run(done = { if (it.ok) shell.draft.load(shell) }) { shell.controller.changeRouteServer(row.id, node.key()) } }
+            }
+        PopupMenu(open, { open = false }, entries, minWidth = 280.dp, header = if (shell.nodes.size > 8) ({
+            Box(Modifier.padding(horizontal = 10.dp, vertical = 6.dp)) {
+                TextInput(filter, { filter = it }, "Filter servers", icon = Icons.Rounded.Search)
+            }
+        }) else null)
+    }
+}
+
 /** Why only this route is affected, what protects its apps, the timeline, and what the user can do. */
 @Composable
 private fun RecoveryDetails(shell: Shell, row: RouteRow, health: app.perroute.routing.RouteHealthTracker.Snapshot, now: Long) {
@@ -486,9 +518,7 @@ private fun RecoveryDetails(shell: Shell, row: RouteRow, health: app.perroute.ro
             Badge("No direct fallback", Muted, icon = Icons.Rounded.Block)
             Spacer(Modifier.weight(1f))
             PrimaryButton("Retry now", Modifier.height(34.dp)) { shell.run { shell.controller.retryRoute(row.id) } }
-            SecondaryButton("Change server", Modifier.height(34.dp)) {
-                if (row.main) shell.navigate(Tab.Servers) else shell.navigate(Tab.Apps)
-            }
+            ChangeServerButton(shell, row)
         }
         Spacer(Modifier.height(8.dp))
         Row(

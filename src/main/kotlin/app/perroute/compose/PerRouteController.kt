@@ -2007,10 +2007,91 @@ class PerRouteController @JvmOverloads constructor(
             return ActionResult(true, "Switched to ${cleanName(target.name())}.")
         }
         inPlace.exceptionOrNull()?.let { log("The main server could not be replaced in place (${message(it)}); restarting the core.") }
-        phase = ConnectionPhase.CONNECTING
-        connectionReady = false
         state.setSelectedNodeKey(key)
         save()
+        return restartCore(prepared, fallback, mode, "Switched to ${cleanName(target.name())}.") {
+            state.setSelectedNodeKey(previous.key())
+            save()
+        }
+    }
+
+    /**
+     * Moves one live route to another server without disconnecting, so a route that failed can be fixed where
+     * it is. The main route changes the main server; a custom route moves every app assigned to it; an Auto
+     * route is pinned to the server until Auto decides again. Only that route's outbound is replaced when the
+     * core allows it; otherwise the core is restarted, with the previous connection restored if that fails.
+     */
+    @Synchronized
+    fun changeRouteServer(routeId: String, key: String): ActionResult {
+        if (!isConnected()) return ActionResult(false, "Connect to change the server of a route.")
+        if (phase != ConnectionPhase.CONNECTED) return ActionResult(false, "Wait for the current connection operation to finish.")
+        val route = activeRoutes.firstOrNull { it.id == routeId } ?: return ActionResult(false, "That route is no longer in use.")
+        if (route.main) return switchNode(key)
+        val target = nodes().firstOrNull { it.key() == key } ?: return ActionResult(false, "Server was not found.")
+        val name = cleanName(target.name())
+        if (route.node.key() == key) return ActionResult(true, "This route already uses $name.")
+        val running = runningPrepared ?: return ActionResult(false, "Connect to change the server of a route.")
+        val main = selectedNode() ?: return ActionResult(false, "The active server was not found.")
+        if (route.applications.isEmpty()) return ActionResult(false, "This route carries no apps.")
+        val mode = activeMode ?: state.connectionMode()
+        val apps = route.applications.map { AppRoutes.normalize(it) }
+        val who = joinNames(route.applications.map(::displayName))
+
+        // The new choice is saved first so the config is built from it; [revert] puts the previous one back.
+        var choices = running.autoChoices
+        val revert: () -> Unit
+        if (route.auto) {
+            val app = apps.first()
+            val before = synchronized(state) { state.autoSelections()[app] }
+            synchronized(state) { state.autoSelections()[app] = AutoSelection(key, System.currentTimeMillis()) }
+            choices = choices + (app to key)
+            revert = { synchronized(state) { if (before == null) state.autoSelections().remove(app) else state.autoSelections()[app] = before } }
+        } else {
+            val (routes, labels) = synchronized(state) { LinkedHashMap(state.appRoutes()) to LinkedHashMap(state.appRouteLabels()) }
+            synchronized(state) {
+                apps.forEach { state.appRoutes()[it] = key }
+                state.appRouteLabels()[key] = name
+                state.appRouteLabels().keys.retainAll(state.appRoutes().values.toSet())
+            }
+            revert = {
+                synchronized(state) {
+                    state.appRoutes().clear(); state.appRoutes().putAll(routes)
+                    state.appRouteLabels().clear(); state.appRouteLabels().putAll(labels)
+                }
+            }
+        }
+        val prepared: PreparedConnection
+        try {
+            prepared = prepare(main, mode, running.applications, choices)
+            validate(prepared)
+        } catch (invalid: Throwable) {
+            revert()
+            return ActionResult(false, "Could not change the server; the current connection was left untouched: ${message(invalid)}")
+        }
+        save()
+        val inPlace = runCatching { applyRouteChange(route.id, prepared) }
+        if (inPlace.getOrNull() == true) {
+            val moved = activeRoutes.firstOrNull { it.ruleTag == route.ruleTag } ?: activeRoutes.first { it.node.key() == key }
+            recovery.remove(route.id)
+            recovery.replace(RouteTarget(moved.id, name, target.key(), moved.checkPort))
+            recovery.note(moved.id, RouteHealthTracker.EventType.FAILOVER, "Server changed", "Now using $name. Other routes were not restarted.")
+            synchronized(routeCheckLock) { routeChecks = routeChecks - route.id + (moved.id to RouteCheck(RouteCheckState.CHECKING)) }
+            stateListeners.forEach { it(true) }
+            log("Moved $who to $name. Other routes kept running.")
+            return ActionResult(true, "$who now ${if (route.applications.size == 1) "uses" else "use"} $name.")
+        }
+        inPlace.exceptionOrNull()?.let { log("The route of $who could not be changed in place (${message(it)}); restarting the core.") }
+        return restartCore(prepared, running, mode, "Moved $who to $name.") { revert(); save() }
+    }
+
+    /**
+     * Restarts the running core with [prepared]. When that fails, [revert] undoes the saved choice and
+     * [fallback] is started again; when that fails too, the connection is stopped.
+     */
+    private fun restartCore(prepared: PreparedConnection, fallback: PreparedConnection, mode: ConnectionMode,
+                            done: String, revert: () -> Unit): ActionResult {
+        phase = ConnectionPhase.CONNECTING
+        connectionReady = false
         return try {
             backend.stop()
             backend.start(prepared.config, prepared.tun)
@@ -2021,11 +2102,10 @@ class PerRouteController @JvmOverloads constructor(
             phase = ConnectionPhase.CONNECTED
             activate(prepared)
             stateListeners.forEach { it(true) }
-            log("Switched to ${cleanName(target.name())}.")
-            ActionResult(true, "Switched to ${cleanName(target.name())}.")
+            log(done)
+            ActionResult(true, done)
         } catch (switchError: Throwable) {
-            state.setSelectedNodeKey(previous.key())
-            save()
+            revert()
             val restored = runCatching {
                 backend.stop()
                 backend.start(fallback.config, fallback.tun)
