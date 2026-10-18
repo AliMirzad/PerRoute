@@ -79,6 +79,35 @@ final class V3DomainTests {
         run("Backup: authenticated encryption", V3DomainTests::testBackupCrypto);
         run("Backup: preview, merge, replace and remap", V3DomainTests::testBackupRestorePlan);
         run("State: v2 migration and v3 round trip", V3DomainTests::testStateMigration);
+        run("Rules: one site entry covers every form of it", V3DomainTests::testDomainEntries);
+    }
+
+    @SuppressWarnings("unchecked")
+    private static void testDomainEntries() {
+        RouteRule rule = new RouteRule("", "Snapp", "", RouteRule.MatchType.DOMAIN,
+                "https://snapp.ir/, www.snapp.ir, SNAPP.ir:443/login?next=1, http://user@www.snapp.ir#top, snapp.ir.", RouteRule.Action.DIRECT, true);
+        equal("snapp.ir", rule.value());
+        equal("foo.com, full:www.example.com, full:api.example.com, keyword:Tracker, geosite:netflix, regexp:^ads\\.",
+                app.perroute.model.DomainEntries.normalizeList("*.foo.com .foo.com, full:https://www.example.com/x, FULL:api.example.com, keyword:Tracker, geosite:netflix, regexp:^ads\\."));
+        equal("xn--mgba3a4f16a.xn--mgba3a4f16a", app.perroute.model.DomainEntries.normalize("ایران.ایران"));
+        equal("www.com", app.perroute.model.DomainEntries.normalize("www.com"));
+        equal("", app.perroute.model.DomainEntries.normalizeList("https:// , /"));
+        try { new RouteRule("", "x", "", RouteRule.MatchType.DOMAIN, "https://", RouteRule.Action.PROXY, true); throw new AssertionError("An entry with no site must be refused"); }
+        catch (IllegalArgumentException expected) { }
+        equal("https://1.2.3.4/", new RouteRule("", "ip", "", RouteRule.MatchType.IP, "https://1.2.3.4/", RouteRule.Action.PROXY, true).value());
+
+        List<RouteRule> rules = List.of(rule);
+        for (String host : List.of("snapp.ir", "www.snapp.ir", "api.snapp.ir", "a.b.snapp.ir")) {
+            equal(RouteRule.Action.DIRECT, app.perroute.service.RouteRuleEvaluator.evaluate(rules, List.of(), "", host, 443).action());
+        }
+        equal(RouteRule.Action.PROXY, app.perroute.service.RouteRuleEvaluator.evaluate(rules, List.of(), "", "notsnapp.ir", 443).action());
+
+        Map<String, Object> config = app.perroute.util.Json.object(new app.perroute.service.XrayConfigGenerator()
+                .generateApplicationProxy(node("main", "main.example"), List.of("C:\\A.exe"), rules));
+        Map<String, Object> generated = ((List<Object>) ((Map<String, Object>) config.get("routing")).get("rules")).stream()
+                .map(item -> (Map<String, Object>) item).filter(item -> String.valueOf(item.get("ruleTag")).startsWith("perroute-custom-"))
+                .findFirst().orElseThrow();
+        equal(List.of("domain:snapp.ir"), generated.get("domain"));
     }
 
     @FunctionalInterface private interface CheckedTest { void run() throws Exception; }

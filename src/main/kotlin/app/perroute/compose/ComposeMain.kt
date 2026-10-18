@@ -5,33 +5,24 @@ import androidx.compose.animation.core.tween
 import androidx.compose.animation.fadeIn
 import androidx.compose.animation.fadeOut
 import androidx.compose.foundation.Canvas
-import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.focusGroup
 import androidx.compose.foundation.focusable
-import androidx.compose.foundation.gestures.detectTapGestures
 import androidx.compose.foundation.gestures.detectDragGestures
-import androidx.compose.foundation.horizontalScroll
-import androidx.compose.foundation.interaction.MutableInteractionSource
-import androidx.compose.foundation.layout.Arrangement
+import androidx.compose.foundation.gestures.detectTapGestures
 import androidx.compose.foundation.layout.Box
-import androidx.compose.foundation.layout.BoxWithConstraints
-import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.BoxScope
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxHeight
 import androidx.compose.foundation.layout.fillMaxSize
-import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.layout.widthIn
-import androidx.compose.foundation.rememberScrollState
-import androidx.compose.foundation.selection.selectable
-import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.rounded.Apps
@@ -43,12 +34,9 @@ import androidx.compose.material.icons.rounded.Folder
 import androidx.compose.material.icons.rounded.MonitorHeart
 import androidx.compose.material.icons.rounded.Settings
 import androidx.compose.material.icons.rounded.Storage
-import androidx.compose.material.icons.rounded.Wifi
+import androidx.compose.material.icons.rounded.Link
 import androidx.compose.material3.Icon
-import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
-import androidx.compose.material3.darkColorScheme
-import androidx.compose.material3.lightColorScheme
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
@@ -66,7 +54,6 @@ import androidx.compose.ui.focus.FocusRequester
 import androidx.compose.ui.focus.focusProperties
 import androidx.compose.ui.focus.focusRequester
 import androidx.compose.ui.geometry.Offset
-import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.drawscope.Stroke
 import androidx.compose.ui.graphics.vector.ImageVector
@@ -86,17 +73,16 @@ import androidx.compose.ui.semantics.Role
 import androidx.compose.ui.semantics.contentDescription
 import androidx.compose.ui.semantics.liveRegion
 import androidx.compose.ui.semantics.semantics
-import androidx.compose.ui.text.TextStyle
 import androidx.compose.ui.text.font.FontWeight
-import androidx.compose.ui.text.style.TextOverflow
+import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.compose.ui.window.Window
 import androidx.compose.ui.window.WindowPlacement
+import androidx.compose.ui.window.WindowPosition
 import androidx.compose.ui.window.application
 import androidx.compose.ui.window.rememberWindowState
 import app.perroute.model.AppRoutes
-import app.perroute.model.ConnectionMode
 import app.perroute.model.ProxyNode
 import app.perroute.persistence.AppStateStore
 import app.perroute.service.AppDirectories
@@ -134,20 +120,21 @@ import javax.imageio.ImageIO
 
 internal const val Slogan = "Your apps. Your routes."
 internal const val SloganSubtitle = "Choose a route for each app. Keep the rest direct."
-private const val WindowCornerRadius = 30.0
-/** The three caption buttons drawn in the custom title bar. */
-private enum class WindowControl { MINIMIZE, RESTORE, CLOSE }
+internal const val Credit = "Created By Vexor"
+private const val WindowCornerRadius = 16.0
 
-/** The eight destinations of the main window, in navigation order. */
+/** The eight destinations of the main window. New groups Rules, Profiles, Diagnostics and Traffic under Tools. */
 internal enum class Tab(val label: String, val icon: ImageVector) {
-    Connection("Connection", Icons.Rounded.Wifi),
+    Connection("Connection", Icons.Rounded.Link),
     Apps("Apps", Icons.Rounded.Apps),
     Servers("Servers", Icons.Rounded.Storage),
     Rules("Rules", Icons.Rounded.Description),
     Profiles("Profiles", Icons.Rounded.Folder),
     Diagnostics("Diagnostics", Icons.Rounded.MonitorHeart),
     Traffic("Traffic", Icons.Rounded.BarChart),
-    Settings("Settings", Icons.Rounded.Settings)
+    Settings("Settings", Icons.Rounded.Settings);
+
+    val isTool: Boolean get() = this == Rules || this == Profiles || this == Diagnostics || this == Traffic
 }
 
 /** A modal dialog currently shown over the window, and what closing it does. */
@@ -218,7 +205,7 @@ internal class AppsDraft {
     }
 }
 
-/** Window-level state shared by every screen. */
+/** Window-level state shared by every screen and by both designs. */
 internal class Shell(
     val controller: PerRouteController,
     val hostWindow: Frame?,
@@ -244,16 +231,26 @@ internal class Shell(
     var toast by mutableStateOf(controller.takeStartupProblem())
     var toastError by mutableStateOf(toast != null)
     var dialog by mutableStateOf<DialogSpec?>(null)
-    var darkMode by mutableStateOf(controller.isDarkTheme())
     var settingsCategory by mutableStateOf(SettingsCategory.General)
     var diagnosticsTab by mutableStateOf(DiagnosticsTab.Routes)
     var addServersRequested by mutableStateOf(false)
     val draft = AppsDraft().also { it.load(this) }
 
+    /**
+     * Working state of the open screen (filters, editors, test results), shared by both designs so switching the
+     * design keeps it. It lasts as long as the screen is open, exactly as before: leaving a screen drops it.
+     */
+    private val screenState = HashMap<String, Any>()
+
+    @Suppress("UNCHECKED_CAST")
+    fun <T : Any> screen(key: String, create: () -> T): T = screenState.getOrPut(key, create) as T
+
+    private fun forget(prefix: String) { screenState.keys.removeAll { it.startsWith(prefix) } }
+
     val mainNode: ProxyNode? get() = nodes.firstOrNull { it.key() == selectedNodeKey } ?: nodes.firstOrNull()
     /** Routing choices are locked from the moment a connection starts until it is fully torn down. */
     val locked: Boolean get() = connected || phase != ConnectionPhase.DISCONNECTED
-    val perApp: Boolean get() = mode == ConnectionMode.NATIVE_PER_APP
+    val perApp: Boolean get() = mode == app.perroute.model.ConnectionMode.NATIVE_PER_APP
 
     fun refresh() {
         nodes.clear(); nodes.addAll(controller.nodes())
@@ -330,13 +327,13 @@ internal class Shell(
         if (tab != Tab.Apps || !draft.dirty(this)) { then(); return }
         showDialog {
             DialogCard("Unsaved app changes", "Your selection or app routes have changed but are not saved yet.", ::closeDialog,
-                width = 460.dp, actions = {
+                width = 480.dp, actions = {
                     SecondaryButton("Keep editing") { closeDialog() }
                     SecondaryButton("Discard changes") { closeDialog(); discardDraft(); then() }
                     PrimaryButton("Save changes", enabled = !locked) { closeDialog(); saveDraft(then) }
                 }) {
                 Text(if (locked) "Disconnect to save app routes, or discard the changes." else "Save them before leaving, or discard them.",
-                    color = White.copy(.82f), fontSize = 12.sp, lineHeight = 17.sp)
+                    color = White.copy(.85f), fontSize = 12.sp, lineHeight = 17.sp)
             }
         }
     }
@@ -344,12 +341,30 @@ internal class Shell(
     fun navigate(target: Tab) {
         if (target == tab) return
         leaveApps {
+            forget("${tab.name}:")
             if (target == Tab.Apps) draft.load(this)
             tab = target
         }
     }
 
-    fun openSettings(category: SettingsCategory) { settingsCategory = category; navigate(Tab.Settings) }
+    fun openSettings(category: SettingsCategory) { selectSettings(category); navigate(Tab.Settings) }
+
+    fun selectSettings(category: SettingsCategory) {
+        if (category != settingsCategory) forget("${Tab.Settings.name}:${settingsCategory.name}")
+        settingsCategory = category
+    }
+
+    /** Applies a design choice. Only the drawing changes; nothing here touches the connection or any draft. */
+    fun setUiStyle(style: UiStyle) {
+        if (Appearance.style == style) return
+        controller.setUiStyle(style.key)
+        Appearance.style = style
+    }
+
+    fun setDarkMode(dark: Boolean) {
+        controller.setDarkTheme(dark)
+        Appearance.dark = dark
+    }
 
     fun handleKey(event: KeyEvent): Boolean {
         if (event.type != KeyEventType.KeyDown) return false
@@ -388,6 +403,17 @@ private fun runProxyGuard(dataDirectory: Path, parentPid: Long?) {
     }
 }
 
+/** The opening size of the main window: the designs' 3:2 frame, kept inside the screen. */
+private fun initialWindowSize(): Pair<Dp, Dp> {
+    val area = runCatching { GraphicsEnvironment.getLocalGraphicsEnvironment().maximumWindowBounds }.getOrNull()
+    val width = (area?.width?.times(.92)?.toInt() ?: 1180).coerceAtMost(1180).coerceAtLeast(MinWindowWidth)
+    val height = (area?.height?.times(.92)?.toInt() ?: 790).coerceAtMost(790).coerceAtLeast(MinWindowHeight)
+    return width.dp to height.dp
+}
+
+internal const val MinWindowWidth = 820
+internal const val MinWindowHeight = 620
+
 /** Entry point: single-instance check, state loading, then the main window, the tray icon and the Quick Access panel. */
 fun main(args: Array<String>) {
     Perf.mark("main.enter")
@@ -419,7 +445,7 @@ fun main(args: Array<String>) {
     val controller = PerRouteController(state, store)
     loaded.exceptionOrNull()?.let { controller.reportStartupProblem("Saved settings could not be opened: ${it.message ?: it.javaClass.simpleName}") }
     Perf.mark("controller.ready")
-    ActivePalette = if (controller.isDarkTheme()) DarkPalette else LightPalette
+    Appearance.load(controller)
 
     try { application {
         remember { Perf.mark("app.compose") }
@@ -439,7 +465,8 @@ fun main(args: Array<String>) {
         var trayChecks by remember { mutableStateOf(controller.routeChecks()) }
         val shellHolder = remember { arrayOfNulls<Shell>(1) }
         val trayScope = rememberCoroutineScope()
-        val windowState = rememberWindowState(width = 940.dp, height = 710.dp)
+        val (initialWidth, initialHeight) = remember { initialWindowSize() }
+        val windowState = rememberWindowState(width = initialWidth, height = initialHeight, position = WindowPosition(Alignment.Center))
         fun exitPerRoute() {
             controller.close()
             lock.close()
@@ -544,8 +571,11 @@ fun main(args: Array<String>) {
         ) {
             LaunchedEffect(Unit) {
                 mainWindow = window
-                window.minimumSize = Dimension(820, 620)
-                window.background = java.awt.Color(8, 10, 18)
+                window.minimumSize = Dimension(MinWindowWidth, MinWindowHeight)
+            }
+            LaunchedEffect(Appearance.style, Appearance.dark) {
+                window.background = if (Appearance.style == UiStyle.NEW) java.awt.Color(23, 25, 25)
+                    else if (Appearance.dark) java.awt.Color(23, 23, 30) else java.awt.Color(247, 247, 250)
             }
             remember { Perf.mark("window.compose") }
             PerRouteWindow(
@@ -560,7 +590,7 @@ fun main(args: Array<String>) {
                 }
             )
         }
-        val quickState = rememberWindowState(width = 390.dp, height = 600.dp)
+        val quickState = rememberWindowState(width = 390.dp, height = 640.dp)
         Window(
             visible = quickVisible,
             onCloseRequest = { quickVisible = false },
@@ -607,7 +637,7 @@ fun main(args: Array<String>) {
                 onDispose { window.removeWindowFocusListener(focusListener) }
             }
             RoundedWindowEffect(window)
-            PerRouteTheme(ActivePalette.isDark) {
+            PerRouteTheme {
                 QuickAccessWindow(
                     connected = trayConnected,
                     busy = trayToggling,
@@ -637,27 +667,12 @@ fun main(args: Array<String>) {
     }
 }
 
-/** Material theme with the PerRoute palette and typeface, always laid out left to right. */
-@Composable
-internal fun PerRouteTheme(dark: Boolean, content: @Composable () -> Unit) {
-    MaterialTheme(
-        colorScheme = if (dark)
-            darkColorScheme(primary = Violet, secondary = Cyan, background = Ink, surface = Surface,
-                surfaceContainer = SurfaceHigh, onSurface = White, onSurfaceVariant = Muted)
-        else lightColorScheme(primary = Violet, secondary = Cyan, background = Ink, surface = Surface,
-            surfaceContainer = SurfaceHigh, onSurface = White, onSurfaceVariant = Muted),
-        typography = MaterialTheme.typography.copy(
-            bodyLarge = TextStyle(fontFamily = UiFont),
-            bodyMedium = TextStyle(fontFamily = UiFont),
-            labelLarge = TextStyle(fontFamily = UiFont),
-            titleLarge = TextStyle(fontFamily = UiFont)
-        )
-    ) { CompositionLtr(content) }
-}
+/** What the designs need to draw their own title bar: the window to move and its three caption actions. */
+internal class WindowChrome(val hostWindow: Frame?, val minimize: () -> Unit, val maximize: () -> Unit, val close: () -> Unit)
 
 /**
  * The whole main window. [hostWindow] is null when the content is rendered without a real window,
- * which is how the screens are checked at different sizes, scales and themes.
+ * which is how the screens are checked at different sizes, scales, themes and designs.
  */
 @OptIn(androidx.compose.ui.ExperimentalComposeUiApi::class)
 @Composable
@@ -675,6 +690,7 @@ internal fun PerRouteWindow(
     val shell = remember {
         Shell(controller, hostWindow, scope, exitApp).also { it.tab = initialTab; prepare(it); onShell(it) }
     }
+    val chrome = remember { WindowChrome(hostWindow, hideWindow, toggleMaximize, hideWindow) }
     val pendingLogs = remember { ConcurrentLinkedQueue<String>() }
 
     if (hostWindow != null) RoundedWindowEffect(hostWindow)
@@ -738,7 +754,7 @@ internal fun PerRouteWindow(
         }
     }
 
-    PerRouteTheme(shell.darkMode) {
+    PerRouteTheme(Appearance.style, Appearance.dark) {
         Box(
             Modifier.fillMaxSize().pointerInput(Unit) {
                 awaitPointerEventScope {
@@ -749,34 +765,13 @@ internal fun PerRouteWindow(
                 }
             }
         ) {
-            AuroraBackground()
             // While a dialog is open the screen behind it must be out of reach for the keyboard as
             // well as the pointer, so focus is not allowed to enter it.
             val dialogOpen = shell.dialog != null
-            Column(Modifier.fillMaxSize().focusProperties { if (dialogOpen) enter = { FocusRequester.Cancel } }.focusGroup()) {
-                TitleBar(hostWindow, minimized = hideWindow, maximized = toggleMaximize, close = hideWindow)
-                Column(Modifier.fillMaxWidth().padding(horizontal = 24.dp)) {
-                    Text(Slogan, color = White, fontSize = 22.sp, fontWeight = FontWeight.Bold, maxLines = 1, overflow = TextOverflow.Ellipsis)
-                    Spacer(Modifier.height(2.dp))
-                    Text(SloganSubtitle, color = Muted, fontSize = 12.sp, maxLines = 1, overflow = TextOverflow.Ellipsis)
-                }
-                Spacer(Modifier.height(10.dp))
-                NavigationBar(shell.tab, shell::navigate)
-                Spacer(Modifier.height(10.dp))
-                Box(Modifier.weight(1f).fillMaxWidth().padding(start = 20.dp, end = 20.dp)) {
-                    when (shell.tab) {
-                        Tab.Connection -> ConnectionScreen(shell)
-                        Tab.Apps -> AppsScreen(shell)
-                        Tab.Servers -> ServersScreen(shell)
-                        Tab.Rules -> RulesScreen(shell)
-                        Tab.Profiles -> ProfilesScreen(shell)
-                        Tab.Diagnostics -> DiagnosticsScreen(shell)
-                        Tab.Traffic -> TrafficScreen(shell)
-                        Tab.Settings -> SettingsScreen(shell)
-                    }
-                }
-                Box(Modifier.fillMaxWidth().height(24.dp), contentAlignment = Alignment.Center) {
-                    Text("Created by Ali Mirzad", color = Muted.copy(.75f), fontSize = 9.5.sp, fontWeight = FontWeight.SemiBold, letterSpacing = .4.sp)
+            Box(Modifier.fillMaxSize().focusProperties { if (dialogOpen) enter = { FocusRequester.Cancel } }.focusGroup()) {
+                when (Appearance.style) {
+                    UiStyle.NEW -> NewWindow(shell, chrome)
+                    UiStyle.SIMPLE -> SimpleWindow(shell, chrome)
                 }
             }
 
@@ -784,71 +779,46 @@ internal fun PerRouteWindow(
                 val dialogFocus = remember(spec) { FocusRequester() }
                 LaunchedEffect(spec) { runCatching { dialogFocus.requestFocus() } }
                 Box(
-                    Modifier.fillMaxSize().background(Color.Black.copy(.62f))
+                    Modifier.fillMaxSize().background(Color.Black.copy(if (IsDark) .62f else .38f))
                         .pointerInput(Unit) { detectTapGestures { } }
                         .focusRequester(dialogFocus).focusGroup().focusable(),
                     contentAlignment = Alignment.Center
                 ) { spec.content() }
             }
 
-            AnimatedVisibility(
-                visible = shell.toast != null,
-                modifier = Modifier.align(Alignment.BottomCenter).padding(bottom = 22.dp),
-                enter = fadeIn(tween(90)),
-                exit = fadeOut(tween(70))
-            ) {
-                shell.toast?.let { message ->
-                    val error = shell.toastError
-                    Row(
-                        Modifier.padding(horizontal = 24.dp).widthIn(max = 640.dp)
-                            .clip(RoundedCornerShape(16.dp))
-                            .background(
-                                if (ActivePalette.isDark) { if (error) Color(0xFF351925) else Color(0xFF132B29) }
-                                else { if (error) Color(0xFFFFE7EC) else Color(0xFFE0F4EF) }
-                            )
-                            .border(1.dp, if (error) Red.copy(.35f) else Cyan.copy(.3f), RoundedCornerShape(16.dp))
-                            .clickable(onClickLabel = "Dismiss message") { shell.toast = null }
-                            .semantics { liveRegion = if (error) LiveRegionMode.Assertive else LiveRegionMode.Polite }
-                            .padding(horizontal = 15.dp, vertical = 10.dp),
-                        verticalAlignment = Alignment.CenterVertically
-                    ) {
-                        Icon(if (error) Icons.Rounded.Close else Icons.Rounded.Check, if (error) "Problem" else "Done",
-                            tint = if (error) Red else Cyan, modifier = Modifier.size(18.dp))
-                        Spacer(Modifier.width(10.dp))
-                        Text(message, color = White, fontSize = 12.5.sp, lineHeight = 17.sp, modifier = Modifier.weight(1f, fill = false))
-                    }
-                }
-            }
+            Toast(shell, Modifier.align(Alignment.BottomCenter).padding(bottom = 22.dp))
         }
     }
 }
 
-/** The eight destinations, always labelled. On a narrow window the labels tighten and the row scrolls. */
+/** The short confirmation or error after an action. It disappears on its own and when pressed. */
 @Composable
-private fun NavigationBar(current: Tab, navigate: (Tab) -> Unit) {
-    BoxWithConstraints(Modifier.fillMaxWidth()) {
-        val compact = maxWidth < 900.dp
-        val scroll = rememberScrollState()
-        Row(
-            Modifier.fillMaxWidth().wheelAndDragScroll(scroll).horizontalScroll(scroll).padding(horizontal = 20.dp),
-            horizontalArrangement = Arrangement.spacedBy(if (compact) 2.dp else 6.dp)
-        ) {
-            Tab.entries.forEach { tab ->
-                val selected = tab == current
-                val shape = RoundedCornerShape(13.dp)
-                Row(
-                    Modifier.height(38.dp).focusRing(shape).clip(shape)
-                        .selectable(selected, role = Role.Tab) { navigate(tab) }
-                        .pointerHoverIcon(PointerIcon.Hand)
-                        .background(if (selected) Brush.horizontalGradient(listOf(Violet, Violet2)) else Brush.horizontalGradient(listOf(Color.Transparent, Color.Transparent)))
-                        .padding(horizontal = if (compact) 10.dp else 14.dp),
-                    verticalAlignment = Alignment.CenterVertically
-                ) {
-                    Icon(tab.icon, null, tint = if (selected) Color.White else Muted, modifier = Modifier.size(if (compact) 15.dp else 17.dp))
-                    Spacer(Modifier.width(if (compact) 6.dp else 8.dp))
-                    Text(tab.label, color = if (selected) Color.White else White.copy(.74f), fontSize = if (compact) 11.sp else 12.sp,
-                        fontWeight = if (selected) FontWeight.Bold else FontWeight.SemiBold, maxLines = 1)
-                }
+private fun Toast(shell: Shell, modifier: Modifier) {
+    AnimatedVisibility(visible = shell.toast != null, modifier = modifier, enter = fadeIn(tween(90)), exit = fadeOut(tween(70))) {
+        shell.toast?.let { message ->
+            val error = shell.toastError
+            val shape = RoundedCornerShape(if (Tok.isNew) 8.dp else 14.dp)
+            val newStyle = Tok.isNew
+            val back = when {
+                newStyle -> NewColors.Charcoal
+                IsDark -> if (error) Color(0xFF3A1C24) else Color(0xFF1B3328)
+                else -> if (error) Color(0xFFFFEAEA) else Color(0xFFE6F6EC)
+            }
+            val accent = if (newStyle) (if (error) NewColors.Panel.danger else NewColors.Lime) else if (error) Red else Cyan
+            val text = if (newStyle) NewColors.Panel.foreground else White
+            Row(
+                Modifier.padding(horizontal = 24.dp).widthIn(max = 640.dp)
+                    .clip(shape).background(back)
+                    .border(1.dp, accent.copy(.45f), shape)
+                    .clickable(onClickLabel = "Dismiss message") { shell.toast = null }
+                    .semantics { liveRegion = if (error) LiveRegionMode.Assertive else LiveRegionMode.Polite }
+                    .padding(horizontal = 15.dp, vertical = 11.dp),
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                Icon(if (error) Icons.Rounded.Close else Icons.Rounded.Check, if (error) "Problem" else "Done",
+                    tint = accent, modifier = Modifier.size(18.dp))
+                Spacer(Modifier.width(10.dp))
+                Text(message, color = text, fontSize = 12.5.sp, lineHeight = 17.sp, modifier = Modifier.weight(1f, fill = false))
             }
         }
     }
@@ -864,14 +834,7 @@ internal fun RoundedWindowEffect(hostWindow: Frame) {
                 hostWindow.shape = if (maximized || hostWindow.width <= 0 || hostWindow.height <= 0) {
                     null
                 } else {
-                    RoundRectangle2D.Double(
-                        0.0,
-                        0.0,
-                        hostWindow.width.toDouble(),
-                        hostWindow.height.toDouble(),
-                        WindowCornerRadius,
-                        WindowCornerRadius
-                    )
+                    RoundRectangle2D.Double(0.0, 0.0, hostWindow.width.toDouble(), hostWindow.height.toDouble(), WindowCornerRadius, WindowCornerRadius)
                 }
             }
         }
@@ -891,107 +854,66 @@ internal fun RoundedWindowEffect(hostWindow: Frame) {
     }
 }
 
-/** The soft violet and teal glow behind every screen. */
+/** An area that moves the undecorated window when dragged. */
 @Composable
-internal fun AuroraBackground() {
-    Canvas(Modifier.fillMaxSize().background(Ink)) {
-        drawRect(
-            Brush.linearGradient(
-                if (ActivePalette.isDark) listOf(Color(0xFF080A12), Color(0xFF0D1020), Color(0xFF090B13))
-                else listOf(Color(0xFFF8F9FD), Color(0xFFF0F3FA), Color(0xFFF7F8FC))
-            )
-        )
-        drawCircle(
-            brush = Brush.radialGradient(listOf(Violet.copy(if (ActivePalette.isDark) .26f else .13f), Color.Transparent)),
-            radius = size.minDimension * .62f,
-            center = Offset(size.width * .88f, size.height * .16f)
-        )
-        drawCircle(
-            brush = Brush.radialGradient(listOf(Cyan.copy(if (ActivePalette.isDark) .20f else .10f), Color.Transparent)),
-            radius = size.minDimension * .52f,
-            center = Offset(size.width * .08f, size.height * .92f)
-        )
-        drawCircle(
-            brush = Brush.radialGradient(listOf(Violet2.copy(if (ActivePalette.isDark) .10f else .07f), Color.Transparent)),
-            radius = size.minDimension * .38f,
-            center = Offset(size.width * .52f, size.height * .64f)
-        )
-    }
-}
-
-/** Custom title bar: brand, version, a drag area and the caption buttons. */
-@Composable
-private fun TitleBar(hostWindow: Frame?, minimized: () -> Unit, maximized: () -> Unit, close: () -> Unit) {
+internal fun WindowDragArea(hostWindow: Frame?, modifier: Modifier = Modifier, content: @Composable BoxScope.() -> Unit = {}) {
     val dragAnchors = remember { arrayOfNulls<Point>(2) }
-    Row(
-        Modifier.fillMaxWidth().height(44.dp),
-        verticalAlignment = Alignment.CenterVertically
-    ) {
-        Box(
-            Modifier.weight(1f).fillMaxHeight().pointerInput(hostWindow) {
-                if (hostWindow == null) return@pointerInput
-                detectDragGestures(
-                    onDragStart = {
-                        dragAnchors[0] = MouseInfo.getPointerInfo()?.location
-                        dragAnchors[1] = hostWindow.location
-                    },
-                    onDragEnd = { dragAnchors.fill(null) },
-                    onDragCancel = { dragAnchors.fill(null) }
-                ) { change, _ ->
-                    val pointerStart = dragAnchors[0]
-                    val windowStart = dragAnchors[1]
-                    val pointerNow = MouseInfo.getPointerInfo()?.location
-                    if (pointerStart != null && windowStart != null && pointerNow != null) {
-                        change.consume()
-                        hostWindow.setLocation(
-                            windowStart.x + pointerNow.x - pointerStart.x,
-                            windowStart.y + pointerNow.y - pointerStart.y
-                        )
-                    }
+    Box(
+        modifier.pointerInput(hostWindow) {
+            if (hostWindow == null) return@pointerInput
+            detectDragGestures(
+                onDragStart = {
+                    dragAnchors[0] = MouseInfo.getPointerInfo()?.location
+                    dragAnchors[1] = hostWindow.location
+                },
+                onDragEnd = { dragAnchors.fill(null) },
+                onDragCancel = { dragAnchors.fill(null) }
+            ) { change, _ ->
+                val pointerStart = dragAnchors[0]
+                val windowStart = dragAnchors[1]
+                val pointerNow = MouseInfo.getPointerInfo()?.location
+                if (pointerStart != null && windowStart != null && pointerNow != null) {
+                    change.consume()
+                    hostWindow.setLocation(windowStart.x + pointerNow.x - pointerStart.x, windowStart.y + pointerNow.y - pointerStart.y)
                 }
             }
-        ) {
-            Row(Modifier.fillMaxSize().padding(start = 24.dp), verticalAlignment = Alignment.CenterVertically) {
-                Image(painterResource("icons/perroute-icon-256.png"), null, Modifier.size(22.dp))
-                Spacer(Modifier.width(9.dp))
-                Text("PERROUTE", color = White.copy(.92f), fontSize = 11.5.sp,
-                    fontWeight = FontWeight.Bold, letterSpacing = 2.2.sp)
-                Spacer(Modifier.width(8.dp))
-                Text(app.perroute.service.SecureUpdateService.CURRENT_VERSION, color = Violet2, fontSize = 8.sp, fontWeight = FontWeight.Bold,
-                    modifier = Modifier.clip(CircleShape).background(Violet.copy(.13f)).padding(horizontal = 7.dp, vertical = 3.dp))
-            }
-        }
-        Row(Modifier.width(138.dp).fillMaxHeight(), verticalAlignment = Alignment.Top) {
-            WindowsWindowButton(WindowControl.MINIMIZE, "Minimize to the notification area", minimized)
-            WindowsWindowButton(WindowControl.RESTORE, "Maximize or restore", maximized)
-            WindowsWindowButton(WindowControl.CLOSE, "Close to the notification area", close)
-        }
+        },
+        content = content
+    )
+}
+
+/** The three caption buttons drawn in the custom title bar. */
+private enum class WindowControl { MINIMIZE, RESTORE, CLOSE }
+
+/** Minimize, maximize and close, drawn by hand so they match the design. */
+@Composable
+internal fun WindowButtons(chrome: WindowChrome, tint: Color, height: Dp = 44.dp, width: Dp = 50.dp) {
+    Row(Modifier.fillMaxHeight()) {
+        WindowButton(WindowControl.MINIMIZE, "Minimize to the notification area", tint, height, width, chrome.minimize)
+        WindowButton(WindowControl.RESTORE, "Maximize or restore", tint, height, width, chrome.maximize)
+        WindowButton(WindowControl.CLOSE, "Close to the notification area", tint, height, width, chrome.close)
     }
 }
 
-/** One caption button, drawn by hand so it matches the theme. */
 @Composable
-private fun WindowsWindowButton(control: WindowControl, label: String, onClick: () -> Unit) {
+private fun WindowButton(control: WindowControl, label: String, tint: Color, height: Dp, width: Dp, onClick: () -> Unit) {
     Box(
-        Modifier.width(46.dp).height(34.dp).focusRing(RoundedCornerShape(8.dp))
+        Modifier.width(width).height(height).focusRing(RoundedCornerShape(6.dp))
             .semantics { contentDescription = label }
             .clickable(onClickLabel = label, role = Role.Button, onClick = onClick)
             .pointerHoverIcon(PointerIcon.Hand),
         contentAlignment = Alignment.Center
     ) {
-        Canvas(Modifier.size(14.dp)) {
-            val stroke = 1.2.dp.toPx()
-            val color = White.copy(.88f)
+        Canvas(Modifier.size(15.dp)) {
+            val stroke = 1.4.dp.toPx()
             when (control) {
-                WindowControl.MINIMIZE -> drawLine(color, Offset(size.width * .20f, size.height * .68f), Offset(size.width * .80f, size.height * .68f), stroke)
+                WindowControl.MINIMIZE -> drawLine(tint, Offset(size.width * .15f, size.height * .55f), Offset(size.width * .85f, size.height * .55f), stroke)
                 WindowControl.CLOSE -> {
-                    drawLine(color, Offset(size.width * .20f, size.height * .20f), Offset(size.width * .80f, size.height * .80f), stroke)
-                    drawLine(color, Offset(size.width * .80f, size.height * .20f), Offset(size.width * .20f, size.height * .80f), stroke)
+                    drawLine(tint, Offset(size.width * .15f, size.height * .15f), Offset(size.width * .85f, size.height * .85f), stroke)
+                    drawLine(tint, Offset(size.width * .85f, size.height * .15f), Offset(size.width * .15f, size.height * .85f), stroke)
                 }
-                WindowControl.RESTORE -> {
-                    drawRect(color, Offset(size.width * .30f, size.height * .18f), androidx.compose.ui.geometry.Size(size.width * .50f, size.height * .50f), style = Stroke(stroke))
-                    drawRect(color, Offset(size.width * .18f, size.height * .32f), androidx.compose.ui.geometry.Size(size.width * .50f, size.height * .50f), style = Stroke(stroke))
-                }
+                WindowControl.RESTORE -> drawRect(tint, Offset(size.width * .17f, size.height * .17f),
+                    androidx.compose.ui.geometry.Size(size.width * .66f, size.height * .66f), style = Stroke(stroke))
             }
         }
     }

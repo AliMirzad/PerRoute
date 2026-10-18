@@ -1,0 +1,233 @@
+package app.perroute.compose
+
+import androidx.compose.foundation.background
+import androidx.compose.foundation.border
+import androidx.compose.foundation.layout.Arrangement
+import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.BoxWithConstraints
+import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.ColumnScope
+import androidx.compose.foundation.layout.Row
+import androidx.compose.foundation.layout.RowScope
+import androidx.compose.foundation.layout.Spacer
+import androidx.compose.foundation.layout.fillMaxHeight
+import androidx.compose.foundation.layout.fillMaxSize
+import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.heightIn
+import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.size
+import androidx.compose.foundation.layout.width
+import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.selection.selectable
+import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.foundation.verticalScroll
+import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.outlined.Description
+import androidx.compose.material.icons.outlined.Folder
+import androidx.compose.material.icons.outlined.Settings
+import androidx.compose.material.icons.rounded.BarChart
+import androidx.compose.material.icons.rounded.Dns
+import androidx.compose.material.icons.rounded.GridView
+import androidx.compose.material.icons.rounded.Link
+import androidx.compose.material.icons.rounded.Lock
+import androidx.compose.material.icons.rounded.MonitorHeart
+import androidx.compose.material3.Icon
+import androidx.compose.material3.Text
+import androidx.compose.runtime.Composable
+import androidx.compose.ui.Alignment
+import androidx.compose.ui.Modifier
+import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.vector.ImageVector
+import androidx.compose.ui.input.pointer.PointerIcon
+import androidx.compose.ui.input.pointer.pointerHoverIcon
+import androidx.compose.ui.semantics.Role
+import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.style.TextOverflow
+import androidx.compose.ui.unit.Dp
+import androidx.compose.ui.unit.dp
+import androidx.compose.ui.unit.sp
+
+/**
+ * The Simple design: a wide menu with all eight sections on the left and light (or dark) pages made of cards,
+ * with a violet accent. It draws the same Shell as the New design.
+ */
+@Composable
+internal fun SimpleWindow(shell: Shell, chrome: WindowChrome) {
+    BoxWithConstraints(Modifier.fillMaxSize().background(Ink)) {
+        val sidebar = if (maxWidth >= 1000.dp) 244.dp else 204.dp
+        Row(Modifier.fillMaxSize()) {
+            SimpleSidebar(shell, chrome, Modifier.width(sidebar).fillMaxHeight(), showVersion = sidebar > 220.dp)
+            Divider(Modifier.fillMaxHeight(), vertical = true)
+            Column(Modifier.weight(1f).fillMaxHeight()) {
+                Row(Modifier.fillMaxWidth().height(40.dp), verticalAlignment = Alignment.CenterVertically) {
+                    WindowDragArea(chrome.hostWindow, Modifier.weight(1f).fillMaxHeight())
+                    WindowButtons(chrome, White.copy(.85f), height = 40.dp, width = 48.dp)
+                }
+                Box(Modifier.weight(1f).fillMaxWidth()) {
+                    when (shell.tab) {
+                        Tab.Connection -> SimpleConnectionPage(shell)
+                        Tab.Apps -> SimpleAppsPage(shell)
+                        Tab.Servers -> SimpleServersPage(shell)
+                        Tab.Rules -> SimpleRulesPage(shell)
+                        Tab.Profiles -> SimpleProfilesPage(shell)
+                        Tab.Diagnostics -> SimpleDiagnosticsPage(shell)
+                        Tab.Traffic -> SimpleTrafficPage(shell)
+                        Tab.Settings -> SimpleSettingsPage(shell)
+                    }
+                }
+            }
+        }
+    }
+}
+
+private fun simpleIcon(tab: Tab): ImageVector = when (tab) {
+    Tab.Connection -> Icons.Rounded.Link
+    Tab.Apps -> Icons.Rounded.GridView
+    Tab.Servers -> Icons.Rounded.Dns
+    Tab.Rules -> Icons.Outlined.Description
+    Tab.Profiles -> Icons.Outlined.Folder
+    Tab.Diagnostics -> Icons.Rounded.MonitorHeart
+    Tab.Traffic -> Icons.Rounded.BarChart
+    Tab.Settings -> Icons.Outlined.Settings
+}
+
+@Composable
+private fun SimpleSidebar(shell: Shell, chrome: WindowChrome, modifier: Modifier, showVersion: Boolean) {
+    Column(modifier.background(SimpleColors.sidebar(IsDark))) {
+        WindowDragArea(chrome.hostWindow, Modifier.fillMaxWidth().height(96.dp)) {
+            Row(Modifier.fillMaxSize().padding(start = 24.dp, end = 16.dp, top = 18.dp), verticalAlignment = Alignment.CenterVertically) {
+                SimpleMark(34.dp)
+                Spacer(Modifier.width(12.dp))
+                Text("PerRoute", color = White, fontSize = 19.sp, fontWeight = FontWeight.Bold)
+                if (showVersion) {
+                    Spacer(Modifier.width(12.dp))
+                    Text(app.perroute.service.SecureUpdateService.CURRENT_VERSION, color = Muted, fontSize = 12.5.sp)
+                }
+            }
+        }
+        Column(Modifier.weight(1f).verticalScroll(rememberScrollState()).padding(horizontal = 14.dp, vertical = 8.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+            Tab.entries.forEach { tab ->
+                val selected = shell.tab == tab
+                val shape = RoundedCornerShape(10.dp)
+                Row(
+                    Modifier.fillMaxWidth().height(48.dp).focusRing(shape).background(if (selected) Violet else Color.Transparent, shape)
+                        .selectable(selected, role = Role.Tab) { shell.navigate(tab) }.pointerHoverIcon(PointerIcon.Hand).padding(horizontal = 14.dp),
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    Icon(simpleIcon(tab), null, tint = if (selected) Color.White else White.copy(.75f), modifier = Modifier.size(23.dp))
+                    Spacer(Modifier.width(16.dp))
+                    Text(tab.label, color = if (selected) Color.White else White.copy(.85f), fontSize = 15.sp,
+                        fontWeight = if (selected) FontWeight.SemiBold else FontWeight.Normal, maxLines = 1)
+                }
+            }
+        }
+        Text(Credit, color = Muted, fontSize = 12.sp, modifier = Modifier.padding(start = 26.dp, bottom = 22.dp, top = 8.dp))
+    }
+}
+
+/**
+ * The page frame: a large title (with an optional pill beside it), its subtitle, actions on the right, then the
+ * content. [scroll] lets the whole page scroll when its content is taller than the window.
+ */
+@Composable
+internal fun SimplePage(
+    title: String,
+    subtitle: String,
+    pill: String? = null,
+    scroll: Boolean = true,
+    actions: (@Composable RowScope.() -> Unit)? = null,
+    content: @Composable ColumnScope.() -> Unit
+) {
+    BoxWithConstraints(Modifier.fillMaxSize()) {
+    val compact = maxWidth < 760.dp
+    androidx.compose.runtime.CompositionLocalProvider(LocalCompact provides compact) {
+    Column(Modifier.fillMaxSize().then(if (scroll) Modifier.verticalScroll(rememberScrollState()) else Modifier)
+        .padding(start = if (compact) 22.dp else 32.dp, end = if (compact) 20.dp else 28.dp, top = 6.dp, bottom = 22.dp)) {
+        Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
+            Column(Modifier.weight(1f)) {
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    Text(title, color = White, fontSize = 30.sp, fontWeight = FontWeight.Bold, maxLines = 1, overflow = TextOverflow.Ellipsis)
+                    if (pill != null) {
+                        Spacer(Modifier.width(16.dp))
+                        Text(pill, color = Violet2, fontSize = 13.sp, fontWeight = FontWeight.Medium,
+                            modifier = Modifier.background(Selection, RoundedCornerShape(50)).padding(horizontal = 14.dp, vertical = 6.dp))
+                    }
+                }
+                Spacer(Modifier.height(4.dp))
+                Text(subtitle, color = Muted, fontSize = 16.sp, maxLines = 2, overflow = TextOverflow.Ellipsis)
+            }
+            if (actions != null) {
+                Spacer(Modifier.width(16.dp))
+                Row(horizontalArrangement = Arrangement.spacedBy(12.dp), verticalAlignment = Alignment.CenterVertically, content = actions)
+            }
+        }
+        Spacer(Modifier.height(20.dp))
+        Column(if (scroll) Modifier.fillMaxWidth() else Modifier.weight(1f).fillMaxWidth(), content = content)
+    }
+    }
+    }
+}
+
+/** A white (or graphite) card with the Simple design's rounded corners. */
+@Composable
+internal fun SimpleCard(modifier: Modifier = Modifier, padding: Dp = 22.dp, content: @Composable ColumnScope.() -> Unit) {
+    val shape = RoundedCornerShape(16.dp)
+    Column(modifier.fillMaxWidth().background(Surface, shape).border(1.dp, Line, shape).padding(padding), content = content)
+}
+
+/** A table header inside a card. */
+@Composable
+internal fun SimpleTableHeader(content: @Composable RowScope.() -> Unit) {
+    Row(Modifier.fillMaxWidth().height(38.dp).padding(horizontal = 10.dp), verticalAlignment = Alignment.CenterVertically, content = content)
+    Divider()
+}
+
+/** A table row inside a card: hairline below, lavender when selected. */
+@Composable
+internal fun SimpleTableRow(selected: Boolean = false, modifier: Modifier = Modifier, onClick: (() -> Unit)? = null, label: String? = null, content: @Composable RowScope.() -> Unit) {
+    Row(
+        modifier.fillMaxWidth().background(if (selected) Selection else Color.Transparent, RoundedCornerShape(8.dp))
+            .then(if (onClick != null) Modifier.pressable(RoundedCornerShape(8.dp), label = label, onClick = onClick) else Modifier)
+            .heightIn(min = 58.dp).padding(horizontal = 10.dp, vertical = 8.dp),
+        verticalAlignment = Alignment.CenterVertically, content = content
+    )
+    Divider()
+}
+
+/** A settings row: what it is on the left, its control on the right, an optional line under the control. */
+@Composable
+internal fun SimpleSettingRow(title: String, detail: String, note: String = "", divider: Boolean = true, control: (@Composable () -> Unit)? = null) {
+    Row(Modifier.fillMaxWidth().padding(vertical = 16.dp), verticalAlignment = Alignment.CenterVertically) {
+        Column(Modifier.weight(1f)) {
+            Text(title, color = White, fontSize = 15.sp, fontWeight = FontWeight.SemiBold)
+            if (detail.isNotBlank()) { Spacer(Modifier.height(3.dp)); Text(detail, color = Muted, fontSize = 13.sp, lineHeight = 18.sp) }
+        }
+        if (control != null) {
+            Spacer(Modifier.width(18.dp))
+            Column(horizontalAlignment = Alignment.End) {
+                control()
+                if (note.isNotBlank()) { Spacer(Modifier.height(6.dp)); Text(note, color = Muted, fontSize = 12.sp) }
+            }
+        }
+    }
+    if (divider) Divider()
+}
+
+/** A card section title with an optional action on the right. */
+@Composable
+internal fun SimpleSectionTitle(title: String, detail: String = "", trailing: (@Composable RowScope.() -> Unit)? = null) {
+    Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
+        Column(Modifier.weight(1f)) {
+            Text(title, color = White, fontSize = 19.sp, fontWeight = FontWeight.Bold)
+            if (detail.isNotBlank()) Text(detail, color = Muted, fontSize = 13.sp)
+        }
+        if (trailing != null) Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(10.dp), content = trailing)
+    }
+}
+
+/** The Simple design's lock notice: an amber banner that names what is locked and why. */
+@Composable
+internal fun SimpleLockNote(text: String, modifier: Modifier = Modifier.fillMaxWidth()) =
+    InfoBanner(text, modifier, Amber, Icons.Rounded.Lock)
+

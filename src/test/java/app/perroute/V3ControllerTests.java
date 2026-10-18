@@ -53,6 +53,7 @@ final class V3ControllerTests {
         run("V3: Auto fails over in place", false, V3ControllerTests::testAutoFailover);
         run("V3: main switch replaces only the main route", false, V3ControllerTests::testInPlaceMainSwitch);
         run("V3: a refused runtime change keeps the connection", false, V3ControllerTests::testRuntimeChangeRefused);
+        run("V3: a failed route changes server while connected", false, V3ControllerTests::testChangeRouteServer);
         run("V3: traffic gateway and live limits", false, V3ControllerTests::testGatewayAndLimits);
         run("V3: gateway start failure rolls back", false, V3ControllerTests::testGatewayFailure);
         run("V3: migrated installations keep version 2 behavior", true, V3ControllerTests::testMigratedDefaults);
@@ -61,6 +62,7 @@ final class V3ControllerTests {
         run("V3: backup restore, rollback and undo", false, V3ControllerTests::testBackupRestore);
         run("V3: rule precedence with Auto routes", false, V3ControllerTests::testRulePrecedence);
         run("V3: removed Auto server is re-decided", false, V3ControllerTests::testRemovedAutoServer);
+        run("UI: the interface style is its own preference", false, V3ControllerTests::testUiStylePreference);
     }
 
     @FunctionalInterface private interface CheckedTest { void run(Fixture fixture) throws Exception; }
@@ -293,6 +295,56 @@ final class V3ControllerTests {
         equal(starts + 1, f.backend.startCount);
         check(f.controller.isConnected(), "Still connected");
         check(f.logs.stream().anyMatch(line -> line.contains("could not be replaced in place")), "The fallback is logged");
+    }
+
+    private static void testChangeRouteServer(Fixture f) throws Exception {
+        f.good(f.third, 20);
+        f.setup(Map.of(f.chrome, "second"), Set.of(f.telegram));
+        f.backend.supportsRuntimeChange = true;
+        check(f.controller.connect().getOk(), "Connect");
+        int starts = f.backend.startCount;
+        ActiveRoute custom = f.controller.activeRoutes().stream().filter(r -> r.getId().equals("second")).findFirst().orElseThrow();
+        f.backend.failingPorts.add(custom.getCheckPort());
+        f.controller.retryRoute("second");
+        waitFor(() -> f.health("second") != null && f.health("second").state() == RouteHealthTracker.State.FAILED);
+        f.backend.failingPorts.clear();
+
+        // The failed custom route moves to another server in place; the Apps screen is locked while connected.
+        int changes = f.backend.runtimeChanges.size();
+        check(f.controller.changeRouteServer("second", "third").getOk(), "Change the failed route's server");
+        check(f.controller.isConnected(), "Still connected");
+        equal(starts, f.backend.startCount);
+        equal(changes + 1, f.backend.runtimeChanges.size());
+        check(f.backend.runtimeChanges.get(changes)[3].contains("third.example"), "The new outbound carries the new server");
+        equal(Map.of(AppRoutes.normalize(f.chrome), "third"), f.controller.appRoutes());
+        check(f.controller.activeRoutes().stream().anyMatch(r -> r.getId().equals("third") && !r.getMain() && !r.getAuto()), "The route now uses the new server");
+        check(f.controller.activeRoutes().stream().noneMatch(r -> r.getId().equals("second")), "The old route is gone");
+        check(f.health("third") != null, "The moved route is watched");
+        equal("main", f.controller.activeRoutes().get(0).getNode().key());
+        waitFor(() -> "third".equals(savedRoute(f, f.chrome)));
+
+        // Moving it onto the main server merges two routes, which needs a restart.
+        check(f.controller.changeRouteServer("third", "main").getOk(), "Move onto the main server");
+        equal(starts + 1, f.backend.startCount);
+        check(f.controller.isConnected(), "Still connected after the restart");
+        equal(Map.of(AppRoutes.normalize(f.chrome), "main"), f.controller.appRoutes());
+
+        // An Auto route is pinned to the chosen server in place.
+        String autoId = f.autoRoute(f.telegram).getId();
+        check(f.controller.changeRouteServer(autoId, "second").getOk(), "Change the Auto route's server");
+        equal("second", f.autoRoute(f.telegram).getNode().key());
+        equal(starts + 1, f.backend.startCount);
+        waitFor(() -> "second".equals(f.savedSelection(f.telegram)));
+
+        check(!f.controller.changeRouteServer("missing", "second").getOk(), "An unknown route is refused");
+        check(!f.controller.changeRouteServer(autoId, "nowhere").getOk(), "An unknown server is refused");
+        f.controller.disconnect();
+        check(!f.controller.changeRouteServer(autoId, "third").getOk(), "Needs a connection");
+    }
+
+    private static String savedRoute(Fixture f, String path) {
+        try { return f.store.load().appRoutes().get(AppRoutes.normalize(path)); }
+        catch (IOException e) { return null; }
     }
 
     // ------------------------------------------------------------------ gateway and bandwidth
@@ -538,6 +590,52 @@ final class V3ControllerTests {
         long deadline = System.currentTimeMillis() + 10_000;
         while (!condition.getAsBoolean() && System.currentTimeMillis() < deadline) Thread.sleep(20);
         check(condition.getAsBoolean(), "Timed out waiting for a condition");
+    }
+
+    /** The interface design is its own preference: New when unset, kept across restarts, independent of everything else. */
+    private static void testUiStylePreference(Fixture f) throws Exception {
+        equal("new", f.controller.uiStyle());
+        f.controller.setDarkTheme(false);
+        f.controller.setAutoSpeedTest(false);
+        Map<String, String> before = snapshot(f.preferences);
+        f.controller.setUiStyle("simple");
+        equal("simple", f.controller.uiStyle());
+        Map<String, String> after = snapshot(f.preferences);
+        after.remove(PerRouteController.PREF_UI_STYLE);
+        equal(before, after);
+        check(!f.controller.isDarkTheme(), "Choosing a design leaves the theme alone");
+        f.controller.setDarkTheme(true);
+        equal("simple", f.controller.uiStyle());
+
+        // A restart reads the saved choice from the same preferences.
+        try (PerRouteController restarted = new PerRouteController(f.state, f.store, f.backend, f.preferences, FAST, 60_000L)) {
+            equal("simple", restarted.uiStyle());
+        }
+
+        f.preferences.put(PerRouteController.PREF_UI_STYLE, "something else");
+        equal("new", f.controller.uiStyle());
+        f.controller.setUiStyle("unknown");
+        equal("new", f.preferences.get(PerRouteController.PREF_UI_STYLE, ""));
+
+        // Backups carry the theme but not the design, so restoring one never changes how the window looks.
+        f.controller.setUiStyle("simple");
+        Path file = f.directory.resolve("style.prb");
+        check(f.controller.exportBackup(file, EnumSet.allOf(BackupService.Section.class), null).getOk(), "Export");
+        f.controller.setUiStyle("new");
+        RestoreRequest request = f.controller.openBackup(file, null).getFirst();
+        check(request != null, "Open the backup");
+        check(f.controller.restoreBackup(request, BackupService.Mode.REPLACE, Map.of()).getOk(), "Restore");
+        equal("new", f.controller.uiStyle());
+
+        f.controller.setUiStyle("simple");
+        check(f.controller.resetAll().getOk(), "Reset");
+        equal("new", f.controller.uiStyle());
+    }
+
+    private static Map<String, String> snapshot(Preferences preferences) throws Exception {
+        Map<String, String> values = new java.util.TreeMap<>();
+        for (String key : preferences.keys()) values.put(key, preferences.get(key, null));
+        return values;
     }
 
     private static void equal(Object expected, Object actual) {
