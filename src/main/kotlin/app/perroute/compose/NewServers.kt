@@ -107,9 +107,9 @@ internal fun NewServersPage(shell: Shell) {
             }
             NewTableHeader {
                 HeaderText("Server", Modifier.weight(1.6f))
-                HeaderText("Latency", Modifier.width(84.dp))
-                HeaderText("Quality", Modifier.width(128.dp))
-                HeaderText("Used by", Modifier.weight(.8f))
+                HeaderText("Latency", Modifier.width(if (LocalCompact.current) 70.dp else 84.dp))
+                HeaderText("Quality", Modifier.width(if (LocalCompact.current) 118.dp else 128.dp))
+                if (!LocalCompact.current) HeaderText("Used by", Modifier.weight(.8f))
                 Box(Modifier.width(66.dp))
             }
             Box(Modifier.weight(1f).fillMaxWidth()) {
@@ -174,12 +174,13 @@ private fun NewServerRow(shell: Shell, model: ServersModel, node: ProxyNode, inf
                 EllipsisText(listOfNotNull(protocolLabel(node), info?.sourceLabel?.ifBlank { null }, info?.tag?.takeIf { it.isNotBlank() }?.let { "#$it" }).joinToString("  ·  "), Muted, 11.5.sp)
             }
         }
-        Box(Modifier.width(84.dp)) {
+        val compact = LocalCompact.current
+        Box(Modifier.width(if (compact) 70.dp else 84.dp)) {
             val (label, color) = latencyText(model.latencies[node.key()], model.pinging && !model.latencies.containsKey(node.key()))
             Text(label, color = color, fontSize = 12.5.sp, maxLines = 1)
         }
-        Box(Modifier.width(128.dp)) { QualityPill(model.scores[node.key()], compact = true) }
-        Row(Modifier.weight(.8f), verticalAlignment = Alignment.CenterVertically) {
+        Box(Modifier.width(if (compact) 118.dp else 128.dp)) { QualityPill(model.scores[node.key()], compact = true) }
+        if (!compact) Row(Modifier.weight(.8f), verticalAlignment = Alignment.CenterVertically) {
             if (usedBy.isEmpty()) Text("—", color = Muted, fontSize = 12.sp)
             else Tooltip(usedBy.joinToString("\n") { appName(it) }) {
                 Row(verticalAlignment = Alignment.CenterVertically) {
@@ -213,14 +214,11 @@ private fun ColumnScope.NewServerPanel(shell: Shell, model: ServersModel, node: 
             val measured = score != null && score.label() != app.perroute.quality.QualityLabel.UNKNOWN
             Text(if (measured) score!!.score().toString() else "—", color = White, fontSize = 44.sp, lineHeight = 46.sp, fontWeight = FontWeight.ExtraBold)
             Text(" /100", color = Muted, fontSize = 16.sp, modifier = Modifier.padding(bottom = 7.dp))
-            Spacer(Modifier.width(16.dp))
-            Column(Modifier.padding(bottom = 6.dp)) {
-                Text((score?.label() ?: app.perroute.quality.QualityLabel.UNKNOWN).text(), color = qualityColor(score), fontSize = 15.sp, fontWeight = FontWeight.SemiBold)
-                Row(verticalAlignment = Alignment.CenterVertically) {
-                    Text("Confidence ", color = Muted, fontSize = 12.sp)
-                    ConfidenceBadge(score)
-                }
-            }
+        }
+        Row(verticalAlignment = Alignment.CenterVertically) {
+            Text((score?.label() ?: app.perroute.quality.QualityLabel.UNKNOWN).text(), color = qualityColor(score), fontSize = 15.sp, fontWeight = FontWeight.SemiBold)
+            Text("   ·   Confidence ", color = Muted, fontSize = 12.sp)
+            ConfidenceBadge(score)
         }
         Spacer(Modifier.height(6.dp))
         QualityExplanation(score)

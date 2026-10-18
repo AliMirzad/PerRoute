@@ -120,7 +120,7 @@ import javax.imageio.ImageIO
 
 internal const val Slogan = "Your apps. Your routes."
 internal const val SloganSubtitle = "Choose a route for each app. Keep the rest direct."
-internal const val Credit = "Created by Ali Mirzad"
+internal const val Credit = "Created By Vexor"
 private const val WindowCornerRadius = 16.0
 
 /** The eight destinations of the main window. New groups Rules, Profiles, Diagnostics and Traffic under Tools. */

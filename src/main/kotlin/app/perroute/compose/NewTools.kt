@@ -210,7 +210,7 @@ internal fun NewProfilesPage(shell: Shell) {
                         Spacer(Modifier.height(12.dp))
                         Text(scenario.title, color = White, fontSize = 16.sp, fontWeight = FontWeight.Bold)
                         Spacer(Modifier.height(3.dp))
-                        Text(scenario.summary, color = Muted, fontSize = 12.sp, lineHeight = 16.sp, modifier = Modifier.weight(1f, fill = false))
+                        Text(scenario.summary, color = Muted, fontSize = 12.sp, lineHeight = 16.sp)
                         Spacer(Modifier.weight(1f))
                         Spacer(Modifier.height(12.dp))
                         LinkAction("Preview changes", fontSize = 12.5.sp) { model.preview(scenario) }

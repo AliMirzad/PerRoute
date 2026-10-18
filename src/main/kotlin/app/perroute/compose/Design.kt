@@ -207,7 +207,8 @@ internal fun PrimaryButton(
     val fill = if (enabled) color ?: Violet else NeutralOverlay.copy(if (IsDark) .10f else .09f)
     val content = if (enabled) contentColor ?: OnPrimary else Muted.copy(.85f)
     val shape = ControlShape
-    val large = height >= 48.dp
+    val large = height >= 50.dp
+    val roomy = !Tok.isNew && height >= 44.dp
     Row(
         modifier.height(height)
             .pressable(shape, enabled && !busy, label = label, onClick = onClick)
@@ -222,7 +223,7 @@ internal fun PrimaryButton(
             Icon(icon, null, tint = content, modifier = Modifier.size(if (large) 21.dp else 17.dp))
             Spacer(Modifier.width(if (large) 10.dp else 8.dp))
         }
-        Text(label, color = content, fontSize = if (large) 15.5.sp else 12.5.sp, fontWeight = if (Tok.isNew) FontWeight.Bold else FontWeight.SemiBold,
+        Text(label, color = content, fontSize = if (large) 15.5.sp else if (roomy) 14.sp else 12.5.sp, fontWeight = if (Tok.isNew) FontWeight.Bold else FontWeight.SemiBold,
             maxLines = 1, overflow = TextOverflow.Ellipsis)
     }
 }
@@ -253,7 +254,7 @@ internal fun SecondaryButton(
             Icon(icon, null, tint = tint ?: White.copy(.8f), modifier = Modifier.size(16.dp))
             Spacer(Modifier.width(8.dp))
         }
-        Text(label, color = text, fontSize = 12.sp, fontWeight = FontWeight.Medium, maxLines = 1, overflow = TextOverflow.Ellipsis)
+        Text(label, color = text, fontSize = if (!Tok.isNew && height >= 44.dp) 14.sp else 12.sp, fontWeight = FontWeight.Medium, maxLines = 1, overflow = TextOverflow.Ellipsis)
         if (trailing != null) {
             Spacer(Modifier.width(6.dp))
             Icon(trailing, null, tint = text.copy(.8f), modifier = Modifier.size(15.dp))
@@ -993,7 +994,7 @@ internal fun SimpleMark(size: Dp = 30.dp) {
         Modifier.size(size).graphicsLayer(compositingStrategy = CompositingStrategy.Offscreen)
             .drawWithContent {
                 drawContent()
-                drawRect(Brush.linearGradient(listOf(tint, Color(0xFF8E6BFF), tint)), blendMode = BlendMode.Color)
+                drawRect(Brush.linearGradient(listOf(Color(0xFF4B2FD6), tint, Color(0xFF9A7BFF))), blendMode = BlendMode.SrcAtop)
             }
     )
 }

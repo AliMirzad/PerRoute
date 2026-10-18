@@ -89,10 +89,10 @@ internal fun NewTrafficPage(shell: Shell) {
             } else {
                 NewTableHeader {
                     HeaderText("App", Modifier.weight(1.2f))
-                    HeaderText("Current download", Modifier.weight(1f))
-                    HeaderText("Current upload", Modifier.weight(1f))
-                    HeaderText("Download limit", Modifier.weight(1f))
-                    HeaderText("Upload limit", Modifier.weight(1f))
+                    HeaderText("Download", Modifier.weight(1f))
+                    HeaderText("Upload", Modifier.weight(1f))
+                    HeaderText("Down limit", Modifier.weight(1f))
+                    HeaderText("Up limit", Modifier.weight(1f))
                     HeaderText("Utilization", Modifier.width(78.dp))
                     HeaderText("Status", Modifier.width(110.dp))
                     Box(Modifier.width(32.dp))
@@ -135,13 +135,13 @@ internal fun NewTrafficPage(shell: Shell) {
 
 @Composable
 private fun RowScope.TotalTile(icon: ImageVector, color: Color, label: String, value: String) {
-    Row(Modifier.weight(1f).background(Surface, RoundedCornerShape(6.dp)).border(1.dp, Line, RoundedCornerShape(6.dp)).padding(horizontal = 14.dp, vertical = 12.dp),
+    Row(Modifier.weight(1f).background(Surface, RoundedCornerShape(6.dp)).border(1.dp, Line, RoundedCornerShape(6.dp)).padding(horizontal = 11.dp, vertical = 11.dp),
         verticalAlignment = Alignment.CenterVertically) {
-        Icon(icon, null, tint = color, modifier = Modifier.size(24.dp))
+        Icon(icon, null, tint = color, modifier = Modifier.size(21.dp))
         Spacer(Modifier.width(12.dp))
         Column {
             Text(label, color = White.copy(.8f), fontSize = 11.5.sp, maxLines = 1)
-            Text(value, color = White, fontSize = 20.sp, fontWeight = FontWeight.Bold, maxLines = 1)
+            Text(value, color = White, fontSize = 17.sp, fontWeight = FontWeight.Bold, maxLines = 1, softWrap = false)
         }
     }
 }

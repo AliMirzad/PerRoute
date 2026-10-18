@@ -62,6 +62,7 @@ final class V3ControllerTests {
         run("V3: backup restore, rollback and undo", false, V3ControllerTests::testBackupRestore);
         run("V3: rule precedence with Auto routes", false, V3ControllerTests::testRulePrecedence);
         run("V3: removed Auto server is re-decided", false, V3ControllerTests::testRemovedAutoServer);
+        run("UI: the interface style is its own preference", false, V3ControllerTests::testUiStylePreference);
     }
 
     @FunctionalInterface private interface CheckedTest { void run(Fixture fixture) throws Exception; }
@@ -589,6 +590,52 @@ final class V3ControllerTests {
         long deadline = System.currentTimeMillis() + 10_000;
         while (!condition.getAsBoolean() && System.currentTimeMillis() < deadline) Thread.sleep(20);
         check(condition.getAsBoolean(), "Timed out waiting for a condition");
+    }
+
+    /** The interface design is its own preference: New when unset, kept across restarts, independent of everything else. */
+    private static void testUiStylePreference(Fixture f) throws Exception {
+        equal("new", f.controller.uiStyle());
+        f.controller.setDarkTheme(false);
+        f.controller.setAutoSpeedTest(false);
+        Map<String, String> before = snapshot(f.preferences);
+        f.controller.setUiStyle("simple");
+        equal("simple", f.controller.uiStyle());
+        Map<String, String> after = snapshot(f.preferences);
+        after.remove(PerRouteController.PREF_UI_STYLE);
+        equal(before, after);
+        check(!f.controller.isDarkTheme(), "Choosing a design leaves the theme alone");
+        f.controller.setDarkTheme(true);
+        equal("simple", f.controller.uiStyle());
+
+        // A restart reads the saved choice from the same preferences.
+        try (PerRouteController restarted = new PerRouteController(f.state, f.store, f.backend, f.preferences, FAST, 60_000L)) {
+            equal("simple", restarted.uiStyle());
+        }
+
+        f.preferences.put(PerRouteController.PREF_UI_STYLE, "something else");
+        equal("new", f.controller.uiStyle());
+        f.controller.setUiStyle("unknown");
+        equal("new", f.preferences.get(PerRouteController.PREF_UI_STYLE, ""));
+
+        // Backups carry the theme but not the design, so restoring one never changes how the window looks.
+        f.controller.setUiStyle("simple");
+        Path file = f.directory.resolve("style.prb");
+        check(f.controller.exportBackup(file, EnumSet.allOf(BackupService.Section.class), null).getOk(), "Export");
+        f.controller.setUiStyle("new");
+        RestoreRequest request = f.controller.openBackup(file, null).getFirst();
+        check(request != null, "Open the backup");
+        check(f.controller.restoreBackup(request, BackupService.Mode.REPLACE, Map.of()).getOk(), "Restore");
+        equal("new", f.controller.uiStyle());
+
+        f.controller.setUiStyle("simple");
+        check(f.controller.resetAll().getOk(), "Reset");
+        equal("new", f.controller.uiStyle());
+    }
+
+    private static Map<String, String> snapshot(Preferences preferences) throws Exception {
+        Map<String, String> values = new java.util.TreeMap<>();
+        for (String key : preferences.keys()) values.put(key, preferences.get(key, null));
+        return values;
     }
 
     private static void equal(Object expected, Object actual) {

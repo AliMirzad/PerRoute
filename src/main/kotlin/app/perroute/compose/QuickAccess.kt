@@ -259,3 +259,71 @@ internal fun QuickServerRow(state: QuickAccessState, node: ProxyNode) {
     }
 }
 
+
+/** Simple's tray panel: one light (or dark) card with the status, the main server, live speed and the choices. */
+@Composable
+internal fun SimpleQuickAccess(state: QuickAccessState) {
+    val now by rememberNow()
+    Column(Modifier.fillMaxSize().background(Surface).padding(horizontal = 22.dp, vertical = 18.dp)) {
+        Row(verticalAlignment = Alignment.CenterVertically) {
+            SimpleMark(30.dp)
+            Spacer(Modifier.width(10.dp))
+            Text("PerRoute", color = White, fontSize = 19.sp, fontWeight = FontWeight.Bold)
+            Spacer(Modifier.width(10.dp))
+            Text(app.perroute.service.SecureUpdateService.CURRENT_VERSION, color = Muted, fontSize = 12.sp)
+            Spacer(Modifier.weight(1f))
+            MenuIcon(Icons.Rounded.MoreHoriz, "More actions", state.menu(), tint = White.copy(.8f), bordered = false)
+        }
+        Spacer(Modifier.height(12.dp))
+        Row(verticalAlignment = Alignment.CenterVertically) {
+            StatusDot(if (state.busy) Amber else if (state.connected) Cyan else Muted.copy(.6f), 14.dp)
+            Spacer(Modifier.width(12.dp))
+            Text(state.statusText, color = White, fontSize = 21.sp, fontWeight = FontWeight.Bold)
+        }
+        Spacer(Modifier.height(12.dp))
+        val shape = RoundedCornerShape(12.dp)
+        Row(Modifier.fillMaxWidth().border(1.dp, Line, shape).padding(14.dp), verticalAlignment = Alignment.CenterVertically) {
+            ServerAvatar(state.main, 46.dp)
+            Spacer(Modifier.width(12.dp))
+            Column(Modifier.weight(1f)) {
+                if (state.main != null) RoutePill(RouteKindLabel.MAIN)
+                EllipsisText(state.main?.let(::serverName) ?: "No server selected", White, 16.sp, fontWeight = FontWeight.SemiBold)
+                EllipsisText(state.main?.endpoint() ?: "Open PerRoute to add a server", Muted, 12.sp)
+            }
+            val (check, passed) = quickCheckText(state, now)
+            if (state.connected) Column(horizontalAlignment = Alignment.End, modifier = Modifier.width(110.dp)) {
+                Icon(when (passed) { true -> Icons.Rounded.CheckCircle; false -> Icons.Rounded.WarningAmber; null -> Icons.Rounded.Schedule }, null,
+                    tint = when (passed) { true -> Cyan; false -> Amber; null -> Muted }, modifier = Modifier.size(20.dp))
+                Text(check, color = if (passed == true) Cyan else Muted, fontSize = 11.sp, maxLines = 2, textAlign = androidx.compose.ui.text.style.TextAlign.End)
+            }
+        }
+        Spacer(Modifier.height(12.dp))
+        Row(verticalAlignment = Alignment.CenterVertically) {
+            listOf(Triple(Icons.Rounded.ArrowDownward, "Download", state.traffic.downloadBytesPerSecond), Triple(Icons.Rounded.ArrowUpward, "Upload", state.traffic.uploadBytesPerSecond))
+                .forEachIndexed { index, (icon, label, rate) ->
+                    if (index > 0) Divider(Modifier.height(36.dp), vertical = true)
+                    Row(Modifier.weight(1f).padding(horizontal = 10.dp), verticalAlignment = Alignment.CenterVertically) {
+                        Icon(icon, null, tint = Violet2, modifier = Modifier.size(24.dp))
+                        Spacer(Modifier.width(10.dp))
+                        Column { Text(label, color = Muted, fontSize = 12.sp); Text(if (state.connected) formatRate(rate) else "—", color = White, fontSize = 17.sp, fontWeight = FontWeight.SemiBold) }
+                    }
+                }
+        }
+        Spacer(Modifier.height(12.dp))
+        PrimaryButton(state.buttonLabel, Modifier.fillMaxWidth(), icon = Icons.Rounded.PowerSettingsNew, enabled = state.main != null, busy = state.busy, height = 48.dp, onClick = state.onToggle)
+        Spacer(Modifier.height(10.dp))
+        Text(state.summary, color = White, fontSize = 13.sp)
+        Text(if (state.missing > 0) "${plural(state.missing, "app")} ${if (state.missing == 1) "needs" else "need"} a replacement server. Open PerRoute to fix it." else "Other app routes stay unchanged.",
+            color = if (state.missing > 0) Amber else Muted, fontSize = 12.sp)
+        Spacer(Modifier.height(10.dp))
+        Divider()
+        Spacer(Modifier.height(10.dp))
+        Text("Main server choices", color = White, fontSize = 15.sp, fontWeight = FontWeight.SemiBold)
+        if (state.nodes.isEmpty()) Text("No servers yet. Open PerRoute to add one.", color = Muted, fontSize = 12.sp, modifier = Modifier.weight(1f))
+        else LazyColumn(Modifier.weight(1f)) { items(state.ordered, key = { it.key() }) { node -> QuickServerRow(state, node) } }
+        Spacer(Modifier.height(10.dp))
+        SecondaryButton("Open PerRoute", Modifier.fillMaxWidth(), icon = Icons.AutoMirrored.Rounded.OpenInNew, tint = Violet2, height = 44.dp, onClick = state.onOpen)
+        Spacer(Modifier.height(8.dp))
+        Text(Credit, color = Muted, fontSize = 11.sp)
+    }
+}

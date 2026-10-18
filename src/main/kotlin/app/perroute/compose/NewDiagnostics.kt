@@ -96,7 +96,8 @@ private fun NewRouteChecks(shell: Shell, model: DiagnosticsModel, now: Long) {
     Column(Modifier.fillMaxSize().verticalScroll(rememberScrollState())) {
         val (summary, good) = model.summary(entries, now)
         Row(verticalAlignment = Alignment.CenterVertically) {
-            Icon(if (good) Icons.Rounded.CheckCircle else Icons.Rounded.Shield, null, tint = if (good) Cyan else Muted, modifier = Modifier.size(22.dp))
+            val failed = entries.any { it.node != null && it.check?.state == RouteCheckState.FAILED }
+            Icon(if (good) Icons.Rounded.CheckCircle else if (failed) Icons.Rounded.WarningAmber else Icons.Rounded.Shield, null, tint = if (good) Cyan else if (failed) Amber else Muted, modifier = Modifier.size(22.dp))
             Spacer(Modifier.width(10.dp))
             Text(summary, color = White, fontSize = 14.sp, fontWeight = FontWeight.SemiBold)
             val last = entries.mapNotNull { it.check?.takeIf { c -> c.state == RouteCheckState.PASSED || c.state == RouteCheckState.FAILED }?.atMillis }.maxOrNull()
@@ -223,11 +224,15 @@ private fun NewInspector(shell: Shell, model: InspectorModel) {
             MenuButton(model.appFilter?.let(::appName) ?: "All apps", model.appEntries(), Modifier.width(120.dp), accessibleLabel = "Filter by app")
             MenuButton(model.routeFilter ?: "All routes", model.routeEntries(), Modifier.width(124.dp), accessibleLabel = "Filter by route")
             MenuButton(model.statusFilter.label, model.statusEntries(), Modifier.width(134.dp), accessibleLabel = "Filter by status")
-            Segmented(listOf(true, false), model.live, { if (it) "Live" else "Paused" }, Modifier.width(140.dp), icon = { if (it) Icons.Rounded.PlayArrow else Icons.Rounded.Pause }) { model.live = it }
         }
-        Spacer(Modifier.height(8.dp))
+        Spacer(Modifier.height(10.dp))
         val filtered = model.filtered()
-        Text(if (model.live) "Updates every 2s  ·  ${plural(filtered.size, "connection")}" else "Paused  ·  ${plural(filtered.size, "connection")}", color = Muted, fontSize = 12.sp)
+        Row(verticalAlignment = Alignment.CenterVertically) {
+            Segmented(listOf(true, false), model.live, { if (it) "Live" else "Paused" }, Modifier.width(170.dp), height = 34.dp,
+                icon = { if (it) Icons.Rounded.PlayArrow else Icons.Rounded.Pause }) { model.live = it }
+            Spacer(Modifier.width(12.dp))
+            Text(if (model.live) "Updates every 2s  ·  ${plural(filtered.size, "connection")}" else "Paused  ·  ${plural(filtered.size, "connection")}", color = Muted, fontSize = 12.sp)
+        }
         if (!shell.controller.inspectorUsesGateway()) {
             Spacer(Modifier.height(8.dp))
             InfoBanner("The traffic gateway is off, so connections come from the core's log only: no byte counts and no close events. Turn it on in Settings > Routing.",

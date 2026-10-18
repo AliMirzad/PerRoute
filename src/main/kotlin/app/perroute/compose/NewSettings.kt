@@ -179,14 +179,14 @@ private fun RadioCardBody(modifier: Modifier, title: String, detail: String, sel
 private fun NewGeneral(shell: Shell) {
     SettingBlock("Appearance", "Choose how PerRoute looks on your device.", first = true) {
         Spacer(Modifier.height(12.dp))
-        Row(Modifier.fillMaxWidth(.85f).height(IntrinsicSize.Min), horizontalArrangement = Arrangement.spacedBy(12.dp)) {
+        Row(Modifier.fillMaxWidth(if (LocalCompact.current) 1f else .85f).height(IntrinsicSize.Min), horizontalArrangement = Arrangement.spacedBy(12.dp)) {
             RadioCard("Light", "Use the light theme for PerRoute.", !Appearance.dark) { shell.setDarkMode(false) }
             RadioCard("Dark", "Use the dark theme for PerRoute.", Appearance.dark) { shell.setDarkMode(true) }
         }
     }
     SettingBlock("Interface style", "Choose the design of PerRoute. Only the look changes: your connection, routes, settings and unsaved changes stay as they are.") {
         Spacer(Modifier.height(12.dp))
-        Row(Modifier.fillMaxWidth(.85f).height(IntrinsicSize.Min), horizontalArrangement = Arrangement.spacedBy(12.dp)) {
+        Row(Modifier.fillMaxWidth(if (LocalCompact.current) 1f else .85f).height(IntrinsicSize.Min), horizontalArrangement = Arrangement.spacedBy(12.dp)) {
             RadioCard("Simple", "Light pages with a violet accent and a wide menu.", Appearance.style == UiStyle.SIMPLE) { shell.setUiStyle(UiStyle.SIMPLE) }
             RadioCard("New", "Charcoal, bone and lime, with a detail panel on each page.", Appearance.style == UiStyle.NEW) { shell.setUiStyle(UiStyle.NEW) }
         }
@@ -194,7 +194,7 @@ private fun NewGeneral(shell: Shell) {
     SettingBlock("Window behavior", "Closing or minimizing keeps PerRoute in the tray.") {
         Spacer(Modifier.height(8.dp))
         Text("When you close the window or minimize PerRoute, the app keeps running in the notification area so your routes remain active. Use Quick Access there to connect, switch the main server, or quit.",
-            color = White.copy(.8f), fontSize = 13.sp, lineHeight = 19.sp, modifier = Modifier.fillMaxWidth(.85f))
+            color = White.copy(.8f), fontSize = 13.sp, lineHeight = 19.sp, modifier = Modifier.fillMaxWidth(if (LocalCompact.current) 1f else .85f))
     }
     SettingBlock("About", "Version and application information.") {
         Spacer(Modifier.height(14.dp))
@@ -401,7 +401,7 @@ private fun NewBackup(shell: Shell, model: BackupModel) {
     SettingBlock("Create a backup", "Select what to include in the backup file.", first = true) {
         Spacer(Modifier.height(10.dp))
         val sections = BackupService.Section.entries
-        Row(Modifier.fillMaxWidth(.85f)) {
+        Row(Modifier.fillMaxWidth(if (LocalCompact.current) 1f else .85f)) {
             listOf(sections.take(3), sections.drop(3)).forEach { column ->
                 Column(Modifier.weight(1f)) {
                     column.forEach { section ->

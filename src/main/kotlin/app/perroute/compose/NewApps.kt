@@ -59,21 +59,28 @@ internal fun NewAppsPage(shell: Shell) {
             if (locked) Text("  ·  Routes can be edited while disconnected.", color = Amber, fontSize = 13.sp)
             else if (dirty) Text("  ·  Unsaved changes", color = Amber, fontSize = 13.sp, fontWeight = FontWeight.Medium)
             Spacer(Modifier.weight(1f))
-            SecondaryButton("Browse for an EXE", icon = Icons.Rounded.FolderOpen, enabled = !locked) { model.browseExe() }
+            // On a narrow window the browse action keeps only its icon so Cancel and Save changes always fit.
+            if (LocalCompact.current) IconAction(Icons.Rounded.FolderOpen, "Browse for an EXE", size = 40.dp, enabled = !locked) { model.browseExe() }
+            else SecondaryButton("Browse for an EXE", icon = Icons.Rounded.FolderOpen, enabled = !locked) { model.browseExe() }
             SecondaryButton("Cancel", enabled = dirty) { shell.discardDraft() }
             PrimaryButton("Save changes", enabled = dirty && !locked, busy = shell.busy) { shell.saveDraft() }
         }
     ) {
+        val compact = LocalCompact.current
         Column(Modifier.fillMaxSize()) {
             NewHeading(listOf("Selective routing"), "Applications", "Choose which apps use a proxy.")
             Spacer(Modifier.height(20.dp))
             Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(10.dp)) {
-                Segmented(AppListSource.entries, model.source, { it.label }, Modifier.width(210.dp), height = 40.dp) { model.source = it }
-                TextInput(model.query, { model.query = it }, "Search applications", Modifier.weight(1f), Icons.Rounded.Search)
+                Segmented(AppListSource.entries, model.source, { it.label }, Modifier.width(if (compact) 180.dp else 210.dp), height = 40.dp) { model.source = it }
+                if (!compact) TextInput(model.query, { model.query = it }, "Search applications", Modifier.weight(1f), Icons.Rounded.Search)
                 IconAction(Icons.Rounded.Refresh, "Refresh the application list", size = 40.dp) { model.refresh(true) }
-                Spacer(Modifier.width(6.dp))
-                Text("Advanced routing", color = White, fontSize = 13.sp)
+                if (compact) Spacer(Modifier.weight(1f)) else Spacer(Modifier.width(6.dp))
+                Text("Advanced routing", color = White, fontSize = 13.sp, maxLines = 1)
                 ToggleSwitch(draft.advanced, "Advanced routing", enabled = !locked, showState = false) { draft.advanced = it }
+            }
+            if (compact) {
+                Spacer(Modifier.height(10.dp))
+                TextInput(model.query, { model.query = it }, "Search applications", Modifier.fillMaxWidth(), Icons.Rounded.Search)
             }
             val unresolved = model.unresolved()
             when {
@@ -94,9 +101,8 @@ internal fun NewAppsPage(shell: Shell) {
             NewTableHeader {
                 Box(Modifier.width(34.dp))
                 HeaderText("Application", Modifier.weight(1.35f))
-                HeaderText("Route", Modifier.width(118.dp))
-                Box(Modifier.width(30.dp))
-                HeaderText("Server", Modifier.weight(1f))
+                HeaderText(if (compact) "Route and server" else "Route", if (compact) Modifier.weight(1f) else Modifier.width(118.dp))
+                if (!compact) { Box(Modifier.width(30.dp)); HeaderText("Server", Modifier.weight(1f)) }
                 Box(Modifier.width(24.dp))
             }
             val listState = rememberLazyListState()
@@ -142,6 +148,19 @@ private fun NewAppRow(shell: Shell, model: AppsModel, app: AppChoice) {
                 EllipsisText(app.title, White, 13.5.sp, fontWeight = FontWeight.SemiBold)
                 EllipsisText(fileName(app.path), Muted, 11.5.sp)
             }
+        }
+        if (LocalCompact.current) {
+            Column(Modifier.weight(1f)) {
+                val kind = cell.kind
+                if (kind == null) Text("Direct", color = Muted, fontSize = 12.5.sp)
+                else {
+                    RoutePill(kind)
+                    Spacer(Modifier.height(3.dp))
+                    EllipsisText(cell.server, if (cell.warning) Amber else White, 12.sp, fontWeight = FontWeight.Medium)
+                }
+            }
+            Icon(Icons.Rounded.ChevronRight, null, tint = White.copy(.55f), modifier = Modifier.size(20.dp))
+            return@NewTableRow
         }
         Box(Modifier.width(118.dp)) {
             val kind = cell.kind

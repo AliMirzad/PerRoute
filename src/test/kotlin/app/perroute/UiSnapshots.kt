@@ -400,7 +400,7 @@ fun main(args: Array<String>) {
                 else app.perroute.compose.showPresetDialog(shell, model, PerRouteController.SCENARIOS[0])
             }),
             Scene("$p-50-diagnostics-routes", advancedOn, tab = Tab.Diagnostics, runChecks = true),
-            Scene("$p-51-diagnostics-inspector", advancedOn, tab = Tab.Diagnostics, settleMillis = 2_500, prepare = { it.diagnosticsTab = DiagnosticsTab.Inspector }),
+            Scene("$p-51-diagnostics-inspector", d(advanced = true, connected = true, auto = true, gateway = false), tab = Tab.Diagnostics, settleMillis = 3_000, prepare = { it.diagnosticsTab = DiagnosticsTab.Inspector }),
             Scene("$p-52-diagnostics-loaded", advancedOn, tab = Tab.Diagnostics, prepare = { it.diagnosticsTab = DiagnosticsTab.Loaded }),
             Scene("$p-53-diagnostics-tester", advancedOn, tab = Tab.Diagnostics, prepare = { shell ->
                 shell.diagnosticsTab = DiagnosticsTab.Tester

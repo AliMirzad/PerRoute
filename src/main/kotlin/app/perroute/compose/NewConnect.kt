@@ -65,7 +65,7 @@ internal fun NewConnectPage(shell: Shell) {
     val now by rememberNow()
     val state = shell.screen("${Tab.Connection.name}:view") { ConnectView() }
     BoxWithConstraints(Modifier.fillMaxSize()) {
-        val columnWidth = ((maxWidth + NewRailWidth) * .265f).coerceIn(280.dp, 420.dp)
+        val columnWidth = if (maxWidth + NewRailWidth < 980.dp) 250.dp else ((maxWidth + NewRailWidth) * .265f).coerceIn(280.dp, 420.dp)
         Row(Modifier.fillMaxSize()) {
             CharcoalColors { NewConnectColumn(shell, view, Modifier.width(columnWidth).fillMaxHeight()) }
             NewRoutesArea(shell, view, state, now, Modifier.weight(1f).fillMaxHeight())
@@ -154,7 +154,9 @@ private fun NewBigStat(label: String, value: String) {
 
 @Composable
 private fun NewRoutesArea(shell: Shell, view: ConnectionView, state: ConnectView, now: Long, modifier: Modifier) {
-    Column(modifier.padding(start = 34.dp, end = 30.dp, top = 30.dp, bottom = 14.dp)) {
+    BoxWithConstraints(modifier) {
+    val narrow = maxWidth < 560.dp
+    Column(Modifier.fillMaxSize().padding(start = if (narrow) 22.dp else 34.dp, end = if (narrow) 20.dp else 30.dp, top = if (narrow) 22.dp else 30.dp, bottom = 14.dp)) {
         Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.Top) {
             Column(Modifier.weight(1f)) {
                 NewEyebrow("Live routing")
@@ -205,11 +207,10 @@ private fun NewRoutesArea(shell: Shell, view: ConnectionView, state: ConnectView
         Spacer(Modifier.height(8.dp))
         Divider()
         Row(Modifier.fillMaxWidth().height(56.dp), verticalAlignment = Alignment.CenterVertically) {
-            RouteSummary(shell, view, now)
-            Spacer(Modifier.weight(1f))
+            Box(Modifier.weight(1f)) { RouteSummary(shell, view, now, showLast = !narrow) }
             Row(Modifier.pressable(RoundedCornerShape(4.dp), label = if (state.details) "Hide route details" else "Show route details") { state.details = !state.details }
                 .padding(horizontal = 4.dp, vertical = 4.dp), verticalAlignment = Alignment.CenterVertically) {
-                Text("Route details", color = White, fontSize = 13.5.sp, fontWeight = FontWeight.Medium)
+                Text(if (narrow) "Details" else "Route details", color = White, fontSize = 13.5.sp, fontWeight = FontWeight.Medium)
                 Spacer(Modifier.width(6.dp))
                 Icon(if (state.details) Icons.Rounded.ExpandLess else Icons.Rounded.ExpandMore, null, tint = White, modifier = Modifier.size(20.dp))
             }
@@ -220,11 +221,12 @@ private fun NewRoutesArea(shell: Shell, view: ConnectionView, state: ConnectView
             Text(Credit, color = Muted, fontSize = 12.sp)
         }
     }
+    }
 }
 
 /** "2 healthy · 1 recovering | Last checked 1 min ago". */
 @Composable
-private fun RouteSummary(shell: Shell, view: ConnectionView, now: Long) {
+private fun RouteSummary(shell: Shell, view: ConnectionView, now: Long, showLast: Boolean) {
     val (icon, color, text) = when {
         !shell.connected -> Triple(Icons.Rounded.RadioButtonUnchecked, Muted, if (view.rows.isEmpty()) "No routes" else "Not connected")
         view.monitoring && view.affected > 0 -> Triple(Icons.Rounded.WarningAmber, Amber, "${view.healthy} healthy  ·  ${view.affected} recovering")
@@ -239,8 +241,8 @@ private fun RouteSummary(shell: Shell, view: ConnectionView, now: Long) {
             Icon(icon, null, tint = color, modifier = Modifier.size(20.dp))
         }
         Spacer(Modifier.width(12.dp))
-        Text(text, color = White, fontSize = 14.sp, fontWeight = FontWeight.Medium)
-        if (shell.connected) {
+        Text(text, color = White, fontSize = 14.sp, fontWeight = FontWeight.Medium, maxLines = 1)
+        if (shell.connected && showLast) {
             Spacer(Modifier.width(16.dp))
             Divider(Modifier.height(22.dp), vertical = true)
             Spacer(Modifier.width(16.dp))
@@ -267,10 +269,12 @@ private fun RouteGraphRow(shell: Shell, row: RouteRow, health: RouteHealthTracke
     val lineColor = White.copy(.75f)
     BoxWithConstraints(Modifier.fillMaxWidth()) {
         val wide = maxWidth >= 640.dp
-        val appWidth = if (wide) 190.dp else 150.dp
-        val serverWidth = if (wide) 300.dp else 220.dp
+        val narrow = maxWidth < 520.dp
+        val appWidth = if (wide) 190.dp else if (narrow) 132.dp else 150.dp
+        val serverWidth = if (wide) 300.dp else if (narrow) 190.dp else 220.dp
         Column {
-            Row(Modifier.fillMaxWidth().height(graphHeight), verticalAlignment = Alignment.CenterVertically) {
+            val rowHeight = if (narrow && shell.connected) maxOf(graphHeight, 88.dp) else graphHeight
+            Row(Modifier.fillMaxWidth().height(rowHeight), verticalAlignment = Alignment.CenterVertically) {
                 Column(Modifier.width(appWidth), verticalArrangement = Arrangement.spacedBy(AppCardGap)) {
                     when {
                         !shell.perApp -> ModeCard(shell.mode)
@@ -288,11 +292,12 @@ private fun RouteGraphRow(shell: Shell, row: RouteRow, health: RouteHealthTracke
                         val card = AppCardHeight.toPx()
                         val gap = AppCardGap.toPx()
                         val mid = size.height / 2
+                        val top = (size.height - graphHeight.toPx()) / 2
                         val mergeX = size.width * .26f
                         val pillLeft = size.width * .5f - 40.dp.toPx()
                         val pillRight = size.width * .5f + 40.dp.toPx()
                         for (i in 0 until cards) {
-                            val y = card * i + gap * i + card / 2
+                            val y = top + card * i + gap * i + card / 2
                             if (cards == 1) drawLine(lineColor, Offset(0f, y), Offset(pillLeft, mid), stroke)
                             else {
                                 val path = Path().apply {
@@ -316,20 +321,24 @@ private fun RouteGraphRow(shell: Shell, row: RouteRow, health: RouteHealthTracke
                     RoutePill(row.kind)
                 }
                 Row(Modifier.width(serverWidth).padding(start = 12.dp), verticalAlignment = Alignment.CenterVertically) {
-                    ServerAvatar(row.node, 54.dp)
-                    Spacer(Modifier.width(14.dp))
+                    ServerAvatar(row.node, if (narrow) 42.dp else 54.dp)
+                    Spacer(Modifier.width(if (narrow) 10.dp else 14.dp))
                     Column(Modifier.weight(1f)) {
                         EllipsisText(serverName(row.node), White, 15.sp, fontWeight = FontWeight.SemiBold)
                         Text(protocolLabel(row.node) + " server", color = Muted, fontSize = 12.5.sp, maxLines = 1)
                         Spacer(Modifier.height(5.dp))
                         val score = shell.controller.qualityScore(row.node.key())
-                        Row(verticalAlignment = Alignment.CenterVertically) {
+                        val healthView: @Composable () -> Unit = { RouteHealthStatus(if (shell.controller.routeMonitoring()) health else null, shell.routeChecks[row.id], true, now, compact = true) }
+                        if (narrow) {
+                            QualityPill(score, compact = true)
+                            if (shell.connected) { Spacer(Modifier.height(3.dp)); healthView() }
+                        } else Row(verticalAlignment = Alignment.CenterVertically) {
                             QualityPill(score, compact = true)
                             if (shell.connected) {
                                 Spacer(Modifier.width(10.dp))
                                 Divider(Modifier.height(16.dp), vertical = true)
                                 Spacer(Modifier.width(10.dp))
-                                RouteHealthStatus(if (shell.controller.routeMonitoring()) health else null, shell.routeChecks[row.id], true, now, compact = true)
+                                healthView()
                             }
                         }
                     }

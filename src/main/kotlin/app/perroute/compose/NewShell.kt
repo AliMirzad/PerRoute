@@ -184,14 +184,24 @@ internal fun NewEyebrow(vararg parts: String) {
 /** The page heading: eyebrow, a large title and its subtitle, with actions on the right. */
 @Composable
 internal fun NewHeading(eyebrow: List<String>, title: String, subtitle: String, modifier: Modifier = Modifier, actions: (@Composable RowScope.() -> Unit)? = null) {
-    Row(modifier.fillMaxWidth(), verticalAlignment = Alignment.Top) {
-        Column(Modifier.weight(1f)) {
+    val compact = LocalCompact.current
+    val heading: @Composable (Modifier) -> Unit = { m ->
+        Column(m) {
             NewEyebrow(*eyebrow.toTypedArray())
             Spacer(Modifier.height(10.dp))
-            Text(title, color = White, fontSize = 38.sp, lineHeight = 42.sp, fontWeight = FontWeight.ExtraBold, letterSpacing = (-.6).sp, maxLines = 2, overflow = TextOverflow.Ellipsis)
+            Text(title, color = White, fontSize = if (compact) 32.sp else 38.sp, lineHeight = if (compact) 36.sp else 42.sp, fontWeight = FontWeight.ExtraBold, letterSpacing = (-.6).sp, maxLines = 2, overflow = TextOverflow.Ellipsis)
             Spacer(Modifier.height(4.dp))
-            Text(subtitle, color = Muted, fontSize = 18.sp, lineHeight = 23.sp, fontWeight = FontWeight.Medium, maxLines = 2, overflow = TextOverflow.Ellipsis)
+            Text(subtitle, color = Muted, fontSize = if (compact) 16.sp else 18.sp, lineHeight = 23.sp, fontWeight = FontWeight.Medium, maxLines = 2, overflow = TextOverflow.Ellipsis)
         }
+    }
+    if (compact) Column(modifier.fillMaxWidth()) {
+        heading(Modifier.fillMaxWidth())
+        if (actions != null) {
+            Spacer(Modifier.height(14.dp))
+            Row(horizontalArrangement = Arrangement.spacedBy(10.dp), verticalAlignment = Alignment.CenterVertically, content = actions)
+        }
+    } else Row(modifier.fillMaxWidth(), verticalAlignment = Alignment.Top) {
+        heading(Modifier.weight(1f))
         if (actions != null) {
             Spacer(Modifier.width(16.dp))
             Row(horizontalArrangement = Arrangement.spacedBy(10.dp), verticalAlignment = Alignment.CenterVertically, content = actions)
@@ -216,7 +226,10 @@ internal fun NewConnectionChip(shell: Shell) {
 }
 
 /** The width of the charcoal detail panel: about a third of the window, never cramped and never vast. */
-internal fun newPanelWidth(total: Dp): Dp = (total * .34f).coerceIn(290.dp, 470.dp)
+internal fun newPanelWidth(total: Dp): Dp = if (total < 980.dp) 260.dp else (total * .34f).coerceIn(290.dp, 470.dp)
+
+/** True when the working area of a page is narrow (small windows, large scaling): tables merge columns and buttons wrap. */
+internal val LocalCompact = androidx.compose.runtime.compositionLocalOf { false }
 
 /**
  * A page with a bone working area on the left and the charcoal detail panel on the right. [bottomBar] spans the
@@ -232,11 +245,14 @@ internal fun NewSplitPage(
 ) {
     BoxWithConstraints(Modifier.fillMaxSize()) {
         val panelWidth = newPanelWidth(maxWidth + NewRailWidth)
+        val narrow = maxWidth - panelWidth < 620.dp
         Column(Modifier.fillMaxSize()) {
             Row(Modifier.weight(1f).fillMaxWidth()) {
                 Column(Modifier.weight(1f).fillMaxHeight()) {
-                    BoxWithConstraints(Modifier.weight(1f).fillMaxWidth().padding(start = 34.dp, end = 30.dp, top = 30.dp)) { main() }
-                    if (mainBar != null) NewBottomBar(content = mainBar)
+                    BoxWithConstraints(Modifier.weight(1f).fillMaxWidth().padding(start = if (narrow) 22.dp else 34.dp, end = if (narrow) 20.dp else 30.dp, top = if (narrow) 22.dp else 30.dp, bottom = if (mainBar == null) 18.dp else 0.dp)) {
+                        androidx.compose.runtime.CompositionLocalProvider(LocalCompact provides (maxWidth < 600.dp)) { main() }
+                    }
+                    if (mainBar != null) androidx.compose.runtime.CompositionLocalProvider(LocalCompact provides narrow) { NewBottomBar(content = mainBar) }
                 }
                 CharcoalColors {
                     Column(
