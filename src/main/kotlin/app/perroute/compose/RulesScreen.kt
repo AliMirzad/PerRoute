@@ -309,16 +309,24 @@ private fun RuleEditorPanel(editor: RuleEditor, apps: List<String>, locked: Bool
             Spacer(Modifier.height(7.dp))
             FieldLabel("Values")
             TextArea(editor.value, { editor.value = it }, when (editor.type) {
-                RouteRule.MatchType.DOMAIN -> "example.com, full:api.example.com"
+                RouteRule.MatchType.DOMAIN -> "snapp.ir, digikala.com"
                 RouteRule.MatchType.IP -> "203.0.113.0/24, geoip:ir"
                 RouteRule.MatchType.PORT -> "80, 443, 1000-2000"
             }, Modifier.fillMaxWidth().height(54.dp), enabled = !locked)
             Spacer(Modifier.height(4.dp))
             Text(when (editor.type) {
-                RouteRule.MatchType.DOMAIN -> "The domain and its subdomains. Also full:, keyword:, geosite:. Comma-separated."
+                RouteRule.MatchType.DOMAIN -> "Type the site once, for example snapp.ir. It covers www, every subdomain and every page; " +
+                    "https://, paths and ports are removed for you. Use full: for one exact host, or keyword:, geosite:. Separate sites with commas."
                 RouteRule.MatchType.IP -> "An address, a CIDR range or geoip:code. Comma-separated."
                 RouteRule.MatchType.PORT -> "Single ports and ranges. Comma-separated."
             }, color = Muted, fontSize = 9.5.sp, lineHeight = 13.sp)
+            if (editor.type == RouteRule.MatchType.DOMAIN && editor.value.isNotBlank()) {
+                val sites = app.perroute.model.DomainEntries.entries(app.perroute.model.DomainEntries.normalizeList(editor.value))
+                Spacer(Modifier.height(4.dp))
+                Text(if (sites.isEmpty()) "No site recognized yet."
+                    else "Will match: " + sites.joinToString(", ") { if (it.contains(':')) it else "$it and all its subdomains" },
+                    color = if (sites.isEmpty()) Amber else Cyan, fontSize = 9.5.sp, lineHeight = 13.sp)
+            }
             Spacer(Modifier.height(7.dp))
             FieldLabel("Action")
             Segmented(RouteRule.Action.values().toList(), editor.action, ::actionLabel, Modifier.fillMaxWidth(), icon = ::actionIcon, enabled = !locked) { editor.action = it }
