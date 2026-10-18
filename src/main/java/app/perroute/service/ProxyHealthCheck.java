@@ -9,11 +9,17 @@ import java.net.InetSocketAddress;
 import java.net.Socket;
 import java.nio.charset.StandardCharsets;
 
+/**
+ * Checks that a route really reaches the internet. Xray's SOCKS inbound answers a CONNECT with "success" before
+ * it has even dialled the server, so a successful SOCKS reply proves nothing about the server behind it. The
+ * check therefore sends a small plain HTTP request through the tunnel and only passes when an HTTP status line
+ * comes back from the far side.
+ */
 public final class ProxyHealthCheck {
     private static final String[][] TARGETS = {
-            {"cloudflare.com", "443"},
-            {"www.microsoft.com", "443"},
-            {"github.com", "443"}
+            {"cp.cloudflare.com", "/generate_204"},
+            {"www.gstatic.com", "/generate_204"},
+            {"www.msftconnecttest.com", "/connecttest.txt"}
     };
 
     public Result check() {
@@ -26,12 +32,12 @@ public final class ProxyHealthCheck {
         do {
             for (String[] target : TARGETS) {
                 try {
-                    int port = Integer.parseInt(target[1]);
-                    probe(proxyHost, proxyPort, target[0], port);
-                    return new Result(true, "SOCKS tunnel reached " + target[0] + ":" + port);
+                    int status = probe(proxyHost, proxyPort, target[0], target[1]);
+                    return new Result(true, "Tunnel answered from " + target[0] + " (HTTP " + status + ")");
                 } catch (IOException e) {
                     lastError = readableMessage(e);
                 }
+                if (System.nanoTime() >= deadline) break;
             }
             try { Thread.sleep(150); }
             catch (InterruptedException e) {
@@ -42,7 +48,7 @@ public final class ProxyHealthCheck {
         return new Result(false, lastError);
     }
 
-    private void probe(String proxyHost, int proxyPort, String targetHost, int targetPort) throws IOException {
+    private int probe(String proxyHost, int proxyPort, String targetHost, String path) throws IOException {
         try (Socket socket = new Socket()) {
             socket.connect(new InetSocketAddress(proxyHost, proxyPort), 1_500);
             socket.setSoTimeout(4_000);
@@ -60,8 +66,8 @@ public final class ProxyHealthCheck {
             ByteArrayOutputStream request = new ByteArrayOutputStream();
             request.writeBytes(new byte[]{0x05, 0x01, 0x00, 0x03, (byte) domain.length});
             request.writeBytes(domain);
-            request.write((targetPort >>> 8) & 0xff);
-            request.write(targetPort & 0xff);
+            request.write(0);
+            request.write(80);
             output.write(request.toByteArray());
             output.flush();
 
@@ -71,7 +77,40 @@ public final class ProxyHealthCheck {
             }
             skipSocksAddress(input, response[3]);
             readExactly(input, 2);
+
+            String http = "HEAD " + path + " HTTP/1.1\r\nHost: " + targetHost + "\r\nUser-Agent: PerRoute\r\nConnection: close\r\n\r\n";
+            try {
+                output.write(http.getBytes(StandardCharsets.US_ASCII));
+                output.flush();
+            } catch (IOException closed) {
+                throw new IOException(noAnswer(targetHost));
+            }
+            return statusCode(input, targetHost);
         }
+    }
+
+    private static String noAnswer(String host) {
+        return "The tunnel closed without an answer from " + host + "; the server may be unreachable.";
+    }
+
+    /** Reads the HTTP status line. Any status means the request crossed the tunnel and came back. */
+    private static int statusCode(InputStream input, String host) throws IOException {
+        ByteArrayOutputStream line = new ByteArrayOutputStream();
+        int value;
+        try {
+            while ((value = input.read()) >= 0 && value != '\n' && line.size() < 256) line.write(value);
+        } catch (java.net.SocketTimeoutException timeout) {
+            throw new IOException("The server did not answer through the tunnel in time.");
+        } catch (IOException closed) {
+            if (line.size() == 0) throw new IOException(noAnswer(host));
+            throw closed;
+        }
+        String text = line.toString(StandardCharsets.US_ASCII).trim();
+        if (text.isEmpty()) throw new IOException(noAnswer(host));
+        String[] parts = text.split(" ");
+        if (parts.length < 2 || !parts[0].startsWith("HTTP/")) throw new IOException("Unexpected answer through the tunnel from " + host + ".");
+        try { return Integer.parseInt(parts[1]); }
+        catch (NumberFormatException invalid) { throw new IOException("Unexpected answer through the tunnel from " + host + "."); }
     }
 
     private static void skipSocksAddress(InputStream input, byte addressType) throws IOException {

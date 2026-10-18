@@ -19,11 +19,16 @@ public final class AppState {
     private final List<ConnectionProfile> profiles = new ArrayList<>();
     private final Map<String, String> appRoutes = new LinkedHashMap<>();
     private final Map<String, String> appRouteLabels = new LinkedHashMap<>();
+    private final Set<String> autoApps = new LinkedHashSet<>();
+    private final Map<String, String> autoPools = new LinkedHashMap<>();
+    private final Map<String, app.perroute.routing.AutoSelection> autoSelections = new LinkedHashMap<>();
+    private final Map<String, BandwidthPolicy> bandwidthPolicies = new LinkedHashMap<>();
     private String activeProfileId = "";
     private ConnectionMode connectionMode = ConnectionMode.SYSTEM_PROXY;
     private RoutingMode routingMode = RoutingMode.INCLUDE_SELECTED;
     private String selectedNodeKey = "";
     private boolean advancedRouting;
+    private boolean migratedFromV2;
 
     public List<ProxyNode> nodes() { return nodes; }
     public List<String> appPaths() { return appPaths; }
@@ -48,4 +53,40 @@ public final class AppState {
     public void setSelectedNodeKey(String value) { selectedNodeKey = value == null ? "" : value; }
     public boolean advancedRouting() { return advancedRouting; }
     public void setAdvancedRouting(boolean value) { advancedRouting = value; }
+    /** Normalized paths of the applications in Auto mode. Their Manual choice, if any, stays in {@link #appRoutes()}. */
+    public Set<String> autoApps() { return autoApps; }
+    /** Which servers Auto may pick for an application (normalized path to {@code AutoCandidatePool} text). */
+    public Map<String, String> autoPools() { return autoPools; }
+    /** The server Auto chose last for each application, so a working route survives a restart. */
+    public Map<String, app.perroute.routing.AutoSelection> autoSelections() { return autoSelections; }
+    /** Download and upload limits by normalized application path. Absent means unlimited. */
+    public Map<String, BandwidthPolicy> bandwidthPolicies() { return bandwidthPolicies; }
+    /** True when this state was written by PerRoute 2 or earlier: new automatic features then start switched off. */
+    public boolean migratedFromV2() { return migratedFromV2; }
+    public void setMigratedFromV2(boolean value) { migratedFromV2 = value; }
+
+    /** Replaces everything in this state with a copy of {@code other}. Used to commit a restored backup in one step. */
+    public void replaceWith(AppState other) {
+        nodes.clear(); nodes.addAll(other.nodes);
+        appPaths.clear(); appPaths.addAll(other.appPaths);
+        subscriptionUrls.clear(); subscriptionUrls.addAll(other.subscriptionUrls);
+        nodeSources.clear(); nodeSources.putAll(other.nodeSources);
+        favoriteNodeKeys.clear(); favoriteNodeKeys.addAll(other.favoriteNodeKeys);
+        hiddenNodeKeys.clear(); hiddenNodeKeys.addAll(other.hiddenNodeKeys);
+        nodeTags.clear(); nodeTags.putAll(other.nodeTags);
+        routeRules.clear(); routeRules.addAll(other.routeRules);
+        profiles.clear(); profiles.addAll(other.profiles);
+        appRoutes.clear(); appRoutes.putAll(other.appRoutes);
+        appRouteLabels.clear(); appRouteLabels.putAll(other.appRouteLabels);
+        autoApps.clear(); autoApps.addAll(other.autoApps);
+        autoPools.clear(); autoPools.putAll(other.autoPools);
+        autoSelections.clear(); autoSelections.putAll(other.autoSelections);
+        bandwidthPolicies.clear(); bandwidthPolicies.putAll(other.bandwidthPolicies);
+        activeProfileId = other.activeProfileId;
+        connectionMode = other.connectionMode;
+        routingMode = other.routingMode;
+        selectedNodeKey = other.selectedNodeKey;
+        advancedRouting = other.advancedRouting;
+        migratedFromV2 = other.migratedFromV2;
+    }
 }

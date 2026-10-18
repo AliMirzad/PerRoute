@@ -79,13 +79,27 @@ public final class AllTests {
         run("Embedded profile with custom servers", AllTests::testProfileWithCustomServers);
         run("Embedded profile as a custom server", AllTests::testEmbeddedProfileAsCustomServer);
         run("Traffic report", AllTests::testTrafficReport);
+        V3DomainTests.runAll();
         ControllerTests.runAll();
-        System.out.println("All tests passed (" + (assertions + ControllerTests.assertions()) + " assertions)");
+        V3ControllerTests.runAll();
+        RealCoreIntegrationTests.runAll();
+        System.out.println("All tests passed (" + (assertions + V3DomainTests.assertions() + ControllerTests.assertions() + V3ControllerTests.assertions() + RealCoreIntegrationTests.assertions()) + " assertions)");
         System.exit(0);
     }
 
     @FunctionalInterface
     private interface CheckedTest { void run() throws Exception; }
+
+    /** Windows can keep a just-deleted file pending for a moment (for example while it is scanned), so retry. */
+    private static void removeTemporaryDirectory(Path directory) throws Exception {
+        for (int attempt = 1; ; attempt++) {
+            try { V3DomainTests.deleteTree(directory); return; }
+            catch (java.io.IOException busy) {
+                if (attempt >= 5) throw busy;
+                Thread.sleep(100L * attempt);
+            }
+        }
+    }
 
     private static void run(String name, CheckedTest test) throws Exception {
         System.out.println("[test] " + name);
@@ -389,8 +403,7 @@ public final class AllTests {
         restored.clear();
         equal(0L, restored.snapshot().todayDownloadBytes());
         restored.close();
-        Files.deleteIfExists(file);
-        Files.deleteIfExists(file.getParent());
+        removeTemporaryDirectory(file.getParent());
     }
 
     private static void testQrImport() throws Exception {
@@ -420,8 +433,7 @@ public final class AllTests {
         equal(RouteRule.Action.DIRECT, restored.routeRules().get(0).action());
         equal("Gaming", restored.profiles().get(0).name());
         equal("saved-profile", restored.activeProfileId());
-        try (var files = Files.list(directory)) { for (Path file : files.toList()) Files.deleteIfExists(file); }
-        Files.deleteIfExists(directory);
+        removeTemporaryDirectory(directory);
     }
 
     private static void testProxyHealthCheck() throws Exception {
@@ -436,13 +448,40 @@ public final class AllTests {
                     input.readNBytes(domainLength + 2);
                     client.getOutputStream().write(new byte[]{0x05, 0x00, 0x00, 0x01, 127, 0, 0, 1, 0, 80});
                     client.getOutputStream().flush();
+                    byte[] head = new byte[512];
+                    int read = input.read(head);
+                    check(read > 0 && new String(head, 0, read, StandardCharsets.US_ASCII).startsWith("HEAD /"), "The check must send a request through the tunnel");
+                    client.getOutputStream().write("HTTP/1.1 204 No Content\r\n\r\n".getBytes(StandardCharsets.US_ASCII));
+                    client.getOutputStream().flush();
                 } catch (Exception e) {
                     throw new RuntimeException(e);
                 }
             });
             ProxyHealthCheck.Result result = new ProxyHealthCheck().check("127.0.0.1", server.getLocalPort());
             check(result.success(), "Health check must verify an outbound SOCKS tunnel");
-            check(result.detail().startsWith("SOCKS tunnel reached"), "Health check must describe the tunnel result");
+            check(result.detail().startsWith("Tunnel answered from") && result.detail().contains("204"), "Health check must describe the tunnel result: " + result.detail());
+            responder.join(2_000);
+        }
+        // Xray answers a CONNECT with success before dialling the server. A tunnel to a dead server therefore
+        // accepts the SOCKS request and then closes; that must count as a failure.
+        try (ServerSocket server = new ServerSocket(0, 50, InetAddress.getLoopbackAddress())) {
+            Thread responder = Thread.ofVirtual().start(() -> {
+                while (!server.isClosed()) {
+                    try (Socket client = server.accept()) {
+                        InputStream input = client.getInputStream();
+                        input.readNBytes(3);
+                        client.getOutputStream().write(new byte[]{0x05, 0x00});
+                        byte[] request = input.readNBytes(5);
+                        input.readNBytes((request[4] & 0xff) + 2);
+                        client.getOutputStream().write(new byte[]{0x05, 0x00, 0x00, 0x01, 127, 0, 0, 1, 0, 80});
+                        client.getOutputStream().flush();
+                    } catch (Exception ignored) { }
+                }
+            });
+            ProxyHealthCheck.Result dead = new ProxyHealthCheck().check("127.0.0.1", server.getLocalPort());
+            check(!dead.success(), "A SOCKS success without an answer from the far side is not a working tunnel");
+            check(dead.detail().contains("without an answer"), dead.detail());
+            server.close();
             responder.join(2_000);
         }
     }
@@ -625,8 +664,7 @@ public final class AllTests {
         store.save(restored);
         AppState again = store.load();
         check(!again.advancedRouting(), "Re-saving a migrated state must keep Advanced routing off");
-        try (var files = Files.list(directory)) { for (Path file : files.toList()) Files.deleteIfExists(file); }
-        Files.deleteIfExists(directory);
+        removeTemporaryDirectory(directory);
     }
 
     private static void testAdvancedRoutingPersistence() throws Exception {
@@ -657,8 +695,7 @@ public final class AllTests {
         AppState disabled = store.load();
         check(!disabled.advancedRouting(), "Advanced routing must be saved as off");
         equal(Map.of("c:\\apps\\chrome.exe", "custom"), disabled.appRoutes());
-        try (var files = Files.list(directory)) { for (Path file : files.toList()) Files.deleteIfExists(file); }
-        Files.deleteIfExists(directory);
+        removeTemporaryDirectory(directory);
     }
 
     private static void testRoutePlanner() {
@@ -976,8 +1013,7 @@ public final class AllTests {
         equal(2, one.monthApplications().size());
         equal(0L, store.report("C:\\Apps\\Unknown.exe").monthDownloadBytes());
         store.close();
-        Files.deleteIfExists(file);
-        Files.deleteIfExists(file.getParent());
+        removeTemporaryDirectory(file.getParent());
     }
 
     private static void equal(Object expected, Object actual) {

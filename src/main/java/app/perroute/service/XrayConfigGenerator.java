@@ -15,9 +15,40 @@ import java.util.Locale;
 import java.util.Map;
 
 public final class XrayConfigGenerator {
-    public static final int STATS_API_PORT = 17900;
-    public static final int PER_APP_PORT_BASE = 18100;
-    public static final int ROUTE_CHECK_PORT_BASE = 18600;
+    public static final int STATS_API_PORT = 17900 + PortOffset.VALUE;
+    public static final int PER_APP_PORT_BASE = 18100 + PortOffset.VALUE;
+    public static final int ROUTE_CHECK_PORT_BASE = 18600 + PortOffset.VALUE;
+    /**
+     * With the traffic gateway, the per-app driver still uses {@link #PER_APP_PORT_BASE} (the gateway listens
+     * there) and Xray's per-app inbounds move to this base.
+     */
+    public static final int GATEWAY_UPSTREAM_PORT_BASE = 19100 + PortOffset.VALUE;
+    /** Tag of the main server's outbound for plain (non-profile) main servers. */
+    public static final String MAIN_OUTBOUND_TAG = "proxy";
+
+    private final int appPortBase;
+    private final boolean runtimeControl;
+
+    public XrayConfigGenerator() { this(PER_APP_PORT_BASE, false); }
+
+    public XrayConfigGenerator(int appPortBase) { this(appPortBase, false); }
+
+    /**
+     * @param appPortBase    first loopback port of the per-app inbounds: {@link #PER_APP_PORT_BASE} or {@link #GATEWAY_UPSTREAM_PORT_BASE}
+     * @param runtimeControl also enable the core's handler and routing API, which in-place route changes need
+     */
+    public XrayConfigGenerator(int appPortBase, boolean runtimeControl) {
+        if (appPortBase != PER_APP_PORT_BASE && appPortBase != GATEWAY_UPSTREAM_PORT_BASE) {
+            throw new IllegalArgumentException("Unsupported per-app port base " + appPortBase);
+        }
+        this.appPortBase = appPortBase;
+        this.runtimeControl = runtimeControl;
+    }
+
+    public static int gatewayUpstreamPort(int index) {
+        if (index < 0 || index >= 500) throw new IllegalArgumentException("Too many selected applications");
+        return GATEWAY_UPSTREAM_PORT_BASE + index;
+    }
 
     public String generateApplicationProxy(ProxyNode node) {
         return generateApplicationProxy(node, List.of());
@@ -60,7 +91,7 @@ public final class XrayConfigGenerator {
         rules.addAll(customProfileRules(customs, groups));
         rules.addAll(customRules(apps, routeRules, "direct", groups, "block"));
         rules.addAll(applicationRules(groups));
-        enableStats(root, inbounds, rules);
+        enableStats(root, inbounds, rules, runtimeControl);
         Map<String, Object> routing = map();
         routing.put("domainStrategy", "IPIfNonMatch");
         routing.put("rules", rules);
@@ -73,6 +104,75 @@ public final class XrayConfigGenerator {
     public static List<String> customRouteKeys(ProxyNode main, List<String> applicationPaths, List<ProxyNode> applicationNodes) {
         List<String> apps = applicationPaths == null ? List.of() : applicationPaths;
         return RouteLayout.of(main, apps, applicationNodes).customs().stream().map(ProxyNode::key).toList();
+    }
+
+    /** The rule tag that sends the applications of custom route {@code index} to their server. */
+    public static String applicationRouteRuleTag(int index) { return index < 0 ? "perroute-app-proxy" : "perroute-app-route-" + index; }
+
+    /**
+     * The outbound each route's application rule points to in a generated config, by rule tag
+     * ({@link #applicationRouteRuleTag}). Routes that point to a balancer (embedded profiles) are left out:
+     * only a single plain outbound can be replaced while the core runs.
+     */
+    @SuppressWarnings("unchecked")
+    public static Map<String, String> applicationRouteTargets(String config) {
+        Map<String, String> targets = new LinkedHashMap<>();
+        Map<String, Object> root = Json.object(config);
+        if (!(root.get("routing") instanceof Map<?, ?> routing) || !(routing.get("rules") instanceof List<?> rules)) return targets;
+        for (Object raw : rules) {
+            if (!(raw instanceof Map<?, ?> rule)) continue;
+            String tag = objectString(rule.get("ruleTag"));
+            String outbound = objectString(rule.get("outboundTag"));
+            if ((tag.equals("perroute-app-proxy") || tag.startsWith("perroute-app-route-")) && !outbound.isBlank()) targets.put(tag, outbound);
+        }
+        return targets;
+    }
+
+    /**
+     * What a running core needs to move one route to another outbound without a restart: the new outbound
+     * (for {@code xray api ado}) and the complete new rule list (for {@code xray api adrules}, which swaps all
+     * rules in one step). Both are taken from {@code config}, a complete generated config for the new
+     * assignment in which the route's outbound has been renamed with {@link #renameOutbound}.
+     */
+    public record RuntimeChange(String outbounds, String routing) {}
+
+    /**
+     * Builds the runtime change for outbound {@code tag} of {@code config}, or returns null when the change
+     * cannot be applied to a running core: the outbound is missing, is not a plain proxy outbound, or the
+     * config uses balancers (which the rule swap would have to rebuild as well).
+     */
+    @SuppressWarnings("unchecked")
+    public static RuntimeChange runtimeChange(String config, String tag) {
+        Map<String, Object> root = Json.object(config);
+        if (!(root.get("routing") instanceof Map<?, ?> routing) || !(routing.get("rules") instanceof List<?> rules)) return null;
+        if (routing.get("balancers") instanceof List<?> balancers && !balancers.isEmpty()) return null;
+        if (!(root.get("outbounds") instanceof List<?> outbounds)) return null;
+        Map<String, Object> outbound = null;
+        for (Object raw : outbounds) {
+            if (raw instanceof Map<?, ?> map && tag.equals(objectString(map.get("tag")))) outbound = (Map<String, Object>) map;
+        }
+        if (outbound == null) return null;
+        String protocol = objectString(outbound.get("protocol")).toLowerCase(Locale.ROOT);
+        if (!List.of("vless", "vmess", "trojan", "shadowsocks").contains(protocol) || outbound.containsKey("proxySettings")) return null;
+        return new RuntimeChange(Json.stringify(Map.of("outbounds", List.of(outbound))) + System.lineSeparator(),
+                Json.stringify(Map.of("routing", Map.of("rules", rules))) + System.lineSeparator());
+    }
+
+    /** Renames one outbound and every rule that sends traffic to it. */
+    @SuppressWarnings("unchecked")
+    public static String renameOutbound(String config, String from, String to) {
+        Map<String, Object> root = Json.object(config);
+        if (root.get("outbounds") instanceof List<?> outbounds) {
+            for (Object raw : outbounds) {
+                if (raw instanceof Map<?, ?> map && from.equals(objectString(map.get("tag")))) ((Map<String, Object>) map).put("tag", to);
+            }
+        }
+        if (root.get("routing") instanceof Map<?, ?> routing && routing.get("rules") instanceof List<?> rules) {
+            for (Object raw : rules) {
+                if (raw instanceof Map<?, ?> rule && from.equals(objectString(rule.get("outboundTag")))) ((Map<String, Object>) rule).put("outboundTag", to);
+            }
+        }
+        return Json.stringify(root) + System.lineSeparator();
     }
 
     @SuppressWarnings("unchecked")
@@ -133,7 +233,7 @@ public final class XrayConfigGenerator {
         for (int index = 0; index < applicationPaths.size(); index++) {
             Map<String, Object> app = map();
             app.put("listen", "127.0.0.1");
-            app.put("port", perAppPort(index));
+            app.put("port", appPortBase == PER_APP_PORT_BASE ? perAppPort(index) : gatewayUpstreamPort(index));
             app.put("protocol", "socks");
             app.put("tag", perAppTag(index));
             app.put("settings", Map.of("udp", true));
@@ -411,7 +511,7 @@ public final class XrayConfigGenerator {
         return rules;
     }
 
-    private static void enableStats(Map<String, Object> root, List<Object> inbounds, List<Object> rules) {
+    private static void enableStats(Map<String, Object> root, List<Object> inbounds, List<Object> rules, boolean runtimeControl) {
         Map<String, Object> apiInbound = map();
         apiInbound.put("listen", "127.0.0.1");
         apiInbound.put("port", STATS_API_PORT);
@@ -421,7 +521,11 @@ public final class XrayConfigGenerator {
         inbounds.add(apiInbound);
         rules.add(0, Map.of("type", "field", "inboundTag", List.of("perroute-api"),
                 "outboundTag", "api", "ruleTag", "perroute-api-route"));
-        root.put("api", Map.of("tag", "api", "services", List.of("StatsService")));
+        // HandlerService and RoutingService let one route's outbound be replaced while the core keeps running,
+        // so a change to one route does not restart, and interrupt, every other route. They can change routing,
+        // and Xray's API has no authentication, so they are only enabled when a feature needs them.
+        root.put("api", Map.of("tag", "api", "services", runtimeControl
+                ? List.of("StatsService", "HandlerService", "RoutingService") : List.of("StatsService")));
         root.put("stats", Map.of());
         root.put("policy", Map.of("system", Map.of(
                 "statsInboundUplink", true,
@@ -582,7 +686,7 @@ public final class XrayConfigGenerator {
         rules.addAll(customProfileRules(customs, groups));
         rules.addAll(customRules(applicationPaths, routeRules, directTag, groups, blockTag));
         rules.addAll(applicationRules(groups));
-        enableStats(root, inbounds, rules);
+        enableStats(root, inbounds, rules, runtimeControl);
         routing.put("domainStrategy", routing.getOrDefault("domainStrategy", "IPIfNonMatch"));
         routing.put("rules", rules);
         mergeCustomSections(root, routing, customs);

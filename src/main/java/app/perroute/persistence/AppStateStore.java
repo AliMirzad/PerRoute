@@ -8,6 +8,9 @@ import app.perroute.model.ProxyNode;
 import app.perroute.model.RoutingMode;
 import app.perroute.model.RouteRule;
 import app.perroute.model.ConnectionProfile;
+import app.perroute.model.BandwidthPolicy;
+import app.perroute.routing.AutoCandidatePool;
+import app.perroute.routing.AutoSelection;
 import app.perroute.parser.ShareLinkParser;
 import app.perroute.util.Json;
 
@@ -33,12 +36,31 @@ public final class AppStateStore {
         this.protector = new StateProtector(file.resolveSibling(file.getFileName() + ".key"));
     }
 
+    /** The state format written by this version. States without a version were written by PerRoute 2 or earlier. */
+    public static final int STATE_VERSION = 3;
+
     public AppState load() throws IOException {
-        AppState state = new AppState();
-        if (!Files.isRegularFile(file)) return state;
+        if (!Files.isRegularFile(file)) return new AppState();
+        return parse(loadProperties());
+    }
+
+    /** The decrypted key-value pairs of the file, including keys this version does not know. */
+    public Properties loadProperties() throws IOException {
         byte[] plain = protector.unprotect(Files.readAllBytes(file));
         Properties properties = new Properties();
         properties.load(new ByteArrayInputStream(plain));
+        return properties;
+    }
+
+    /** Reads a state from the bytes {@link #serialize} produced; used to copy a state without sharing anything. */
+    public AppState parse(byte[] plain) throws IOException {
+        Properties properties = new Properties();
+        properties.load(new ByteArrayInputStream(plain));
+        return parse(properties);
+    }
+
+    public AppState parse(Properties properties) {
+        AppState state = new AppState();
         int nodeCount = integer(properties, "node.count");
         for (int i = 0; i < nodeCount; i++) {
             String json = properties.getProperty("node." + i + ".json", "");
@@ -99,6 +121,34 @@ public final class AppStateStore {
             String label = properties.getProperty("route." + i + ".label", "");
             if (!label.isBlank()) state.appRouteLabels().put(nodeKey, label);
         }
+        // Everything below was added in version 3. A state without these keys keeps every application in
+        // Main or Manual mode and unlimited, exactly as version 2 behaved.
+        String version = properties.getProperty("state.version", "");
+        state.setMigratedFromV2(version.isBlank() || Boolean.parseBoolean(properties.getProperty("state.migratedFromV2", "false")));
+        int autoCount = integer(properties, "auto.count");
+        for (int i = 0; i < autoCount; i++) {
+            String app = AppRoutes.normalize(properties.getProperty("auto." + i + ".app", ""));
+            if (app.isBlank()) continue;
+            state.autoApps().add(app);
+            String pool = properties.getProperty("auto." + i + ".pool", "");
+            if (!pool.isBlank()) state.autoPools().put(app, AutoCandidatePool.decode(pool).encode());
+        }
+        int selectionCount = integer(properties, "autosel.count");
+        for (int i = 0; i < selectionCount; i++) {
+            String app = AppRoutes.normalize(properties.getProperty("autosel." + i + ".app", ""));
+            String nodeKey = properties.getProperty("autosel." + i + ".node", "");
+            if (app.isBlank() || nodeKey.isBlank()) continue;
+            long changed;
+            try { changed = Long.parseLong(properties.getProperty("autosel." + i + ".at", "0")); }
+            catch (NumberFormatException ignored) { changed = 0L; }
+            state.autoSelections().put(app, new AutoSelection(nodeKey, changed));
+        }
+        int limitCount = integer(properties, "bandwidth.count");
+        for (int i = 0; i < limitCount; i++) {
+            String app = AppRoutes.normalize(properties.getProperty("bandwidth." + i + ".app", ""));
+            BandwidthPolicy policy = BandwidthPolicy.decode(properties.getProperty("bandwidth." + i + ".limit", ""));
+            if (!app.isBlank() && !policy.unlimited()) state.bandwidthPolicies().put(app, policy);
+        }
         return state;
     }
 
@@ -152,6 +202,31 @@ public final class AppStateStore {
             if (!label.isBlank()) properties.setProperty("route." + routeIndex + ".label", label);
             routeIndex++;
         }
+        properties.setProperty("state.version", String.valueOf(STATE_VERSION));
+        properties.setProperty("state.migratedFromV2", String.valueOf(state.migratedFromV2()));
+        properties.setProperty("auto.count", String.valueOf(state.autoApps().size()));
+        int autoIndex = 0;
+        for (String app : state.autoApps()) {
+            properties.setProperty("auto." + autoIndex + ".app", app);
+            String pool = state.autoPools().getOrDefault(app, "");
+            if (!pool.isBlank()) properties.setProperty("auto." + autoIndex + ".pool", pool);
+            autoIndex++;
+        }
+        properties.setProperty("autosel.count", String.valueOf(state.autoSelections().size()));
+        int selectionIndex = 0;
+        for (var entry : state.autoSelections().entrySet()) {
+            properties.setProperty("autosel." + selectionIndex + ".app", entry.getKey());
+            properties.setProperty("autosel." + selectionIndex + ".node", entry.getValue().nodeKey());
+            properties.setProperty("autosel." + selectionIndex + ".at", String.valueOf(entry.getValue().changedAt()));
+            selectionIndex++;
+        }
+        properties.setProperty("bandwidth.count", String.valueOf(state.bandwidthPolicies().size()));
+        int limitIndex = 0;
+        for (var entry : state.bandwidthPolicies().entrySet()) {
+            properties.setProperty("bandwidth." + limitIndex + ".app", entry.getKey());
+            properties.setProperty("bandwidth." + limitIndex + ".limit", entry.getValue().encode());
+            limitIndex++;
+        }
 
         ByteArrayOutputStream out = new ByteArrayOutputStream();
         properties.store(out, "PerRoute encrypted state");
@@ -175,7 +250,7 @@ public final class AppStateStore {
         catch (NumberFormatException ignored) { return 0; }
     }
 
-    private static String encodeNode(ProxyNode node) {
+    public static String encodeNode(ProxyNode node) {
         Map<String, Object> data = new LinkedHashMap<>();
         data.put("key", node.key());
         data.put("name", node.name());
@@ -189,7 +264,7 @@ public final class AppStateStore {
     }
 
     @SuppressWarnings("unchecked")
-    private static ProxyNode decodeNode(String json) {
+    public static ProxyNode decodeNode(String json) {
         Map<String, Object> data = Json.object(json);
         Map<String, String> options = new LinkedHashMap<>();
         Object rawOptions = data.get("options");
@@ -212,7 +287,7 @@ public final class AppStateStore {
         return java.util.Arrays.stream(value.split(",")).map(String::trim).filter(item -> !item.isBlank()).toList();
     }
 
-    private static String encodeRule(RouteRule rule) {
+    public static String encodeRule(RouteRule rule) {
         Map<String, Object> data = new LinkedHashMap<>();
         data.put("id", rule.id()); data.put("name", rule.name());
         data.put("applicationPath", rule.applicationPath()); data.put("matchType", rule.matchType().name());
@@ -220,25 +295,26 @@ public final class AppStateStore {
         return Json.stringify(data);
     }
 
-    private static RouteRule decodeRule(String json) {
+    public static RouteRule decodeRule(String json) {
         Map<String, Object> data = Json.object(json);
         return new RouteRule(string(data, "id"), string(data, "name"), string(data, "applicationPath"),
                 RouteRule.MatchType.valueOf(string(data, "matchType")), string(data, "value"),
                 RouteRule.Action.valueOf(string(data, "action")), Boolean.TRUE.equals(data.get("enabled")));
     }
 
-    private static String encodeProfile(ConnectionProfile profile) {
+    public static String encodeProfile(ConnectionProfile profile) {
         Map<String, Object> data = new LinkedHashMap<>();
         data.put("id", profile.id()); data.put("name", profile.name()); data.put("applicationPaths", profile.applicationPaths());
         data.put("nodeKey", profile.nodeKey()); data.put("mode", profile.mode().name());
         data.put("rules", profile.rules().stream().map(AppStateStore::encodeRule).map(Json::object).toList());
         data.put("advancedRouting", profile.advancedRouting());
         data.put("appRoutes", new LinkedHashMap<>(profile.appRoutes()));
+        data.put("autoApps", new ArrayList<>(profile.autoApps()));
         return Json.stringify(data);
     }
 
     @SuppressWarnings("unchecked")
-    private static ConnectionProfile decodeProfile(String json) {
+    public static ConnectionProfile decodeProfile(String json) {
         Map<String, Object> data = Json.object(json);
         List<String> apps = data.get("applicationPaths") instanceof List<?> list
                 ? list.stream().map(String::valueOf).toList() : List.of();
@@ -250,8 +326,10 @@ public final class AppStateStore {
         if (data.get("appRoutes") instanceof Map<?, ?> map) {
             map.forEach((app, nodeKey) -> { if (nodeKey != null) routes.put(String.valueOf(app), String.valueOf(nodeKey)); });
         }
+        java.util.Set<String> auto = new java.util.LinkedHashSet<>();
+        if (data.get("autoApps") instanceof List<?> autoList) autoList.forEach(item -> { if (item != null) auto.add(String.valueOf(item)); });
         return new ConnectionProfile(string(data, "id"), string(data, "name"), apps, string(data, "nodeKey"),
                 ConnectionMode.valueOf(string(data, "mode")), rules,
-                Boolean.TRUE.equals(data.get("advancedRouting")), routes);
+                Boolean.TRUE.equals(data.get("advancedRouting")), routes, auto);
     }
 }
