@@ -4,6 +4,7 @@ import app.perroute.compose.ActionResult;
 import app.perroute.compose.ConnectionBackend;
 import app.perroute.compose.ConnectionPhase;
 import app.perroute.compose.ImportPreview;
+import app.perroute.compose.IsolatedTunnel;
 import app.perroute.compose.PerRouteController;
 import app.perroute.compose.RouteCheckState;
 import app.perroute.model.AppRoutes;
@@ -618,6 +619,29 @@ final class ControllerTests {
         @Override public Map<String, app.perroute.gateway.AppGateway.Counters> gatewayCounters() { return Map.copyOf(gatewayCounters); }
         @Override public boolean gatewayRunning() { return gatewayRunning; }
         @Override public void stopPerAppSidecar() { machineCalls.add("stopPerAppSidecar"); }
+
+        volatile app.perroute.service.ResourceConditions.Snapshot resources = app.perroute.service.ResourceConditions.Snapshot.NORMAL;
+        final Map<String, String> shortcuts = new java.util.concurrent.ConcurrentHashMap<>();
+        volatile String category = "Private";
+        volatile boolean firewallReady;
+        volatile int firewallAllowed;
+        volatile String isolatedConfig = "";
+        final List<FakeTunnel> isolated = new java.util.concurrent.CopyOnWriteArrayList<>();
+
+        @Override public app.perroute.service.ResourceConditions.Snapshot resourceConditions() { return resources; }
+        @Override public java.nio.file.Path resolveShortcut(java.nio.file.Path shortcut) {
+            String target = shortcuts.get(shortcut.toString().toLowerCase());
+            return target == null ? null : java.nio.file.Path.of(target);
+        }
+        @Override public String networkCategory(String address) { return category; }
+        @Override public boolean bridgeFirewallReady(java.nio.file.Path core, int firstPort, int lastPort) { return firewallReady; }
+        @Override public void allowBridgeFirewall(java.nio.file.Path core, int firstPort, int lastPort) { firewallAllowed++; firewallReady = true; }
+        @Override public IsolatedTunnel startIsolatedCore(String config, int socksPort, kotlin.jvm.functions.Function1<? super String, kotlin.Unit> onLine) {
+            isolatedConfig = config;
+            FakeTunnel tunnel = new FakeTunnel(socksPort, onLine);
+            isolated.add(tunnel);
+            return tunnel;
+        }
         @Override public void applySystemProxy() { machineCalls.add("applySystemProxy"); }
         @Override public void restoreSystemProxy() { machineCalls.add("restoreSystemProxy"); }
 
@@ -665,6 +689,21 @@ final class ControllerTests {
         @Override public List<app.perroute.service.InstalledApplicationDiscovery.InstalledApplication> installedApplications() { return installed; }
         @Override public List<app.perroute.service.ProcessDiscovery.RunningApplication> runningApplications() { return List.of(); }
         final List<Integer> lookups = new java.util.concurrent.CopyOnWriteArrayList<>();
+    }
+
+    static final class FakeTunnel implements IsolatedTunnel {
+        private final int port;
+        private final kotlin.jvm.functions.Function1<? super String, kotlin.Unit> onLine;
+        volatile boolean alive = true;
+
+        FakeTunnel(int port, kotlin.jvm.functions.Function1<? super String, kotlin.Unit> onLine) { this.port = port; this.onLine = onLine; }
+
+        void line(String text) { onLine.invoke(text); }
+
+        @Override public int socksPort() { return port; }
+        @Override public boolean alive() { return alive; }
+        @Override public List<String> lastLines() { return List.of(); }
+        @Override public void close() { alive = false; }
     }
 
     static final class MemoryPreferences extends AbstractPreferences {

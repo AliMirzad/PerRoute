@@ -32,6 +32,7 @@ import androidx.compose.material.icons.rounded.Folder
 import androidx.compose.material.icons.rounded.GridView
 import androidx.compose.material.icons.rounded.HealthAndSafety
 import androidx.compose.material.icons.rounded.Web
+import androidx.compose.material.icons.rounded.Devices
 import androidx.compose.material.icons.rounded.Lock
 import androidx.compose.material.icons.rounded.MonitorHeart
 import androidx.compose.material.icons.rounded.Settings
@@ -74,6 +75,7 @@ internal fun NewWindow(shell: Shell, chrome: WindowChrome) {
                     Tab.Rules -> NewRulesPage(shell)
                     Tab.Profiles -> NewProfilesPage(shell)
                     Tab.Workspaces -> WorkspacesPage(shell)
+                    Tab.Bridge -> BridgePage(shell)
                     Tab.Diagnostics -> NewDiagnosticsPage(shell)
                     Tab.Health -> HealthPage(shell)
                     Tab.Traffic -> NewTrafficPage(shell)
@@ -104,7 +106,7 @@ private fun NewTitleBar(chrome: WindowChrome) {
     }
 }
 
-private val ToolTabs = listOf(Tab.Rules, Tab.Profiles, Tab.Workspaces, Tab.Diagnostics, Tab.Health, Tab.Traffic)
+private val ToolTabs = listOf(Tab.Rules, Tab.Profiles, Tab.Workspaces, Tab.Bridge, Tab.Diagnostics, Tab.Health, Tab.Traffic)
 
 @Composable
 private fun NewRail(shell: Shell) {
@@ -128,12 +130,13 @@ private fun NewRail(shell: Shell) {
     }
 }
 
-private fun toolsLabel(shell: Shell): String = if (shell.tab.isTool) "Tools, now showing ${shell.tab.label}" else "Tools: Rules, Profiles, Workspaces, Diagnostics, Health and Traffic"
+private fun toolsLabel(shell: Shell): String = if (shell.tab.isTool) "Tools, now showing ${shell.tab.label}" else "Tools: Rules, Profiles, Workspaces, LAN Bridge, Diagnostics, Health and Traffic"
 
 internal fun toolIcon(tab: Tab): ImageVector = when (tab) {
     Tab.Rules -> Icons.Rounded.Description
     Tab.Profiles -> Icons.Rounded.Folder
     Tab.Workspaces -> Icons.Rounded.Web
+    Tab.Bridge -> Icons.Rounded.Devices
     Tab.Diagnostics -> Icons.Rounded.MonitorHeart
     Tab.Health -> Icons.Rounded.HealthAndSafety
     Tab.Traffic -> Icons.Rounded.BarChart
@@ -144,6 +147,7 @@ private fun toolDetail(tab: Tab): String = when (tab) {
     Tab.Rules -> "Which connections use a proxy"
     Tab.Profiles -> "Presets, saved setups and recipes"
     Tab.Workspaces -> "Browser profiles with their own route"
+    Tab.Bridge -> "Share this connection with your phone"
     Tab.Diagnostics -> "Route checks, inspector, rule tester"
     Tab.Health -> "Connection doctor and safety checks"
     Tab.Traffic -> "Usage, history and limits"

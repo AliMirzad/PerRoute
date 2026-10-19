@@ -12,6 +12,7 @@ import java.util.ArrayDeque;
 import java.util.List;
 import java.util.UUID;
 import java.util.concurrent.TimeUnit;
+import java.util.function.Consumer;
 
 public final class IsolatedCore implements AutoCloseable {
     private static final int LOG_LINES = 40;
@@ -19,11 +20,13 @@ public final class IsolatedCore implements AutoCloseable {
     private final Path config;
     private final int socksPort;
     private final ArrayDeque<String> lastLines = new ArrayDeque<>();
+    private final Consumer<String> onLine;
 
-    private IsolatedCore(Process process, Path config, int socksPort) {
+    private IsolatedCore(Process process, Path config, int socksPort, Consumer<String> onLine) {
         this.process = process;
         this.config = config;
         this.socksPort = socksPort;
+        this.onLine = onLine;
         Thread.ofVirtual().name("perroute-isolated-core-log").start(this::readOutput);
     }
 
@@ -34,6 +37,10 @@ public final class IsolatedCore implements AutoCloseable {
     }
 
     public static IsolatedCore start(String configJson, int socksPort) throws IOException {
+        return start(configJson, socksPort, null);
+    }
+
+    public static IsolatedCore start(String configJson, int socksPort, Consumer<String> onLine) throws IOException {
         Path executable = AppDirectories.coreDirectory().resolve("xray.exe");
         if (!Files.isRegularFile(executable)) throw new IOException("Xray is not installed");
         Path config = AppDirectories.dataDirectory().resolve("probes").resolve("isolated-" + UUID.randomUUID() + ".json");
@@ -42,7 +49,7 @@ public final class IsolatedCore implements AutoCloseable {
         try {
             Process process = new ProcessBuilder(executable.toString(), "run", "-config", config.toString())
                     .directory(AppDirectories.coreDirectory().toFile()).redirectErrorStream(true).start();
-            return new IsolatedCore(process, config, socksPort);
+            return new IsolatedCore(process, config, socksPort, onLine);
         } catch (IOException | RuntimeException error) {
             Files.deleteIfExists(config);
             throw error;
@@ -66,6 +73,9 @@ public final class IsolatedCore implements AutoCloseable {
                 synchronized (lastLines) {
                     if (lastLines.size() >= LOG_LINES) lastLines.removeFirst();
                     lastLines.addLast(line);
+                }
+                if (onLine != null) {
+                    try { onLine.accept(line); } catch (RuntimeException ignored) {}
                 }
             }
         } catch (IOException ignored) {

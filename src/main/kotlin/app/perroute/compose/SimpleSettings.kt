@@ -125,6 +125,10 @@ private fun SimpleGeneral(shell: Shell) {
     SimpleSettingRow("Interface style", "Simple or New. Only the look changes: your connection, routes, settings and unsaved changes stay as they are.") {
         Segmented(listOf(UiStyle.SIMPLE, UiStyle.NEW), Appearance.style, { it.label }, Modifier.width(300.dp), height = 48.dp) { shell.setUiStyle(it) }
     }
+    val explorer = explorerMenuModel(shell)
+    SimpleSettingRow("Route with PerRoute in Explorer", ExplorerMenuDetail, note = if (explorer.available) "" else "Available in the installed or portable PerRoute.") {
+        ToggleSwitch(explorer.enabled, "Route with PerRoute in Explorer", enabled = explorer.available) { explorer.change(it) }
+    }
     SimpleSettingRow("Window behavior", "Closing or minimizing keeps PerRoute in the tray. Use Quick Access there to connect, switch the main server, or quit.") {
         Icon(Icons.Rounded.DesktopWindows, null, tint = White.copy(.8f), modifier = Modifier.size(28.dp))
     }

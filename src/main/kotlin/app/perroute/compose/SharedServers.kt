@@ -128,7 +128,7 @@ internal class ServersModel(private val shell: Shell) {
             val measured = withContext(Dispatchers.IO) { if (realTest) controller.realTestServers(snapshot) else controller.pingServers(snapshot) }
             latencies = measured
             scores = withContext(Dispatchers.IO) { controller.qualityScores() }
-            if (controller.autoSpeedTest()) {
+            if (controller.automaticSpeedTestsNow()) {
                 val known = speeds
                 runSpeedTest(snapshot.filter { (measured[it.key()] ?: -1L) >= 0L && it.key() !in known }
                     .sortedBy { measured[it.key()] }.take(AutoSpeedTestLimit))
