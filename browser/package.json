@@ -1,0 +1,17 @@
+{
+  "name": "perroute-browser",
+  "version": "1.0.0",
+  "private": true,
+  "description": "Build tasks for the PerRoute browser extension and its helper. See README.md.",
+  "scripts": {
+    "setup": "npm --prefix extension ci && node scripts/fetch-xray.mjs windows-x64",
+    "build": "node scripts/cargo.mjs build && npm --prefix extension run build",
+    "build:release": "node scripts/cargo.mjs build --release && npm --prefix extension run build:release",
+    "dev": "npm --prefix extension run watch",
+    "test": "node scripts/cargo.mjs test && npm --prefix extension run typecheck && npm --prefix extension test",
+    "test:helper": "node scripts/cargo.mjs test",
+    "test:extension": "npm --prefix extension run typecheck && npm --prefix extension test",
+    "lint": "node scripts/cargo.mjs clippy --all-targets -- -D warnings -A linker-messages",
+    "licenses": "node scripts/third-party.mjs"
+  }
+}

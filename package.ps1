@@ -82,10 +82,36 @@ $WindowsPacketFilter = Get-VerifiedAsset `
 & $Gradle -g $GradleHome --no-daemon createDistributable
 if ($LASTEXITCODE -ne 0) { throw 'Compose Desktop build failed.' }
 
+# Browser extension and its runtime (helper + pinned Xray). See browser/README.md.
+$BrowserRoot = Join-Path $ProjectRoot 'browser'
+if ($null -eq (Get-Command node -ErrorAction SilentlyContinue)) { throw 'Node.js is required to build the browser extension.' }
+if (-not (Test-Path -LiteralPath (Join-Path $BrowserRoot 'extension\node_modules'))) {
+    & npm --prefix (Join-Path $BrowserRoot 'extension') ci --no-audit --no-fund
+    if ($LASTEXITCODE -ne 0) { throw 'Installing the extension build tools failed.' }
+}
+& node (Join-Path $BrowserRoot 'scripts\fetch-xray.mjs') windows-x64
+if ($LASTEXITCODE -ne 0) { throw 'The pinned Xray release could not be fetched or verified.' }
+& node (Join-Path $BrowserRoot 'scripts\cargo.mjs') build --release
+if ($LASTEXITCODE -ne 0) { throw 'Building the browser runtime failed.' }
+& npm --prefix (Join-Path $BrowserRoot 'extension') run build:release
+if ($LASTEXITCODE -ne 0) { throw 'Building the browser extension failed.' }
+& node (Join-Path $BrowserRoot 'scripts\third-party.mjs')
+if ($LASTEXITCODE -ne 0) { throw 'Collecting the browser license notices failed.' }
+
+$HelperTarget = if ($env:CARGO_TARGET_DIR) { $env:CARGO_TARGET_DIR } else { Join-Path $BrowserRoot 'helper\target' }
+if (-not $env:CARGO_TARGET_DIR -and $HelperTarget.Length -gt 100) { $HelperTarget = Join-Path $env:USERPROFILE '.perroute-target' }
+$HelperExe = @('release', 'x86_64-pc-windows-gnullvm\release', 'x86_64-pc-windows-msvc\release') |
+    ForEach-Object { Join-Path $HelperTarget "$_\perroute-browser-host.exe" } |
+    Where-Object { Test-Path -LiteralPath $_ } |
+    Select-Object -First 1
+if ($null -eq $HelperExe) { throw 'The browser runtime executable was not produced.' }
+
 $ComposeImage = Join-Path $BuildRoot 'compose\binaries\main\app\PerRoute'
 $DistDir = Join-Path $ProjectRoot 'dist'
 $PackagedApp = Join-Path $DistDir "PerRoute-$Version"
 $PortableZip = Join-Path $DistDir "PerRoute-Portable-$Version.zip"
+$BrowserZip = Join-Path $DistDir "PerRoute-Browser-$Version.zip"
+$BrowserStage = Join-Path $BuildRoot 'browser-payload'
 $Installer = Join-Path $DistDir "PerRoute-Setup-$Version.exe"
 $Csc = 'C:\Windows\Microsoft.NET\Framework64\v4.0.30319\csc.exe'
 
@@ -120,13 +146,39 @@ Set-Content -LiteralPath (Join-Path $PackagedApp 'perroute-version.txt') -Value 
 
 Compress-Archive -LiteralPath $PackagedApp -DestinationPath $PortableZip -CompressionLevel Optimal
 
+# Browser runtime package: helper, pinned Xray, the unpacked extension, notices and the uninstaller.
+if (Test-Path -LiteralPath $BrowserStage) { Remove-Item -LiteralPath $BrowserStage -Recurse -Force }
+if (Test-Path -LiteralPath $BrowserZip) { Remove-Item -LiteralPath $BrowserZip -Force }
+New-Item -ItemType Directory -Force -Path (Join-Path $BrowserStage 'xray') | Out-Null
+Copy-Item -LiteralPath $HelperExe -Destination (Join-Path $BrowserStage 'perroute-browser-host.exe')
+Copy-Item -LiteralPath (Join-Path $BrowserRoot 'helper\xray\dist\windows-x64\xray.exe') -Destination (Join-Path $BrowserStage 'xray\xray.exe')
+Copy-Item -LiteralPath (Join-Path $BrowserRoot 'helper\xray\dist\windows-x64\LICENSE') -Destination (Join-Path $BrowserStage 'xray\LICENSE')
+Copy-Item -LiteralPath (Join-Path $BrowserRoot 'extension\dist') -Destination (Join-Path $BrowserStage 'extension') -Recurse
+Copy-Item -LiteralPath (Join-Path $BrowserRoot 'licenses') -Destination (Join-Path $BrowserStage 'licenses') -Recurse
+Copy-Item -LiteralPath (Join-Path $ProjectRoot 'LICENSE') -Destination (Join-Path $BrowserStage 'LICENSE')
+Copy-Item -LiteralPath (Join-Path $PackagedApp 'Uninstall.exe') -Destination (Join-Path $BrowserStage 'Uninstall.exe')
+# Entries are written one by one so the archive uses standard '/' separators.
+Add-Type -AssemblyName System.IO.Compression, System.IO.Compression.FileSystem
+$Archive = [System.IO.Compression.ZipFile]::Open($BrowserZip, [System.IO.Compression.ZipArchiveMode]::Create)
+try {
+    $StageRoot = (Resolve-Path -LiteralPath $BrowserStage).Path.TrimEnd('\') + '\'
+    foreach ($File in Get-ChildItem -LiteralPath $BrowserStage -Recurse -File) {
+        $Entry = $File.FullName.Substring($StageRoot.Length).Replace('\', '/')
+        [System.IO.Compression.ZipFileExtensions]::CreateEntryFromFile($Archive, $File.FullName, $Entry, [System.IO.Compression.CompressionLevel]::Optimal) | Out-Null
+    }
+} finally {
+    $Archive.Dispose()
+}
+
 $InstallerReferences = $CommonReferences + @(
     '/reference:System.IO.Compression.dll',
     '/reference:System.IO.Compression.FileSystem.dll'
 )
-& $Csc /nologo /target:winexe /platform:x64 /optimize+ "/win32icon:$ProjectRoot\src\main\resources\icons\perroute.ico" "/win32manifest:$ProjectRoot\installer\installer.manifest" "/resource:$PortableZip,PerRoute.Payload" "/resource:$ProxiFyreSetup,PerRoute.ProxiFyreSetup" "/resource:$VisualCppRuntime,PerRoute.VisualCppRuntime" "/resource:$WindowsPacketFilter,PerRoute.WindowsPacketFilter" "/out:$Installer" $InstallerReferences (Join-Path $ProjectRoot 'installer\WindowsInstaller.cs')
+$ExtensionId = Join-Path $BrowserRoot 'protocol\extension-id.txt'
+& $Csc /nologo /target:winexe /platform:x64 /optimize+ "/win32icon:$ProjectRoot\src\main\resources\icons\perroute.ico" "/win32manifest:$ProjectRoot\installer\installer.manifest" "/resource:$PortableZip,PerRoute.Payload" "/resource:$BrowserZip,PerRoute.BrowserPayload" "/resource:$ExtensionId,PerRoute.ExtensionId" "/resource:$ProxiFyreSetup,PerRoute.ProxiFyreSetup" "/resource:$VisualCppRuntime,PerRoute.VisualCppRuntime" "/resource:$WindowsPacketFilter,PerRoute.WindowsPacketFilter" "/out:$Installer" $InstallerReferences (Join-Path $ProjectRoot 'installer\WindowsInstaller.cs')
 if ($LASTEXITCODE -ne 0) { throw 'Could not compile the standalone PerRoute installer.' }
 
 Write-Host "Compose application: $PackagedApp\PerRoute.exe" -ForegroundColor Green
 Write-Host "Standalone installer: $Installer" -ForegroundColor Green
 Write-Host "Portable archive: $PortableZip" -ForegroundColor Green
+Write-Host "Browser runtime package: $BrowserZip" -ForegroundColor Green

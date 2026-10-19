@@ -74,3 +74,12 @@ $RECYCLE.BIN/
 # Local design drafts and working notes (not part of the published project)
 # ---------------------------------------------------------------------------
 /docs/design/
+
+# ---------------------------------------------------------------------------
+# Browser extension and helper (build output, downloaded Xray)
+# ---------------------------------------------------------------------------
+/browser/helper/target/
+/browser/helper/xray/dist/
+/browser/extension/node_modules/
+/browser/extension/dist/
+/browser/node_modules/

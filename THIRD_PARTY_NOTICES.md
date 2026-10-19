@@ -23,3 +23,10 @@ PerRoute bundles the unmodified JNA 5.17.0 library and its `jnidispatch.dll`
 stub to call Windows DPAPI in-process. JNA is dual-licensed under the Apache
 License 2.0 and the LGPL 2.1 or later; PerRoute uses it under Apache-2.0.
 Source: https://github.com/java-native-access/jna
+
+## Browser extension and runtime
+
+The browser runtime bundles the unmodified official Xray-core release (pinned by SHA-256)
+and statically links the Rust crates listed in browser/licenses/THIRD-PARTY.md. The
+extension bundles jsQR (Apache License 2.0) and the Inter typeface (SIL OFL 1.1). The
+license texts are installed with the runtime in its `licenses` folder.

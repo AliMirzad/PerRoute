@@ -24,7 +24,7 @@ A modern Windows client for VLESS, VMess, Trojan and Shadowsocks, built on [Xray
 
 ## Why PerRoute
 
-Most proxy clients are all-or-nothing: either the whole system goes through the tunnel or nothing does. PerRoute is built around the opposite idea. You pick the applications that need the tunnel; the rest of the machine keeps its normal, direct connection. No browser extensions, no per-application proxy settings, and no launching applications from inside the client.
+Most proxy clients are all-or-nothing: either the whole system goes through the tunnel or nothing does. PerRoute is built around the opposite idea. You pick the applications that need the tunnel; the rest of the machine keeps its normal, direct connection. No per-application proxy settings and no launching applications from inside the client. For browsers there is an optional extension that does the same per site: choose which sites use the tunnel, which open directly and which are blocked.
 
 When you do want everything proxied, System proxy and Local proxy modes are one click away.
 
@@ -62,6 +62,7 @@ Full notes: [docs/releases/v3.5.1.md](docs/releases/v3.5.1.md).
 | **Subscription intelligence** *(3.5)* | Usage, quota, expiry and update history of every subscription, with warnings for expired, exhausted, failing or suddenly changed ones. |
 | **Gaming test** *(3.5)* | Steady latency, jitter, packet loss and UDP support per server, and a score built for games. |
 | **Block QUIC** *(3.5.1)* | Routed apps use HTTPS over TCP instead of QUIC, which is usually much faster through a tunnel. On by default, one switch to turn off. |
+| **Browser extension** | PerRoute inside Chrome, Edge, Brave and Vivaldi, with or without the app: site-by-site routing (Tunnel, Direct, Block, a server per site, temporary rules), server tests and quality scores, failover, kill switch, traffic, presets, recipes, profiles, a connection doctor, a request inspector and encrypted backups. See [Browser extension](#browser-extension). |
 | **Three connection modes** | Smart per-app, System proxy, and Local proxy (SOCKS5 + HTTP). |
 | **Subscriptions** | Import by URL, pasted share links, Xray JSON, or QR code (image, clipboard, or camera). Updates keep your favorites, tags and selection. |
 | **Latency and speed tests** | Endpoint ping, a real tunnel test, and a download speed test per server, with sorting and filtering. |
@@ -83,7 +84,7 @@ Get the latest build from the [Releases](https://github.com/AliMirzad/PerRoute/r
 
 | Package | Use it when |
 |---|---|
-| `PerRoute-Setup-3.5.1.exe` | You want everything, including Smart per-app mode. The installer asks for Administrator approval once and installs PerRoute together with the per-app engine. |
+| `PerRoute-Setup-3.5.1.exe` | You want everything, including Smart per-app mode. The installer asks for Administrator approval once; choose the app, the browser extension or both. |
 | `PerRoute-Portable-3.5.1.zip` | You want a no-install build. Extract the folder and run `PerRoute.exe`. System proxy and Local proxy work out of the box; Smart per-app works only if the per-app engine is already installed. |
 
 **Requirements:** Windows 10 or 11, 64-bit. The Java runtime and Xray core are bundled; nothing else needs to be installed.
@@ -275,6 +276,18 @@ Closing or minimizing the main window keeps PerRoute in the notification area. C
 
 See [docs/releases/v3.5.0.md](docs/releases/v3.5.0.md) for how each works and its limits.
 
+## Browser extension
+
+The extension brings PerRoute into Chromium browsers. Where the app routes Windows applications, the extension routes sites, and it works without the app.
+
+- **This site:** the toolbar button shows where the current site goes. One click sends it through the tunnel, directly or nowhere, for good or for 15 minutes to 4 hours, and through the main server or one of its own.
+- **Servers:** subscriptions (with usage, expiry and history), links, Xray JSON and QR codes. Real tests through each server, TCP ping, speed tests, the same quality score as the app, favorites and tags, and a side-by-side comparison with the live route.
+- **Rules:** sites, IP ranges and ports; everything through the tunnel or only selected sites; local names stay local. Presets, shareable recipes and profiles.
+- **Protection:** kill switch, WebRTC protection, automatic failover, and DNS resolved on the server for tunnel sites.
+- **Doctor:** checks the runtime, the server, the live route and the exit address, and shows every host a tab contacts.
+
+To install it, run `PerRoute-Setup-3.5.1.exe` and choose **Browser extension**. The installer puts the runtime in `C:\Program Files\PerRoute Browser`, registers it with your browsers and shows the last step: open the extensions page, turn on Developer mode and choose **Load unpacked** with the `extension` folder. Developer documentation is in [browser/README.md](browser/README.md).
+
 ## Connection modes
 
 | Mode | What it routes | Administrator | Notes |
@@ -391,9 +404,10 @@ This produces the following in `dist/`:
 |---|---|
 | `PerRoute-Setup-3.5.1.exe` | Offline installer with the per-app engine |
 | `PerRoute-Portable-3.5.1.zip` | Self-contained portable build |
+| `PerRoute-Browser-3.5.1.zip` | The browser runtime and extension (embedded in the installer) |
 | `PerRoute-3.5.1/` | Unpacked application image |
 
-The installer dependencies are downloaded on first use and verified against pinned SHA-256 digests.
+The installer dependencies are downloaded on first use and verified against pinned SHA-256 digests. Building the browser extension also needs Node.js and Rust; see [browser/README.md](browser/README.md).
 
 ### Project layout
 
@@ -421,6 +435,7 @@ src/main/java/app/perroute/persistence Encrypted state storage
 src/test/java/app/perroute             Test suite
 installer/                             Windows installer and uninstaller (C#)
 tools/update/                          Update manifest signing tool
+browser/                               Browser extension (TypeScript) and its runtime (Rust)
 docs/screenshots/                      Images used in this document
 ```
 
@@ -472,6 +487,7 @@ Setting the environment variable `PERROUTE_PERF=1` writes start-up and frame tim
 | [Java Native Access](https://github.com/java-native-access/jna) | Apache-2.0 | Windows DPAPI binding |
 | [ZXing](https://github.com/zxing/zxing) | Apache-2.0 | QR decoding |
 | [Inter](https://rsms.me/inter/) | SIL OFL 1.1 | Interface typeface |
+| [jsQR](https://github.com/cozmo/jsQR) | Apache-2.0 | QR decoding in the browser extension |
 
 See [THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md) for details.
 

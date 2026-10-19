@@ -1,0 +1,71 @@
+﻿[package]
+name = "perroute-browser-host"
+version = "1.0.0"
+edition = "2021"
+description = "Native messaging host for the PerRoute browser extension (manages Xray-core)"
+publish = false
+
+[[bin]]
+name = "perroute-browser-host"
+path = "src/main.rs"
+
+[lib]
+name = "perroute_browser"
+path = "src/lib.rs"
+
+[dependencies]
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+base64 = "0.22"
+percent-encoding = "2"
+url = "2"
+uuid = { version = "1", features = ["v4"] }
+thiserror = "2"
+chacha20poly1305 = "0.10"
+rand = "0.8"
+reqwest = { version = "0.12", default-features = false, features = ["blocking", "native-tls", "socks"] }
+keyring = { version = "3", features = ["apple-native", "windows-native"] }
+sha2 = "0.10"
+pbkdf2 = { version = "0.12", default-features = false, features = ["hmac"] }
+
+[build-dependencies]
+serde_json = "1"
+
+[target.'cfg(windows)'.dependencies]
+windows-sys = { version = "0.59", features = [
+  "Win32_Foundation",
+  "Win32_System_JobObjects",
+  "Win32_System_Threading",
+  "Win32_Security",
+  "Win32_Security_Authorization",
+  "Win32_Storage_FileSystem",
+  "Win32_System_LibraryLoader",
+  "Win32_System_Pipes",
+  "Win32_System_SystemServices",
+  "Win32_System_Diagnostics_Debug",
+] }
+winreg = "0.55"
+
+[target.'cfg(unix)'.dependencies]
+libc = "0.2"
+
+[dev-dependencies]
+tempfile = "3"
+
+[profile.release]
+opt-level = "z"
+lto = true
+codegen-units = 1
+strip = true
+
+# Keep dev/test builds small (full debug info for every dependency costs >2 GB).
+[profile.dev]
+debug = "line-tables-only"
+
+[profile.dev.package."*"]
+debug = false
+
+# Hashing the ~30 MB Xray binary before each launch must stay fast in test builds too.
+[profile.dev.package.sha2]
+opt-level = 3
+

@@ -1,0 +1,440 @@
+//! The extension <-> helper message protocol (version [`crate::PROTOCOL_VERSION`]).
+//!
+//! The helper accepts only the closed set of commands below. Every argument struct uses
+//! `deny_unknown_fields` and is validated before use. No command runs a program chosen by the
+//! caller or touches a caller-chosen file path. See `protocol/PROTOCOL.md`.
+//!
+//! Wire format:
+//!   request  `{"id": <u32>, "cmd": "<name>", "args": {...}}`
+//!   response `{"id": <u32>, "ok": true, "result": {...}}` | `{"id": <u32>, "ok": false, "error": {"code": "...", "message": "..."}}`
+//!   event    `{"event": "status", "status": {...}}`
+
+use serde::{Deserialize, Serialize};
+use serde_json::Value;
+
+#[derive(Deserialize, Debug, Default, PartialEq)]
+#[serde(deny_unknown_fields)]
+pub struct Empty {}
+
+#[derive(Deserialize, Debug, PartialEq, Clone, Copy)]
+#[serde(rename_all = "lowercase")]
+pub enum ImportSource {
+    Paste,
+    Qr,
+    File,
+}
+
+#[derive(Deserialize, Debug, PartialEq)]
+#[serde(tag = "cmd", content = "args", rename_all = "camelCase")]
+pub enum Request {
+    Hello(HelloArgs),
+    GetStatus(Empty),
+    ListServers(Empty),
+    ImportText(ImportArgs),
+    AddSubscription(AddSubscriptionArgs),
+    UpdateSubscription(IdArgs),
+    DeleteSubscription(DeleteSubscriptionArgs),
+    RenameServer(RenameArgs),
+    DeleteServer(IdArgs),
+    SelectServer(IdArgs),
+    Connect(ConnectArgs),
+    Disconnect(Empty),
+    GetSettings(Empty),
+    SetSettings(SettingsPatch),
+    GetDiagnostics(Empty),
+    GetIdeCredentials(Empty),
+    RegenerateIdeCredentials(Empty),
+    ResetAll(ResetArgs),
+    // servers
+    SetFavorite(FavoriteArgs),
+    SetTag(TagArgs),
+    GetQuality(IdArgs),
+    TestServers(TestArgs),
+    SpeedTest(SpeedArgs),
+    ConnectFastest(Empty),
+    ExitInfo(Empty),
+    Compare(CompareArgs),
+    Doctor(DoctorArgs),
+    GetTraffic(Empty),
+    ClearTraffic(Empty),
+    // site rules
+    GetRules(Empty),
+    AddRule(RuleArgs),
+    UpdateRule(UpdateRuleArgs),
+    DeleteRule(IdArgs),
+    MoveRule(MoveArgs),
+    SetRuleEnabled(EnableArgs),
+    SetSite(SiteArgs),
+    Evaluate(HostArgs),
+    ReplaceRules(ReplaceRulesArgs),
+    // presets and profiles
+    ListScenarios(Empty),
+    ApplyScenario(IdArgs),
+    ClearScenario(Empty),
+    ListProfiles(Empty),
+    SaveProfile(NameArgs),
+    ApplyProfile(IdArgs),
+    DeleteProfile(IdArgs),
+    // backup
+    ExportBackup(ExportArgs),
+    ReadExport(ChunkArgs),
+    PreviewBackup(BackupTextArgs),
+    RestoreBackup(RestoreArgs),
+    UndoRestore(Empty),
+}
+
+#[derive(Deserialize, Debug, PartialEq)]
+#[serde(deny_unknown_fields, rename_all = "camelCase")]
+pub struct FavoriteArgs {
+    pub id: String,
+    pub favorite: bool,
+}
+
+#[derive(Deserialize, Debug, PartialEq)]
+#[serde(deny_unknown_fields, rename_all = "camelCase")]
+pub struct TagArgs {
+    pub id: String,
+    pub tag: String,
+}
+
+#[derive(Deserialize, Debug, PartialEq, Clone, Copy)]
+#[serde(rename_all = "lowercase")]
+pub enum TestKind {
+    Tcp,
+    Real,
+}
+
+#[derive(Deserialize, Debug, PartialEq)]
+#[serde(deny_unknown_fields, rename_all = "camelCase")]
+pub struct TestArgs {
+    pub ids: Vec<String>,
+    pub kind: TestKind,
+}
+
+#[derive(Deserialize, Debug, PartialEq)]
+#[serde(deny_unknown_fields, rename_all = "camelCase")]
+pub struct SpeedArgs {
+    #[serde(default)]
+    pub server_id: Option<String>,
+}
+
+#[derive(Deserialize, Debug, PartialEq)]
+#[serde(deny_unknown_fields, rename_all = "camelCase")]
+pub struct CompareArgs {
+    pub candidate_id: String,
+    pub urls: Vec<String>,
+}
+
+#[derive(Deserialize, Debug, PartialEq)]
+#[serde(deny_unknown_fields, rename_all = "camelCase")]
+pub struct DoctorArgs {
+    #[serde(default)]
+    pub host: Option<String>,
+}
+
+fn yes() -> bool {
+    true
+}
+
+#[derive(Deserialize, Debug, PartialEq, Clone)]
+#[serde(deny_unknown_fields, rename_all = "camelCase")]
+pub struct RuleArgs {
+    #[serde(default)]
+    pub name: String,
+    #[serde(rename = "match")]
+    pub match_type: crate::core::routing::RuleMatch,
+    pub text: String,
+    pub action: crate::core::routing::RuleAction,
+    #[serde(default)]
+    pub server_id: Option<String>,
+    #[serde(default)]
+    pub minutes: Option<u32>,
+    #[serde(default = "yes")]
+    pub enabled: bool,
+}
+
+#[derive(Deserialize, Debug, PartialEq)]
+#[serde(deny_unknown_fields, rename_all = "camelCase")]
+pub struct UpdateRuleArgs {
+    pub id: String,
+    pub rule: RuleArgs,
+}
+
+#[derive(Deserialize, Debug, PartialEq)]
+#[serde(deny_unknown_fields, rename_all = "camelCase")]
+pub struct MoveArgs {
+    pub id: String,
+    pub offset: i32,
+}
+
+#[derive(Deserialize, Debug, PartialEq)]
+#[serde(deny_unknown_fields, rename_all = "camelCase")]
+pub struct EnableArgs {
+    pub id: String,
+    pub enabled: bool,
+}
+
+#[derive(Deserialize, Debug, PartialEq)]
+#[serde(deny_unknown_fields, rename_all = "camelCase")]
+pub struct SiteArgs {
+    pub host: String,
+    /// `null`: remove the site's own rule.
+    pub action: Option<crate::core::routing::RuleAction>,
+    #[serde(default)]
+    pub server_id: Option<String>,
+    #[serde(default)]
+    pub minutes: Option<u32>,
+}
+
+#[derive(Deserialize, Debug, PartialEq)]
+#[serde(deny_unknown_fields, rename_all = "camelCase")]
+pub struct HostArgs {
+    pub host: String,
+}
+
+#[derive(Deserialize, Debug, PartialEq)]
+#[serde(deny_unknown_fields, rename_all = "camelCase")]
+pub struct ReplaceRulesArgs {
+    pub rules: Vec<RuleArgs>,
+    #[serde(default)]
+    pub mode: Option<crate::core::routing::RoutingMode>,
+    #[serde(default)]
+    pub append: bool,
+}
+
+#[derive(Deserialize, Debug, PartialEq)]
+#[serde(deny_unknown_fields, rename_all = "camelCase")]
+pub struct NameArgs {
+    pub name: String,
+}
+
+#[derive(Deserialize, Debug, PartialEq)]
+#[serde(deny_unknown_fields, rename_all = "camelCase")]
+pub struct ExportArgs {
+    #[serde(default)]
+    pub password: Option<String>,
+    pub servers: bool,
+    pub rules: bool,
+    pub settings: bool,
+}
+
+#[derive(Deserialize, Debug, PartialEq)]
+#[serde(deny_unknown_fields, rename_all = "camelCase")]
+pub struct ChunkArgs {
+    pub token: u32,
+    pub index: u32,
+}
+
+#[derive(Deserialize, Debug, PartialEq)]
+#[serde(deny_unknown_fields, rename_all = "camelCase")]
+pub struct BackupTextArgs {
+    pub text: String,
+    #[serde(default)]
+    pub password: Option<String>,
+}
+
+#[derive(Deserialize, Debug, PartialEq)]
+#[serde(deny_unknown_fields, rename_all = "camelCase")]
+pub struct RestoreArgs {
+    pub text: String,
+    #[serde(default)]
+    pub password: Option<String>,
+    pub mode: crate::core::backup::RestoreMode,
+}
+
+#[derive(Deserialize, Debug, PartialEq)]
+#[serde(deny_unknown_fields, rename_all = "camelCase")]
+pub struct HelloArgs {
+    pub protocol_version: u32,
+    pub extension_version: String,
+}
+
+#[derive(Deserialize, Debug, PartialEq)]
+#[serde(deny_unknown_fields, rename_all = "camelCase")]
+pub struct ImportArgs {
+    pub text: String,
+    pub source: ImportSource,
+}
+
+#[derive(Deserialize, Debug, PartialEq)]
+#[serde(deny_unknown_fields, rename_all = "camelCase")]
+pub struct AddSubscriptionArgs {
+    pub name: String,
+    pub url: String,
+}
+
+#[derive(Deserialize, Debug, PartialEq)]
+#[serde(deny_unknown_fields, rename_all = "camelCase")]
+pub struct IdArgs {
+    pub id: String,
+}
+
+#[derive(Deserialize, Debug, PartialEq)]
+#[serde(deny_unknown_fields, rename_all = "camelCase")]
+pub struct DeleteSubscriptionArgs {
+    pub id: String,
+    pub delete_servers: bool,
+}
+
+#[derive(Deserialize, Debug, PartialEq)]
+#[serde(deny_unknown_fields, rename_all = "camelCase")]
+pub struct RenameArgs {
+    pub id: String,
+    pub name: String,
+}
+
+#[derive(Deserialize, Debug, PartialEq)]
+#[serde(deny_unknown_fields, rename_all = "camelCase")]
+pub struct ConnectArgs {
+    pub server_id: String,
+}
+
+#[derive(Deserialize, Debug, PartialEq, Default, Clone)]
+#[serde(deny_unknown_fields, rename_all = "camelCase")]
+pub struct SettingsPatch {
+    pub jetbrains_enabled: Option<bool>,
+    pub jetbrains_socks_port: Option<u16>,
+    pub jetbrains_http_port: Option<u16>,
+    pub passthrough_when_disconnected: Option<bool>,
+    pub debug_logging: Option<bool>,
+    pub allow_private_subscription_hosts: Option<bool>,
+    pub ide_auth: Option<bool>,
+    pub routing_mode: Option<crate::core::routing::RoutingMode>,
+    pub local_names_direct: Option<bool>,
+    pub auto_failover: Option<bool>,
+    pub fastest_on_connect: Option<bool>,
+    pub traffic_stats: Option<bool>,
+    pub kill_switch: Option<bool>,
+    pub webrtc_protection: Option<bool>,
+    pub auto_connect: Option<bool>,
+    pub subscription_update_hours: Option<u32>,
+}
+
+#[derive(Deserialize, Debug, PartialEq)]
+#[serde(deny_unknown_fields, rename_all = "camelCase")]
+pub struct ResetArgs {
+    pub confirm: bool,
+}
+
+#[derive(Serialize, Debug, Clone, Copy, PartialEq, Eq)]
+#[serde(rename_all = "SCREAMING_SNAKE_CASE")]
+pub enum ErrorCode {
+    InvalidRequest,
+    IncompatibleVersion,
+    NotFound,
+    InvalidConfig,
+    XrayMissing,
+    XrayFailed,
+    XrayConfigRejected,
+    PortUnavailable,
+    ServerUnreachable,
+    SubscriptionFailed,
+    StoreError,
+    SecureStorageUnavailable,
+    Busy,
+    Internal,
+}
+
+#[derive(Serialize, Debug, Clone, PartialEq)]
+pub struct ApiError {
+    pub code: ErrorCode,
+    pub message: String,
+}
+
+impl ApiError {
+    pub fn new(code: ErrorCode, message: impl Into<String>) -> Self {
+        ApiError { code, message: message.into() }
+    }
+}
+
+pub type ApiResult = Result<Value, ApiError>;
+
+/// Parses and structurally validates one inbound message.
+/// Returns the request id (0 if absent/invalid) and the request or an error.
+pub fn decode(bytes: &[u8]) -> (u32, Result<Request, ApiError>) {
+    let bad = |m: &str| ApiError::new(ErrorCode::InvalidRequest, m);
+    let v: Value = match serde_json::from_slice(bytes) {
+        Ok(v) => v,
+        Err(_) => return (0, Err(bad("Message is not valid JSON"))),
+    };
+    let obj = match v.as_object() {
+        Some(o) => o,
+        None => return (0, Err(bad("Message must be a JSON object"))),
+    };
+    let id = obj.get("id").and_then(Value::as_u64).filter(|i| *i <= u32::MAX as u64).unwrap_or(0) as u32;
+    if id == 0 {
+        return (0, Err(bad("Missing or invalid id")));
+    }
+    if obj.keys().any(|k| k != "id" && k != "cmd" && k != "args") {
+        return (id, Err(bad("Unexpected field in message")));
+    }
+    let cmd = match obj.get("cmd").and_then(Value::as_str) {
+        Some(c) => c,
+        None => return (id, Err(bad("Missing cmd"))),
+    };
+    let args = obj.get("args").cloned().unwrap_or_else(|| Value::Object(Default::default()));
+    let tagged = serde_json::json!({ "cmd": cmd, "args": args });
+    match serde_json::from_value::<Request>(tagged) {
+        Ok(r) => (id, Ok(r)),
+        Err(e) => {
+            let msg = e.to_string();
+            let msg = if msg.contains("unknown variant") { format!("Unknown command \"{}\"", crate::core::validate::truncate(cmd, 32)) } else { format!("Invalid arguments for {cmd}: {}", crate::core::validate::truncate(&msg, 120)) };
+            (id, Err(bad(&msg)))
+        }
+    }
+}
+
+pub fn encode_response(id: u32, r: &ApiResult) -> Vec<u8> {
+    let v = match r {
+        Ok(result) => serde_json::json!({ "id": id, "ok": true, "result": result }),
+        Err(e) => serde_json::json!({ "id": id, "ok": false, "error": e }),
+    };
+    serde_json::to_vec(&v).unwrap_or_default()
+}
+
+pub fn encode_event(name: &str, key: &str, payload: &Value) -> Vec<u8> {
+    let mut m = serde_json::Map::new();
+    m.insert("event".into(), name.into());
+    m.insert(key.into(), payload.clone());
+    serde_json::to_vec(&Value::Object(m)).unwrap_or_default()
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn decodes_valid() {
+        let (id, r) = decode(br#"{"id":3,"cmd":"connect","args":{"serverId":"abc"}}"#);
+        assert_eq!(id, 3);
+        assert_eq!(r.unwrap(), Request::Connect(ConnectArgs { server_id: "abc".into() }));
+        let (_, r) = decode(br#"{"id":4,"cmd":"getStatus"}"#);
+        assert_eq!(r.unwrap(), Request::GetStatus(Empty {}));
+    }
+
+    #[test]
+    fn rejects_unknown_command_and_fields() {
+        let (_, r) = decode(br#"{"id":1,"cmd":"exec","args":{"command":"rm -rf /"}}"#);
+        assert!(r.unwrap_err().message.contains("Unknown command"));
+        let (_, r) = decode(br#"{"id":1,"cmd":"connect","args":{"serverId":"a","path":"/bin/sh"}}"#);
+        assert_eq!(r.unwrap_err().code, ErrorCode::InvalidRequest);
+        let (_, r) = decode(br#"{"id":1,"cmd":"getStatus","args":{"x":1}}"#);
+        assert!(r.is_err());
+        let (_, r) = decode(br#"{"id":1,"cmd":"getStatus","extra":1}"#);
+        assert!(r.is_err());
+        let (id, r) = decode(br#"{"cmd":"getStatus"}"#);
+        assert_eq!(id, 0);
+        assert!(r.is_err());
+        let (_, r) = decode(b"not json");
+        assert!(r.is_err());
+        let (_, r) = decode(br#"{"id":1,"cmd":"setSettings","args":{"jetbrainsSocksPort":70000}}"#);
+        assert!(r.is_err());
+    }
+
+    #[test]
+    fn encodes() {
+        let s = String::from_utf8(encode_response(5, &Err(ApiError::new(ErrorCode::XrayMissing, "x")))).unwrap();
+        assert!(s.contains("\"XRAY_MISSING\""));
+        assert!(s.contains("\"ok\":false"));
+    }
+}

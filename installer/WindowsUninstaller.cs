@@ -1,4 +1,5 @@
 using System;
+using System.Collections.Generic;
 using System.Diagnostics;
 using System.IO;
 using System.Reflection;
@@ -6,7 +7,7 @@ using System.Windows.Forms;
 using Microsoft.Win32;
 
 [assembly: AssemblyTitle("PerRoute Uninstaller")]
-[assembly: AssemblyDescription("System uninstaller for PerRoute")]
+[assembly: AssemblyDescription("Uninstaller for PerRoute and the PerRoute browser extension")]
 [assembly: AssemblyCompany("Ali Mirzad")]
 [assembly: AssemblyProduct("PerRoute")]
 [assembly: AssemblyVersion("3.5.1.0")]
@@ -16,67 +17,122 @@ namespace PerRouteSetup
 {
     internal static class UninstallerProgram
     {
+        private const string UninstallKey = @"Software\Microsoft\Windows\CurrentVersion\Uninstall\PerRoute";
+        private const string HostName = "com.perroute.browser";
+        private static readonly string[] NativeMessagingKeys = {
+            @"Software\Google\Chrome\NativeMessagingHosts",
+            @"Software\Chromium\NativeMessagingHosts",
+            @"Software\Microsoft\Edge\NativeMessagingHosts",
+            @"Software\BraveSoftware\Brave-Browser\NativeMessagingHosts",
+            @"Software\Vivaldi\NativeMessagingHosts",
+        };
+
         [STAThread]
         private static void Main()
         {
             Application.EnableVisualStyles();
+            string self = AppDomain.CurrentDomain.BaseDirectory.TrimEnd(Path.DirectorySeparatorChar);
+            string appDirectory = null;
+            string browserDirectory = null;
+            try
+            {
+                using (RegistryKey machine = RegistryKey.OpenBaseKey(RegistryHive.LocalMachine, RegistryView.Registry64))
+                using (RegistryKey key = machine.OpenSubKey(UninstallKey))
+                {
+                    appDirectory = key == null ? null : key.GetValue("InstallLocation") as string;
+                    browserDirectory = key == null ? null : key.GetValue("BrowserLocation") as string;
+                }
+            }
+            catch { }
+            if (appDirectory == null && File.Exists(Path.Combine(self, "PerRoute.exe"))) appDirectory = self;
+            if (browserDirectory == null && File.Exists(Path.Combine(self, "perroute-browser-host.exe"))) browserDirectory = self;
+
+            List<string> parts = new List<string>();
+            if (appDirectory != null) parts.Add("the PerRoute app");
+            if (browserDirectory != null) parts.Add("the browser runtime");
+            string what = parts.Count == 0 ? "PerRoute" : String.Join(" and ", parts.ToArray());
             DialogResult answer = MessageBox.Show(
-                "Remove PerRoute from this computer?\r\n\r\nThe shared per-app network driver will be kept for safety.",
+                "Remove " + what + " from this computer?" +
+                (appDirectory != null ? "\r\n\r\nThe shared per-app network driver will be kept for safety." : "") +
+                (browserDirectory != null ? "\r\n\r\nAfterwards, remove the PerRoute extension from your browser's extensions page." : ""),
                 "Uninstall PerRoute",
                 MessageBoxButtons.YesNo,
                 MessageBoxIcon.Question,
                 MessageBoxDefaultButton.Button2);
             if (answer != DialogResult.Yes) return;
 
-            string installDirectory = AppDomain.CurrentDomain.BaseDirectory.TrimEnd(Path.DirectorySeparatorChar);
-            StopPerRoute(installDirectory);
-            string recovery = Path.Combine(installDirectory, "PerRouteRecovery.exe");
-            if (File.Exists(recovery))
+            List<string> folders = new List<string>();
+            if (appDirectory != null)
             {
-                try
+                StopProcesses(appDirectory, "PerRoute");
+                string recovery = Path.Combine(appDirectory, "PerRouteRecovery.exe");
+                if (File.Exists(recovery))
                 {
-                    using (Process restore = Process.Start(new ProcessStartInfo(recovery, "/cleanup") { UseShellExecute = false, CreateNoWindow = true }))
-                        restore.WaitForExit(60000);
+                    try
+                    {
+                        using (Process restore = Process.Start(new ProcessStartInfo(recovery, "/cleanup") { UseShellExecute = false, CreateNoWindow = true }))
+                            restore.WaitForExit(60000);
+                    }
+                    catch { }
                 }
-                catch { }
+                TryDelete(Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.CommonStartMenu), "Programs", "PerRoute.lnk"));
+                TryDelete(Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.CommonStartMenu), "Programs", "PerRoute Recovery.lnk"));
+                TryDelete(Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.CommonDesktopDirectory), "PerRoute.lnk"));
+                folders.Add(appDirectory);
+                folders.Add(appDirectory + ".rollback");
             }
-            TryDelete(Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.CommonStartMenu), "Programs", "PerRoute.lnk"));
-            TryDelete(Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.CommonStartMenu), "Programs", "PerRoute Recovery.lnk"));
-            TryDelete(Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.CommonDesktopDirectory), "PerRoute.lnk"));
+            if (browserDirectory != null)
+            {
+                StopProcesses(browserDirectory, "perroute-browser-host", "xray");
+                foreach (RegistryView view in new[] { RegistryView.Registry64, RegistryView.Registry32 })
+                {
+                    try
+                    {
+                        using (RegistryKey machine = RegistryKey.OpenBaseKey(RegistryHive.LocalMachine, view))
+                            foreach (string key in NativeMessagingKeys)
+                                try { machine.DeleteSubKeyTree(key + "\\" + HostName, false); } catch { }
+                    }
+                    catch { }
+                }
+                folders.Add(browserDirectory);
+            }
             try
             {
                 using (RegistryKey machine = RegistryKey.OpenBaseKey(RegistryHive.LocalMachine, RegistryView.Registry64))
-                    machine.DeleteSubKeyTree(@"Software\Microsoft\Windows\CurrentVersion\Uninstall\PerRoute", false);
+                    machine.DeleteSubKeyTree(UninstallKey, false);
             }
             catch { }
 
+            // This program runs from one of the folders: remove them after it exits.
             string cleanup = Path.Combine(Path.GetTempPath(), "PerRoute-cleanup-" + Guid.NewGuid().ToString("N") + ".cmd");
-            File.WriteAllText(cleanup,
-                "@echo off\r\n" +
-                "timeout /t 2 /nobreak >nul\r\n" +
-                "rmdir /s /q \"" + installDirectory + "\"\r\n" +
-                "rmdir /s /q \"" + installDirectory + ".rollback\"\r\n" +
-                "del /f /q \"%~f0\"\r\n");
+            string script = "@echo off\r\ntimeout /t 2 /nobreak >nul\r\n";
+            foreach (string folder in folders) script += "rmdir /s /q \"" + folder + "\"\r\n";
+            script += "del /f /q \"%~f0\"\r\n";
+            File.WriteAllText(cleanup, script);
             Process.Start(new ProcessStartInfo("cmd.exe", "/c \"\"" + cleanup + "\"\"") {
                 CreateNoWindow = true,
                 UseShellExecute = false,
                 WindowStyle = ProcessWindowStyle.Hidden
             });
-            MessageBox.Show("PerRoute has been removed.", "Uninstall complete", MessageBoxButtons.OK, MessageBoxIcon.Information);
+            MessageBox.Show(
+                "PerRoute has been removed." + (browserDirectory != null ? "\r\n\r\nRemove the PerRoute extension from your browser's extensions page to finish." : ""),
+                "Uninstall complete", MessageBoxButtons.OK, MessageBoxIcon.Information);
         }
 
-        private static void StopPerRoute(string installDirectory)
+        private static void StopProcesses(string directory, params string[] names)
         {
-            foreach (Process process in Process.GetProcessesByName("PerRoute"))
-            {
-                try
+            string prefix = directory.TrimEnd(Path.DirectorySeparatorChar) + Path.DirectorySeparatorChar;
+            foreach (string name in names)
+                foreach (Process process in Process.GetProcessesByName(name))
                 {
-                    if (!process.MainModule.FileName.StartsWith(installDirectory + Path.DirectorySeparatorChar, StringComparison.OrdinalIgnoreCase)) continue;
-                    process.CloseMainWindow();
-                    if (!process.WaitForExit(8000)) { process.Kill(); process.WaitForExit(5000); }
+                    try
+                    {
+                        if (!process.MainModule.FileName.StartsWith(prefix, StringComparison.OrdinalIgnoreCase)) continue;
+                        if (name == "PerRoute") process.CloseMainWindow();
+                        if (name != "PerRoute" || !process.WaitForExit(8000)) { process.Kill(); process.WaitForExit(5000); }
+                    }
+                    catch { }
                 }
-                catch { }
-            }
         }
 
         private static void TryDelete(string path)
