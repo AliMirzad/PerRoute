@@ -2,10 +2,6 @@ package app.perroute.gateway;
 
 import java.util.concurrent.atomic.AtomicLong;
 
-/**
- * One connection an application opened through the gateway. Only addressing and byte counts are kept,
- * never payload. The fields are updated by the relay threads and read by the inspector.
- */
 public final class GatewayConnection {
     public enum Protocol { TCP, UDP, OTHER }
     public enum Status { CONNECTING, OPEN, CLOSED, FAILED }
@@ -45,15 +41,12 @@ public final class GatewayConnection {
     public Protocol protocol() { return protocol; }
     public String destinationHost() { return destinationHost; }
     public int destinationPort() { return destinationPort; }
-    /** The loopback port the gateway used towards Xray; Xray's access log names it, which links the two. */
     public int upstreamLocalPort() { return upstreamLocalPort; }
-    /** For UDP: the loopback port datagrams are sent to Xray from; Xray's access log names it. */
     public int udpLocalPort() { return udpLocalPort; }
     public long lastActivityAt() { return lastActivityAt; }
     public long closedAt() { return closedAt; }
     public Status status() { return status; }
     public String failure() { return failure; }
-    /** For UDP: how many different destinations the association has sent to. */
     public int udpDestinations() { return udpDestinations; }
 
     void protocol(Protocol value) { protocol = value; }

@@ -13,11 +13,6 @@ import java.util.List;
 import java.util.UUID;
 import java.util.concurrent.TimeUnit;
 
-/**
- * A short-lived Xray process of its own, with one loopback SOCKS port that leads to one server. It never shares
- * anything with the running connection: tests, comparisons and browser workspaces use it so the live routes are
- * not touched. The config file holds credentials and is deleted when the core stops.
- */
 public final class IsolatedCore implements AutoCloseable {
     private static final int LOG_LINES = 40;
     private final Process process;
@@ -32,14 +27,12 @@ public final class IsolatedCore implements AutoCloseable {
         Thread.ofVirtual().name("perroute-isolated-core-log").start(this::readOutput);
     }
 
-    /** Starts a core whose SOCKS port leads to {@code node}, on a free port. */
     public static IsolatedCore forNode(ProxyNode node) throws IOException {
         int socksPort = RealTunnelProbe.reservePort();
         int apiPort = RealTunnelProbe.reservePort();
         return start(new XrayConfigGenerator().generateProbe(node, socksPort, apiPort), socksPort);
     }
 
-    /** Starts a core from a complete config whose SOCKS inbound listens on {@code socksPort}. */
     public static IsolatedCore start(String configJson, int socksPort) throws IOException {
         Path executable = AppDirectories.coreDirectory().resolve("xray.exe");
         if (!Files.isRegularFile(executable)) throw new IOException("Xray is not installed");
@@ -62,7 +55,6 @@ public final class IsolatedCore implements AutoCloseable {
 
     public long pid() { return process.pid(); }
 
-    /** The core's last output lines, newest last. Used to explain why a server was rejected. */
     public List<String> lastLines() {
         synchronized (lastLines) { return List.copyOf(lastLines); }
     }

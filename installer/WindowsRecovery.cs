@@ -15,17 +15,11 @@ using Microsoft.Win32;
 [assembly: AssemblyDescription("Puts the network back and rolls PerRoute back, even when PerRoute does not open")]
 [assembly: AssemblyCompany("Ali Mirzad")]
 [assembly: AssemblyProduct("PerRoute")]
-[assembly: AssemblyVersion("3.5.0.0")]
-[assembly: AssemblyFileVersion("3.5.0.0")]
+[assembly: AssemblyVersion("3.5.1.0")]
+[assembly: AssemblyFileVersion("3.5.1.0")]
 
 namespace PerRouteRecovery
 {
-    /// <summary>
-    /// The standalone recovery tool. It does the same safe restore as PerRoute: it only undoes what PerRoute itself
-    /// changed (the Windows proxy, the start-up recovery entry, the per-app engine's app list and leftover cores),
-    /// and leaves settings made by Windows or another program alone. It also puts back the previous version the
-    /// installer keeps. It runs as the signed-in user and asks for Administrator approval only where needed.
-    /// </summary>
     internal static class Program
     {
         internal const string ProxyKey = @"Software\Microsoft\Windows\CurrentVersion\Internet Settings";
@@ -47,7 +41,6 @@ namespace PerRouteRecovery
                 if (Has(args, "/engine")) return Recovery.RestoreEngine(new List<string>()) ? 0 : 1;
                 if (Has(args, "/cleanup"))
                 {
-                    // Used by the uninstaller, which runs elevated: everything, quietly.
                     List<string> log = new List<string>();
                     Recovery.RestoreUser(data, log);
                     Recovery.RestoreEngine(log);
@@ -105,7 +98,6 @@ namespace PerRouteRecovery
         [DllImport("wininet.dll", SetLastError = true)]
         private static extern bool InternetSetOption(IntPtr handle, int option, IntPtr buffer, int length);
 
-        /// <summary>Set when this is a temporary copy working on the installation it was copied from.</summary>
         internal static string InstallOverride;
 
         internal static string InstallDirectory
@@ -113,8 +105,6 @@ namespace PerRouteRecovery
             get { return (InstallOverride ?? AppDomain.CurrentDomain.BaseDirectory).TrimEnd(Path.DirectorySeparatorChar); }
         }
         internal static string RollbackDirectory { get { return InstallDirectory + ".rollback"; } }
-
-        // ------------------------------------------------------------------ what is left behind
 
         internal static string CurrentProxyServer()
         {
@@ -144,7 +134,6 @@ namespace PerRouteRecovery
                    File.Exists(Path.Combine(EngineDirectory, "app-config.perroute-was-missing"));
         }
 
-        /// <summary>One line per thing PerRoute left behind; empty when there is nothing to restore.</summary>
         internal static List<string> Leftovers(string data)
         {
             List<string> found = new List<string>();
@@ -160,9 +149,6 @@ namespace PerRouteRecovery
             return found;
         }
 
-        // ------------------------------------------------------------------ restore, as the signed-in user
-
-        /// <summary>Restores the Windows proxy and removes PerRoute's other leftovers that need no Administrator rights.</summary>
         internal static void RestoreUser(string data, List<string> log)
         {
             string backupFile = Path.Combine(data, "system-proxy-backup.json");
@@ -262,7 +248,6 @@ namespace PerRouteRecovery
             catch { return null; }
         }
 
-        /// <summary>Xray processes started from PerRoute's folders: the installation and PerRoute's data folder.</summary>
         private static List<Process> LeftoverCores(string data)
         {
             List<Process> cores = new List<Process>();
@@ -279,9 +264,6 @@ namespace PerRouteRecovery
             return cores;
         }
 
-        // ------------------------------------------------------------------ restore, as Administrator
-
-        /// <summary>Stops the per-app engine and puts back the app list it had before PerRoute, if PerRoute's is in place.</summary>
         internal static bool RestoreEngine(List<string> log)
         {
             if (!EngineNeedsRestore()) return true;
@@ -313,8 +295,6 @@ namespace PerRouteRecovery
             }
         }
 
-        // ------------------------------------------------------------------ rollback
-
         internal static string InstalledVersion(string directory)
         {
             try { return File.ReadAllText(Path.Combine(directory, "perroute-version.txt")).Trim(); }
@@ -326,15 +306,10 @@ namespace PerRouteRecovery
             return File.Exists(Path.Combine(RollbackDirectory, "PerRoute.exe"));
         }
 
-        /// <summary>
-        /// Swaps the installation with the previous version the installer kept, then opens it. Settings are not
-        /// touched. Needs Administrator rights; if anything fails the current installation is put back.
-        /// </summary>
         internal static bool RollBack(int waitForPid, bool startAfterwards)
         {
             if (!RollbackAvailable()) { MessageBox.Show("No previous version is kept on this computer.", "PerRoute Recovery"); return false; }
             if (!Program.IsAdministrator()) { Elevate("/rollback" + (waitForPid > 0 ? " /wait " + waitForPid : "")); return true; }
-            // This program runs from the installation it swaps out, so the swap is done by a copy of itself.
             if (!IsRunningFromCopy()) { RunFromCopy("/rollback" + (waitForPid > 0 ? " /wait " + waitForPid : "")); return true; }
             if (waitForPid > 0)
             {
@@ -380,7 +355,6 @@ namespace PerRouteRecovery
             catch { }
             if (startAfterwards)
             {
-                // Through Explorer, so PerRoute runs as the signed-in user and not with this tool's elevation.
                 try { Process.Start("explorer.exe", "\"" + Path.Combine(install, "PerRoute.exe") + "\""); } catch { }
             }
             MessageBox.Show("PerRoute " + (previous.Length > 0 ? previous : "") + " is back" + (current.Length > 0 ? ", in place of " + current : "") + ". Your settings were kept.",
@@ -396,7 +370,6 @@ namespace PerRouteRecovery
                    Path.GetFileName(Application.ExecutablePath).StartsWith(CopyMarker, StringComparison.OrdinalIgnoreCase);
         }
 
-        /// <summary>Starts a copy of this program from the temporary folder with the installation folder passed along.</summary>
         private static void RunFromCopy(string arguments)
         {
             string copy = Path.Combine(Path.GetTempPath(), CopyMarker + Guid.NewGuid().ToString("N") + ".exe");
@@ -405,7 +378,6 @@ namespace PerRouteRecovery
             Process.Start(start);
         }
 
-        /// <summary>Starts this tool again with Administrator rights for one task.</summary>
         internal static void Elevate(string arguments)
         {
             ProcessStartInfo start = new ProcessStartInfo(Application.ExecutablePath, arguments + " /data \"" + Program.DefaultDataDirectory() + "\"")
@@ -441,7 +413,6 @@ namespace PerRouteRecovery
         }
     }
 
-    /// <summary>The window: what is left behind, a restore button, and going back a version.</summary>
     internal sealed class RecoveryForm : Form
     {
         private readonly string data;

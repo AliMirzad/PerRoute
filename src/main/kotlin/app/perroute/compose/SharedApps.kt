@@ -48,24 +48,19 @@ import kotlinx.coroutines.launch
 import java.awt.FileDialog
 import java.nio.file.Path
 
-/** Where the application list comes from. */
 internal enum class AppListSource(val label: String) { INSTALLED("Installed"), RUNNING("Running") }
 
-/** An executable offered for selection, with the name shown for it. */
 internal data class AppChoice(val name: String, val path: String) {
     val title: String get() = name.removeSuffix(".exe")
 }
 
-/** Display order for the three routing modes, as both designs present them. */
 internal val RouteModeOrder = listOf(AppRouteMode.MAIN, AppRouteMode.MANUAL, AppRouteMode.AUTO)
 
-/** How one application is routed in the draft: by the main server, a custom one, Auto, or a server that is gone. */
 internal class DraftRoute(val mode: AppRouteMode, val assignedKey: String?, val node: ProxyNode?, val label: String, val pending: Boolean) {
     val followsMain get() = mode == AppRouteMode.MAIN
     val missing get() = mode == AppRouteMode.MANUAL && assignedKey != null && node == null
 }
 
-/** Resolves the unsaved assignment of one application against the current server list. */
 internal fun draftRoute(shell: Shell, path: String): DraftRoute {
     val key = shell.draft.routes[AppRoutes.normalize(path)]
     val node = key?.let { wanted -> shell.nodes.firstOrNull { it.key() == wanted } }
@@ -74,7 +69,6 @@ internal fun draftRoute(shell: Shell, path: String): DraftRoute {
         mode == AppRouteMode.MANUAL && key == null)
 }
 
-/** Auto's decision for an app in the draft, recomputed when the servers or the live routes change. */
 @Composable
 internal fun rememberAutoDecision(shell: Shell, path: String): Pair<AutoServerSelector.Decision, AutoCandidatePool> {
     val pool = AutoCandidatePool.decode(shell.draft.pools[AppRoutes.normalize(path)])
@@ -82,7 +76,6 @@ internal fun rememberAutoDecision(shell: Shell, path: String): Pair<AutoServerSe
     return decision to pool
 }
 
-/** What the route column of an app says: a mode word and the server it leads to, or why there is none. */
 internal class RouteCellText(val mode: String, val server: String, val warning: Boolean, val node: ProxyNode?, val kind: RouteKindLabel?)
 
 @Composable
@@ -106,10 +99,6 @@ internal fun routeCellText(shell: Shell, path: String): RouteCellText {
     }
 }
 
-/**
- * The working state of the Apps screen besides the draft: discovered applications, search and source. Both
- * designs read it; the draft itself lives in the Shell until Save changes.
- */
 internal class AppsModel(private val shell: Shell) {
     var query by mutableStateOf("")
     var source by mutableStateOf(AppListSource.INSTALLED)
@@ -117,10 +106,8 @@ internal class AppsModel(private val shell: Shell) {
     var installedLoading by mutableStateOf(true)
     var running by mutableStateOf<List<AppChoice>>(emptyList())
     var installed by mutableStateOf<List<AppChoice>>(emptyList())
-    /** Every application that was selected at some point keeps its row, so an EXE unticked by mistake can be ticked again. */
     val manual = mutableStateListOf<String>()
     private var loaded = false
-    /** Saved selections lead the list. The order is fixed when the list loads, so a tick never moves a row away from the pointer. */
     private var pinned: Set<String> = emptySet()
     private var pinnedFor: Pair<List<AppChoice>, List<String>>? = null
 
@@ -143,10 +130,13 @@ internal class AppsModel(private val shell: Shell) {
 
     val loading: Boolean get() = if (source == AppListSource.RUNNING) runningLoading else installedLoading
 
-    /** Keeps a row for every app that is or was selected, then filters and orders the list. */
     fun visible(): List<AppChoice> {
         (shell.apps + shell.draft.selected).forEach { path -> if (manual.none { it.equals(path, true) }) manual += path }
-        val available = if (source == AppListSource.RUNNING) running else installed
+        val discovered = if (source == AppListSource.RUNNING) running else installed
+        val moved = manual.filter(app.perroute.service.StoreAppPaths::isStorePath).mapNotNull { saved ->
+            app.perroute.service.StoreAppPaths.current(saved).takeIf { !it.equals(saved, true) }?.let { it.lowercase() to saved }
+        }.toMap()
+        val available = if (moved.isEmpty()) discovered else discovered.map { choice -> moved[choice.path.lowercase()]?.let { AppChoice(choice.name, it) } ?: choice }
         val extra = manual.filter { path -> available.none { it.path.equals(path, true) } }.map { AppChoice(fileName(it), it) }
         val key = available to shell.apps.toList()
         if (pinnedFor != key) { pinnedFor = key; pinned = shell.apps.mapTo(hashSetOf()) { it.lowercase() } }
@@ -156,10 +146,8 @@ internal class AppsModel(private val shell: Shell) {
 
     fun selectedRoutes(): List<Pair<String, DraftRoute>> = shell.draft.selected.map { it to draftRoute(shell, it) }
 
-    /** Apps whose custom server is gone: connecting is blocked until each gets a replacement. */
     fun unresolved(): List<Pair<String, DraftRoute>> = if (shell.draft.advanced) selectedRoutes().filter { it.second.missing } else emptyList()
 
-    /** How many routes the draft would use: the main server plus each distinct custom server and Auto route. */
     fun routeCount(): Int {
         if (!shell.draft.advanced) return if (shell.draft.selected.isEmpty()) 0 else 1
         val mainKey = shell.mainNode?.key()
@@ -196,7 +184,6 @@ internal class AppsModel(private val shell: Shell) {
 
 internal fun appsModel(shell: Shell): AppsModel = shell.screen("${Tab.Apps.name}:apps") { AppsModel(shell) }
 
-/** Server choices for an app in Manual mode, favorites first, with what is known about each. */
 @Composable
 internal fun manualServerEntries(shell: Shell, path: String, filter: String, open: Boolean): List<MenuEntry> {
     val route = draftRoute(shell, path)
@@ -221,7 +208,6 @@ internal fun manualServerEntries(shell: Shell, path: String, filter: String, ope
         }
 }
 
-/** Chooses the server of an app in Manual mode. */
 @Composable
 internal fun RoutePicker(shell: Shell, path: String, enabled: Boolean, modifier: Modifier = Modifier.fillMaxWidth()) {
     var open by remember { mutableStateOf(false) }
@@ -264,7 +250,6 @@ internal fun RoutePicker(shell: Shell, path: String, enabled: Boolean, modifier:
     }
 }
 
-/** Which servers Auto may choose for one app: all, favorites, or one tag. */
 @Composable
 internal fun AutoPoolMenu(shell: Shell, path: String, modifier: Modifier = Modifier.fillMaxWidth()) {
     val pool = AutoCandidatePool.decode(shell.draft.pools[AppRoutes.normalize(path)])
@@ -280,7 +265,6 @@ internal fun AutoPoolMenu(shell: Shell, path: String, modifier: Modifier = Modif
         }, modifier, accessibleLabel = "Servers Auto may choose for ${appName(path)}: ${pool.describe()}", enabled = !shell.locked)
 }
 
-/** The server an app uses now and why: the main server, the chosen server, or Auto's decision and explanation. */
 @Composable
 internal fun DecisionSummary(shell: Shell, path: String) {
     val route = draftRoute(shell, path)
@@ -333,17 +317,12 @@ internal fun DecisionSummary(shell: Shell, path: String) {
     Text(explanation, color = Muted, fontSize = 11.sp, lineHeight = 15.sp)
 }
 
-/** The Advanced routing explanation used next to its switch. */
 internal fun advancedDetail(shell: Shell): String = when {
     !shell.perApp -> "Per-app servers apply in Smart per-app only. Current mode: ${modeLabel(shell.mode)}."
     shell.draft.advanced -> "Each app follows Main, a server you pick, or Auto."
     else -> "Off: every selected app uses the main server."
 }
 
-/**
- * Download and upload limits of one app, in megabits per second. They are enforced by the traffic gateway
- * for all of the app's connections together, and they save immediately, unlike the rest of the Apps screen.
- */
 internal class BandwidthForm(private val shell: Shell, val path: String) {
     private val controller = shell.controller
     var policy by mutableStateOf(controller.bandwidthPolicy(path))
@@ -357,7 +336,6 @@ internal class BandwidthForm(private val shell: Shell, val path: String) {
     val next: BandwidthPolicy get() = BandwidthPolicy(parsed(down) ?: 0L, parsed(up) ?: 0L)
     val changed: Boolean get() = next != policy
 
-    /** Picks up a limit changed elsewhere (for example "Set unlimited" in Traffic) unless the user is typing a new one. */
     fun refreshStatus() {
         val saved = controller.bandwidthPolicy(path)
         if (saved != policy && !changed) {
@@ -388,7 +366,6 @@ internal fun formatMbpsInput(bits: Long): String {
     return if (mbps == Math.floor(mbps)) mbps.toLong().toString() else "%.2f".format(java.util.Locale.ROOT, mbps).trimEnd('0').trimEnd('.')
 }
 
-/** The bandwidth form of one app, kept while its screen is open so both designs edit the same values. */
 @Composable
 internal fun rememberBandwidthForm(shell: Shell, path: String): BandwidthForm {
     val form = shell.screen("${shell.tab.name}:bandwidth:${path.lowercase()}") { BandwidthForm(shell, path) }
@@ -396,10 +373,6 @@ internal fun rememberBandwidthForm(shell: Shell, path: String): BandwidthForm {
     return form
 }
 
-/**
- * The bandwidth editor: an Unlimited switch, download and upload limits in Mbps, Apply limits and the status.
- * [sideBySide] puts both limits on one row, as the wide detail panels do.
- */
 @Composable
 internal fun BandwidthEditor(shell: Shell, path: String, sideBySide: Boolean = true, showTitle: Boolean = true) {
     val form = rememberBandwidthForm(shell, path)
@@ -438,7 +411,6 @@ internal fun BandwidthEditor(shell: Shell, path: String, sideBySide: Boolean = t
     BandwidthStatusLine(form.status)
 }
 
-/** The name, colour and word of a bandwidth state. Every use shows the word, never colour alone. */
 @Composable
 internal fun bandwidthStateText(state: BandwidthState, idle: Boolean = false): Pair<String, Color> = when (state) {
     BandwidthState.UNLIMITED -> (if (idle) "Idle" else "Unlimited") to Muted
@@ -448,7 +420,6 @@ internal fun bandwidthStateText(state: BandwidthState, idle: Boolean = false): P
     BandwidthState.NOT_ENFORCED -> "Not enforced" to Red
 }
 
-/** Enforced, throttling, pending or not enforced, with the reason in words. */
 @Composable
 internal fun BandwidthStatusLine(status: BandwidthStatus, large: Boolean = false) {
     val (label, color) = bandwidthStateText(status.state)

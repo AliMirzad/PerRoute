@@ -3,15 +3,6 @@ package app.perroute.workspace;
 import java.util.LinkedHashMap;
 import java.util.Map;
 
-/**
- * A browser workspace: a browser profile of its own whose traffic always takes one route, independently of
- * everything else. The profile is a separate folder, so its cookies, sign-ins and history stay apart from the
- * browser's normal profiles.
- *
- * @param nodeKey the server it uses; blank means "the main server at the moment it opens"
- * @param slot    fixed position that gives the workspace its own loopback port, so a browser that stays open
- *                keeps working when PerRoute restarts
- */
 public record Workspace(String id, String name, String browserPath, String nodeKey, int slot, long createdAt) {
     public static final int SLOTS = 30;
 

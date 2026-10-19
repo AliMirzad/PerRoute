@@ -51,14 +51,8 @@ import androidx.compose.ui.unit.sp
 import app.perroute.model.ConnectionMode
 import app.perroute.routing.RouteHealthTracker
 
-/** Whether the route graph shows each route's last check under it. Kept for the window's life, like the other view choices. */
 private class ConnectView { var details by mutableStateOf(false) }
 
-/**
- * Connect: a charcoal column with the status, the one main action, live speed and the main server, and on the
- * right every route at a glance: which apps go to which server, how each route is doing, and what to do when one
- * is recovering. The column is about a quarter of the window, as in the approved design.
- */
 @Composable
 internal fun NewConnectPage(shell: Shell) {
     val view = ConnectionView(shell)
@@ -226,7 +220,6 @@ private fun NewRoutesArea(shell: Shell, view: ConnectionView, state: ConnectView
     }
 }
 
-/** "2 healthy · 1 recovering | Last checked 1 min ago". */
 @Composable
 private fun RouteSummary(shell: Shell, view: ConnectionView, now: Long, showLast: Boolean) {
     val (icon, color, text) = when {
@@ -257,10 +250,6 @@ private val AppCardHeight = 54.dp
 private val AppCardGap = 10.dp
 private const val MaxAppsPerRoute = 3
 
-/**
- * One route: its apps on the left, the route kind in the middle, the server on the right, joined by lines.
- * Several apps on one route merge into one line before the pill, as in the approved design.
- */
 @Composable
 private fun RouteGraphRow(shell: Shell, row: RouteRow, health: RouteHealthTracker.Snapshot?, now: Long, details: Boolean) {
     val apps = row.applications

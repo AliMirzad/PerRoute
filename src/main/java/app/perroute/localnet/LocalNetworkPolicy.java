@@ -14,20 +14,12 @@ import java.util.List;
 import java.util.Map;
 import java.util.Set;
 
-/**
- * How routed apps may reach local networks. Local devices stay direct, as before. Two things can be chosen:
- * local names (printer.local, nas.lan) are sent straight to the local network instead of to the proxy server,
- * which could never resolve them; and on networks marked as not trusted, routed apps cannot reach local devices
- * at all, except the router and the network's own DNS servers, which they need to work.
- */
 public final class LocalNetworkPolicy {
-    /** Suffixes that only exist on local networks. */
     public static final List<String> LOCAL_NAME_RULES = List.of("domain:local", "domain:lan", "domain:home.arpa", "domain:internal",
             "domain:localdomain", "domain:home", "regexp:^[^.]+$");
 
     public enum Trust { TRUSTED, UNTRUSTED }
 
-    /** What the core config needs from this policy, for the networks connected right now. */
     public record Rules(boolean localNamesDirect, List<String> allowed, List<String> blocked) {
         public boolean blocking() { return !blocked.isEmpty(); }
     }
@@ -44,7 +36,6 @@ public final class LocalNetworkPolicy {
 
     public synchronized void setLocalNamesDirect(boolean value) { load(); localNamesDirect = value; save(); }
 
-    /** Networks are trusted unless marked otherwise, which is how PerRoute always treated them. */
     public synchronized Trust trust(String networkId) { load(); return trust.getOrDefault(networkId, Trust.TRUSTED); }
 
     public synchronized void setTrust(String networkId, String label, Trust value) {
@@ -54,7 +45,6 @@ public final class LocalNetworkPolicy {
         save();
     }
 
-    /** Networks marked as not trusted, with the name they had when they were marked. */
     public synchronized Map<String, String> untrusted() { load(); return Map.copyOf(names); }
 
     public synchronized void clear() {
@@ -65,7 +55,6 @@ public final class LocalNetworkPolicy {
         try { Files.deleteIfExists(file); } catch (IOException ignored) {}
     }
 
-    /** The rules for the networks connected now. */
     public synchronized Rules rules(List<LocalNetwork> networks) {
         load();
         Set<String> allowed = new LinkedHashSet<>();

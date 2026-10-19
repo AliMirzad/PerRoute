@@ -61,12 +61,6 @@ import java.util.Map;
 import java.util.Set;
 import java.util.concurrent.atomic.AtomicReference;
 
-/**
- * Version 3.5: network snapshots and safe restore, startup health and rollback, subscription intelligence, the
- * gaming score, side-by-side comparisons, recipes, browser workspaces, the local network policy, temporary
- * servers with in-place layout changes, and the Doctor and Safety Center. Machine access goes through the fake
- * backend; nothing here touches Windows settings, the driver or the network.
- */
 final class V35Tests {
     private static int assertions;
     private V35Tests() {}
@@ -94,10 +88,9 @@ final class V35Tests {
         withFixture("3.5 controller: doctor and safety center", V35Tests::testHealth);
         withFixture("3.5 controller: subscription intelligence", V35Tests::testSubscriptionController);
         withFixture("3.5 controller: local network trust", V35Tests::testLocalNetworkController);
+        withFixture("3.5 controller: QUIC is blocked for routed apps unless turned off", V35Tests::testQuicBlocked);
         withFixture("3.5 controller: workspaces", V35Tests::testWorkspaceController);
     }
-
-    // ============================================================================ domain
 
     private static void testSnapshotDiff() {
         NetworkStateKeys.setPerRouteServer(WindowsSystemProxyManager.perRouteProxyServer());
@@ -122,7 +115,6 @@ final class V35Tests {
         equal(4, NetworkStateDiff.compare(before, connected, true).size());
         equal("On", NetworkStateKeys.display(NetworkStateKeys.PROXY_ENABLE, "0x1"));
         equal("Not set", NetworkStateKeys.display(NetworkStateKeys.PROXY_SERVER, ""));
-        // JSON round trip.
         NetworkSnapshot copy = NetworkSnapshot.fromJson(Json.parse(Json.stringify(connected.toJson())));
         equal(connected.values(), copy.values());
         equal(NetworkSnapshot.Reason.CONNECTED, copy.reason());
@@ -154,7 +146,6 @@ final class V35Tests {
         check(plan.actions().stream().filter(step -> step.action() == NetworkRestorePlan.Action.RESTORE_ENGINE).allMatch(step -> step.needsAdmin() && step.releasesApps()),
                 "Restoring the engine needs Administrator and releases apps");
 
-        // Another program set its proxy after the crash: it is left alone, and the old copy is discarded.
         Map<String, String> replaced = new LinkedHashMap<>(crashed);
         replaced.put(NetworkStateKeys.PROXY_SERVER, "proxy.corp:8080");
         var respectful = NetworkRestorePlan.build(snapshot(3, NetworkSnapshot.Reason.MANUAL, replaced), null, false);
@@ -164,11 +155,9 @@ final class V35Tests {
         check(respectful.actions().stream().anyMatch(step -> step.action() == NetworkRestorePlan.Action.DISCARD_PROXY_COPY),
                 "PerRoute's outdated copy is dropped so it cannot overwrite the newer setting later");
 
-        // PerRoute's proxy without its saved copy: switched off, or put back from the baseline.
         Map<String, String> lost = new LinkedHashMap<>(Map.of(NetworkStateKeys.PROXY_ENABLE, "0x1", NetworkStateKeys.PROXY_SERVER, ours, NetworkStateKeys.PROXY_BACKUP, "no"));
         var reset = NetworkRestorePlan.build(snapshot(4, NetworkSnapshot.Reason.MANUAL, lost), clean, false);
         equal(NetworkRestorePlan.Action.RESET_PROXY, reset.actions().get(0).action());
-        // An engine using someone else's list is left alone.
         var foreign = NetworkRestorePlan.build(snapshot(5, NetworkSnapshot.Reason.MANUAL, Map.of(NetworkStateKeys.ENGINE_CONFIG, NetworkStateKeys.CONFIG_OTHER,
                 NetworkStateKeys.ENGINE_SERVICE, NetworkStateKeys.RUNNING)), null, false);
         check(foreign.actions().isEmpty() && !foreign.leftAlone().isEmpty(), "Another app list is not touched");
@@ -202,7 +191,6 @@ final class V35Tests {
             var update = health.beginStart("3.5.0", 200);
             equal("3.0.0", update.updatedFrom());
             equal(0, update.failedStarts());
-            // Two starts that never became healthy.
             var second = health.beginStart("3.5.0", 300);
             equal(1, second.failedStarts());
             var third = health.beginStart("3.5.0", 400);
@@ -288,7 +276,6 @@ final class V35Tests {
     }
 
     private static void testShadowExperiment() {
-        // The candidate answers in 60 ms, the live route in 150 ms; one live request fails.
         AtomicReference<Integer> calls = new AtomicReference<>(0);
         ShadowExperiment.Timer timer = (port, host) -> {
             calls.set(calls.get() + 1);
@@ -332,7 +319,6 @@ final class V35Tests {
         equal(recipe.rules(), fromText.rules());
         for (String secret : List.of("vless://", "subscription", "C:\\", "Users")) check(!json.contains(secret), "A recipe never contains " + secret);
 
-        // Tampering is detected; unsafe values are refused.
         refused(json.replace("github.com", "evil.example"), "changed or damaged");
         refused(json.replace("\"perrouteRecipe\": 1", "\"perrouteRecipe\": 9"), "newer PerRoute");
         refused("{\"perrouteRecipe\":1,\"rules\":[{\"match\":\"domain\",\"value\":\"ext:secret.dat:x\",\"action\":\"proxy\"}]}", "not a valid domain");
@@ -411,7 +397,6 @@ final class V35Tests {
             check(command.stream().anyMatch(part -> part.startsWith("--user-data-dir=")), "A profile folder of its own");
             check(command.contains("--disable-quic") && command.stream().anyMatch(part -> part.contains("disable_non_proxied_udp"))
                     && command.stream().anyMatch(part -> part.startsWith("--host-resolver-rules=MAP * ~NOTFOUND")), "QUIC, WebRTC and DNS stay inside the route");
-            // The isolated config of a workspace carries only rules for every app, and its own SOCKS port.
             ProxyNode node = new ProxyNode("n", "N", Protocol.VLESS, "198.51.100.1", 443, "00000000-0000-0000-0000-000000000000", Map.of(), "");
             String config = new XrayConfigGenerator().generateIsolated(node, 19_700, 25_000, List.of(
                     new RouteRule("r1", "All", "", RouteRule.MatchType.DOMAIN, "example.com", RouteRule.Action.DIRECT, true),
@@ -489,7 +474,6 @@ final class V35Tests {
         XrayConfigGenerator generator = new XrayConfigGenerator(XrayConfigGenerator.PER_APP_PORT_BASE, true);
         java.util.ArrayList<ProxyNode> withC = new java.util.ArrayList<>(java.util.Arrays.asList(null, null, second));
         String running = generator.generateApplicationProxy(main, apps, List.of(), withC);
-        // B gets a route of its own on third; it comes first, so C's route moves from index 0 to 1.
         java.util.ArrayList<ProxyNode> withB = new java.util.ArrayList<>(java.util.Arrays.asList(null, slot("temp-slot:b", third), second));
         String next = generator.generateApplicationProxy(main, apps, List.of(), withB);
         var targetsRunning = XrayConfigGenerator.applicationRouteTargets(running);
@@ -502,11 +486,9 @@ final class V35Tests {
         equal(List.of("perroute-check-1"), plan.addedInboundTags());
         equal(1, plan.addedOutboundTags().size());
         check(plan.removeOutbounds().isEmpty() && plan.removeInbounds().isEmpty(), "Nothing is removed when a route is added");
-        // C keeps its live outbound: the rule for C now points at the outbound the core already has.
         var after = XrayConfigGenerator.applicationRouteTargets(plan.config());
         equal(targetsRunning.get("perroute-app-route-0"), after.get("perroute-app-route-1"));
         check(!after.get("perroute-app-route-0").equals(targetsRunning.get("perroute-app-route-0")), "The new route gets a new outbound");
-        // And back again: the temporary route's inbound and outbound are removed.
         Map<String, String> back = new LinkedHashMap<>();
         var current = XrayConfigGenerator.applicationRouteTargets(plan.config());
         back.put(targetsRunning.get("perroute-app-proxy"), current.get("perroute-app-proxy"));
@@ -514,10 +496,8 @@ final class V35Tests {
         var undo = XrayConfigGenerator.runtimePlan(plan.config(), running, back);
         check(undo != null && undo.removeInbounds().equals(List.of("perroute-check-1")) && undo.removeOutbounds().size() == 1 && undo.addedOutboundTags().isEmpty(),
                 "Ending the route removes only what it added: " + (undo == null ? "null" : undo.removeOutbounds()));
-        // Balancers (embedded profiles) always need a restart.
         String balanced = running.replace("\"rules\": [", "\"balancers\": [{\"tag\": \"b\", \"selector\": [\"proxy\"]}],\n    \"rules\": [");
         check(XrayConfigGenerator.runtimePlan(balanced, next, keep) == null, "Balancers are never changed in place");
-        // Different API sections cannot be changed in place either.
         String noControl = new XrayConfigGenerator(XrayConfigGenerator.PER_APP_PORT_BASE, false).generateApplicationProxy(main, apps, List.of(), withB);
         check(XrayConfigGenerator.runtimePlan(running, noControl, keep) == null, "A config without the control API needs a restart");
     }
@@ -545,9 +525,6 @@ final class V35Tests {
         equal(null, CoreLogHints.INSTANCE.analyze(List.of("accepted tcp:example.com:443")));
     }
 
-    // ============================================================================ controller
-
-    /** A controller on the fake machine, with three servers and three selected apps in Smart per-app. */
     private static final class Fixture implements AutoCloseable {
         final Path directory;
         final ControllerTests.FakeBackend backend = new ControllerTests.FakeBackend();
@@ -609,11 +586,9 @@ final class V35Tests {
         check(f.backend.lastConfig.contains("third.example"), "The temporary server is in the running core");
         check(c.activeRoutes().stream().anyMatch(r -> r.getId().startsWith(RoutePlanner.TEMPORARY_ROUTE_PREFIX)), "It has a route of its own");
         int starts = f.backend.startCount;
-        // Ending it without the runtime API restarts the core and restores the usual route.
         check(c.cancelTemporaryRoute(f.chrome).getOk(), "End it");
         check(!f.backend.lastConfig.contains("third.example"), "The usual route is back");
         equal(starts + 1, f.backend.startCount);
-        // With the core's runtime API (on with route monitoring) a temporary server starts and ends without a restart.
         f.backend.supportsRuntimePlan = true;
         starts = f.backend.startCount;
         ActionResult inPlace = c.setTemporaryRoute(f.telegram, "second", 15);
@@ -628,7 +603,6 @@ final class V35Tests {
         check(c.activeRoutes().stream().filter(r -> r.getId().startsWith(RoutePlanner.TEMPORARY_ROUTE_PREFIX)).count() == 1, "One temporary route is live");
         c.disconnect();
 
-        // A saved temporary route that has already ended is ignored after a restart.
         Path file = f.directory.resolve("data").resolve("temporary-routes.json");
         Files.writeString(file, Json.stringify(Map.of("format", 1, "routes", List.of(Map.of("app", f.chrome, "node", "third", "startedAt", 1, "until", 2)))));
         try (Fixture second = new Fixture()) {
@@ -649,7 +623,6 @@ final class V35Tests {
         check(!c.networkRestorePlan().needed(), "Nothing to restore on a clean machine");
         check(c.restoreNetwork().getOk(), "A restore with nothing to do succeeds");
 
-        // After a crash: PerRoute's proxy without its saved copy, a leftover core and the engine's list.
         f.backend.networkValues.putAll(Map.of(NetworkStateKeys.PROXY_ENABLE, "0x1", NetworkStateKeys.PROXY_SERVER, ours,
                 NetworkStateKeys.CORE_PROCESSES, "1", NetworkStateKeys.ENGINE_SERVICE, NetworkStateKeys.RUNNING,
                 NetworkStateKeys.ENGINE_CONFIG, NetworkStateKeys.CONFIG_PERROUTE, NetworkStateKeys.ENGINE_BACKUP, "yes"));
@@ -682,7 +655,6 @@ final class V35Tests {
         check(!text.contains("second.example") && !text.contains(f.directory.toString()), "The recipe holds no server and no folder");
         equal("Messaging", recipe.roles().get(0).label());
 
-        // Someone else imports it: Code is new, Telegram is on the main server there.
         try (Fixture other = new Fixture()) {
             var opened = other.controller.openRecipe(RecipeCodec.toText(recipe));
             var plan = opened.getFirst();
@@ -811,6 +783,27 @@ final class V35Tests {
         check(c.connect().getOk() && !f.backend.lastConfig.contains("perroute-local-"), "Both can be turned off");
     }
 
+    private static void testQuicBlocked(Fixture f) throws Exception {
+        PerRouteController c = f.controller;
+        check(c.quicBlocked(), "QUIC is blocked by default");
+        check(c.connect().getOk(), "Connect");
+        String config = f.backend.lastConfig;
+        int privateDirect = config.indexOf("perroute-private-direct"), quic = config.indexOf(XrayConfigGenerator.QUIC_BLOCK_RULE),
+                app = config.indexOf("perroute-app-proxy");
+        check(privateDirect > 0 && privateDirect < quic && quic < app, "Local traffic first, then QUIC, all before the app rule");
+        String rule = config.substring(config.lastIndexOf("{", quic), config.indexOf("}", quic) + 1).replaceAll("\\s", "");
+        check(rule.contains("\"network\":\"udp\"") && rule.contains("\"port\":\"443\"") && rule.contains("\"outboundTag\":\"block\""),
+                "Only UDP 443 goes to the block outbound: " + rule);
+        c.disconnect();
+        check(c.setQuicBlocked(false).getOk() && !c.quicBlocked(), "QUIC can be allowed");
+        check(c.connect().getOk() && !f.backend.lastConfig.contains(XrayConfigGenerator.QUIC_BLOCK_RULE), "Allowed QUIC adds no rule");
+        c.disconnect();
+        c.setQuicBlocked(true);
+        ProxyNode node = new ProxyNode("n", "N", Protocol.VLESS, "198.51.100.1", 443, "00000000-0000-0000-0000-000000000000", Map.of(), "");
+        check(!new XrayConfigGenerator().generateApplicationProxy(node, List.of("C:\\a.exe")).contains(XrayConfigGenerator.QUIC_BLOCK_RULE),
+                "The generator leaves QUIC alone unless asked");
+    }
+
     private static void testWorkspaceController(Fixture f) throws Exception {
         PerRouteController c = f.controller;
         String firefox = f.executable("firefox.exe");
@@ -831,8 +824,6 @@ final class V35Tests {
         int base = PerRouteController.Companion.getWORKSPACE_PORT_BASE();
         check(base >= XrayConfigGenerator.GATEWAY_UPSTREAM_PORT_BASE + 500, "Workspace ports come after every connection port");
     }
-
-    // ============================================================================ helpers
 
     private static NetworkSnapshot snapshot(long id, NetworkSnapshot.Reason reason, Map<String, String> values) {
         return new NetworkSnapshot(id, id, reason, "3.5.0", values);

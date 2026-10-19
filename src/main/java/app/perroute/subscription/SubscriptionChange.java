@@ -6,15 +6,8 @@ import java.util.HashSet;
 import java.util.Map;
 import java.util.Set;
 
-/**
- * How one update changed a subscription's servers. Servers are compared by their effective configuration;
- * a server whose name stayed but whose configuration changed counts as changed, not as one removed and one added.
- *
- * @param unexpected the update removed most of the servers, or replaced every one of them: worth a look
- */
 public record SubscriptionChange(long at, int before, int after, int added, int removed, int changed, boolean unexpected) {
 
-    /** One server as the comparison sees it. */
     public record Entry(String identity, String name) {}
 
     public static SubscriptionChange between(Collection<Entry> previous, Collection<Entry> next, long at) {
@@ -41,7 +34,6 @@ public record SubscriptionChange(long at, int before, int after, int added, int 
 
     public boolean empty() { return added == 0 && removed == 0 && changed == 0; }
 
-    /** "3 added, 1 removed" or "No changes". */
     public String summary() {
         if (empty()) return "No changes";
         StringBuilder text = new StringBuilder();

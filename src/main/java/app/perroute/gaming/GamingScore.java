@@ -3,16 +3,6 @@ package app.perroute.gaming;
 import java.util.ArrayList;
 import java.util.List;
 
-/**
- * How well a server suits games: steady latency, little jitter and no lost packets matter more than a low best
- * case. The score uses UDP measurements when the server carries UDP (most games use it) and TCP otherwise;
- * a server that does not carry UDP is capped, because many games cannot work through it.
- *
- * @param latencyMillis median round trip of the protocol that was scored
- * @param p95Millis     the slowest twentieth of round trips: spikes a player notices
- * @param jitterMillis  mean difference between consecutive round trips
- * @param lossPercent   share of round trips that never came back
- */
 public record GamingScore(int score, String label, boolean udpSupported, long latencyMillis, long p95Millis,
                           long jitterMillis, double lossPercent, long tcpLatencyMillis, double tcpLossPercent,
                           long measuredAt, String note) {
@@ -29,7 +19,6 @@ public record GamingScore(int score, String label, boolean udpSupported, long la
         }
         Stats scored = udpSupported ? udp : tcp;
         int value = (int) Math.round(.4 * latencyPoints(scored.median) + .3 * jitterPoints(scored.jitter) + .3 * lossPoints(scored.loss));
-        // A lost-heavy TCP path hurts game logins and downloads even when UDP is fine.
         if (udpSupported && tcp.answered > 0 && tcp.loss >= 10) value = Math.min(value, 60);
         String note;
         if (!udpSupported) {
@@ -52,7 +41,6 @@ public record GamingScore(int score, String label, boolean udpSupported, long la
         return "Unavailable";
     }
 
-    /** 100 at 40 ms or less, 40 at 150 ms, 0 at 300 ms and beyond. */
     static double latencyPoints(long millis) {
         if (millis < 0) return 0;
         if (millis <= 40) return 100;
@@ -61,7 +49,6 @@ public record GamingScore(int score, String label, boolean udpSupported, long la
         return 0;
     }
 
-    /** 100 at 5 ms of jitter or less, 0 at 50 ms. */
     static double jitterPoints(long millis) {
         if (millis < 0) return 0;
         if (millis <= 5) return 100;
@@ -69,7 +56,6 @@ public record GamingScore(int score, String label, boolean udpSupported, long la
         return 100 - (millis - 5) * 100.0 / 45;
     }
 
-    /** 100 without loss, 0 at 10 % lost. */
     static double lossPoints(double percent) {
         return Math.max(0, 100 - percent * 10);
     }
@@ -79,7 +65,6 @@ public record GamingScore(int score, String label, boolean udpSupported, long la
             List<Long> answered = new ArrayList<>(samples.answered());
             double loss = samples.values().isEmpty() ? 100 : samples.lost() * 100.0 / samples.values().size();
             if (answered.isEmpty()) return new Stats(0, -1, -1, -1, loss);
-            // Jitter follows the order the samples were taken in, so it is computed before sorting.
             long jitter = 0;
             for (int index = 1; index < answered.size(); index++) jitter += Math.abs(answered.get(index) - answered.get(index - 1));
             jitter = answered.size() > 1 ? Math.round(jitter / (double) (answered.size() - 1)) : 0;

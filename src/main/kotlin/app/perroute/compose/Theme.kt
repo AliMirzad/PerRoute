@@ -20,10 +20,6 @@ import androidx.compose.ui.text.platform.Font
 import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
 
-/**
- * The two interface designs. Both draw the same Shell and controller; only the presentation differs.
- * New is the default whenever nothing has been chosen, on fresh installs and on upgrades alike.
- */
 internal enum class UiStyle(val key: String, val label: String) {
     NEW(PerRouteController.UI_STYLE_NEW, "New"),
     SIMPLE(PerRouteController.UI_STYLE_SIMPLE, "Simple");
@@ -33,42 +29,30 @@ internal enum class UiStyle(val key: String, val label: String) {
     }
 }
 
-/** The colours of one surface of one design. */
 internal data class Palette(
-    /** The page behind everything. */
     val background: Color,
-    /** Cards, dialogs and fields that sit on the page. */
     val surface: Color,
-    /** Menus and tooltips, raised above cards. */
     val surfaceHigh: Color,
     val foreground: Color,
     val muted: Color,
-    /** The accent used as a fill: buttons, switches, selections. */
     val primary: Color,
-    /** The accent used for text and icons on [background]. */
     val primaryBright: Color,
-    /** Text and icons drawn on [primary]. */
     val onPrimary: Color,
     val success: Color,
     val danger: Color,
     val warning: Color,
-    /** Hairlines: borders, dividers and table rules. */
     val line: Color,
-    /** Text fields and other inputs. */
     val field: Color,
-    /** The background of a selected row. */
     val selection: Color,
     val isDark: Boolean
 )
 
-/** Everything a component needs to draw itself in the current design. */
 internal class Tokens(
     val style: UiStyle,
     val palette: Palette,
     val controlRadius: Dp,
     val cardRadius: Dp,
     val rowRadius: Dp,
-    /** Whether switches name their state ("On"/"Off") next to them, as the New design does. */
     val switchStateText: Boolean
 ) {
     val controlShape: Shape = RoundedCornerShape(controlRadius)
@@ -78,7 +62,6 @@ internal class Tokens(
     fun with(palette: Palette) = Tokens(style, palette, controlRadius, cardRadius, rowRadius, switchStateText)
 }
 
-/** Charcoal, bone and lime. The rail, the title bar and the detail panels stay charcoal in both themes. */
 internal object NewColors {
     val Lime = Color(0xFFD8F24A)
     val Charcoal = Color(0xFF1E2020)
@@ -98,7 +81,6 @@ internal object NewColors {
         success = Color(0xFF53C47A), danger = Color(0xFFF07070), warning = Color(0xFFF0B440),
         line = Color(0xFF2B2F2E), field = Color(0xFF1A1C1B), selection = Color(0xFF232914), isDark = true
     )
-    /** The detail panels, the rail and the dark half of Quick Access. */
     val Panel = Palette(
         background = Charcoal, surface = Color(0xFF272A29), surfaceHigh = Color(0xFF2D3130),
         foreground = Color(0xFFF3F3EE), muted = Color(0xFFA5A9A8),
@@ -108,7 +90,6 @@ internal object NewColors {
     )
 }
 
-/** Light with a violet accent, and its dark companion. */
 internal object SimpleColors {
     val Light = Palette(
         background = Color(0xFFF7F7FA), surface = Color(0xFFFFFFFF), surfaceHigh = Color(0xFFFFFFFF),
@@ -124,7 +105,6 @@ internal object SimpleColors {
         success = Color(0xFF45D08D), danger = Color(0xFFF27575), warning = Color(0xFFEDB24E),
         line = Color(0xFF30303C), field = Color(0xFF1B1B23), selection = Color(0xFF2A2548), isDark = true
     )
-    /** The navigation column, a touch apart from the page. */
     fun sidebar(dark: Boolean) = if (dark) Color(0xFF1B1B23) else Color(0xFFFBFBFD)
 }
 
@@ -133,10 +113,6 @@ internal fun tokensFor(style: UiStyle, dark: Boolean): Tokens = when (style) {
     UiStyle.SIMPLE -> Tokens(style, if (dark) SimpleColors.Dark else SimpleColors.Light, 10.dp, 16.dp, 12.dp, switchStateText = false)
 }
 
-/**
- * The chosen design and theme. Both windows read it, so a change shows everywhere at once. Changing it only
- * redraws: the Shell, the controller, the connection and every unsaved draft stay exactly as they are.
- */
 internal object Appearance {
     var style by mutableStateOf(UiStyle.NEW)
     var dark by mutableStateOf(true)
@@ -178,7 +154,6 @@ internal val UiFont = FontFamily(
     Font("fonts/Inter-Variable.ttf", FontWeight.ExtraBold)
 )
 
-/** Material theme with the design's tokens and typeface, always laid out left to right. */
 @Composable
 internal fun PerRouteTheme(style: UiStyle = Appearance.style, dark: Boolean = Appearance.dark, content: @Composable () -> Unit) {
     val tokens = tokensFor(style, dark)
@@ -204,7 +179,6 @@ internal fun PerRouteTheme(style: UiStyle = Appearance.style, dark: Boolean = Ap
 internal fun ProvideTokens(tokens: Tokens, content: @Composable () -> Unit) =
     CompositionLocalProvider(LocalTokens provides tokens, content = content)
 
-/** Draws [content] with the charcoal panel colours of the New design, whatever the theme. */
 @Composable
 internal fun CharcoalColors(content: @Composable () -> Unit) {
     val tokens = LocalTokens.current

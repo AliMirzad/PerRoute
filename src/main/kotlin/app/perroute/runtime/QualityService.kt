@@ -10,12 +10,6 @@ import java.util.concurrent.TimeUnit
 import java.util.concurrent.locks.ReentrantLock
 import kotlin.concurrent.withLock
 
-/**
- * Collects quality evidence for every server and answers score queries. Evidence comes from what PerRoute
- * measures anyway (pings, real tunnel tests, checks of live routes) and, when switched on, from a bounded
- * background pass: at most [BATCH] servers every [INTERVAL_MILLIS], four at a time, plain TCP port checks,
- * plus at most [VERIFY_PER_PASS] tunnel verifications of Auto candidates that have none yet.
- */
 class QualityService(
     file: Path,
     private val clock: () -> Long = System::currentTimeMillis
@@ -49,10 +43,6 @@ class QualityService(
 
     fun clear() = store.clear()
 
-    /**
-     * Starts the background pass. [targets] returns the servers worth measuring, most important first;
-     * [verify] opens a real tunnel to one server (expensive, so used sparingly).
-     */
     fun startBackground(
         enabled: () -> Boolean,
         targets: () -> List<ProxyNode>,
@@ -80,7 +70,6 @@ class QualityService(
         }
     }
 
-    /** Asks for a pass soon, for example right after Auto was turned on for an application. */
     fun requestPass() {
         lock.withLock { runRequested = true; wake.signalAll() }
     }

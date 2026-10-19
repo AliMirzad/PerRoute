@@ -61,10 +61,6 @@ public final class TrafficHistoryStore implements AutoCloseable {
         return new Snapshot(todayDown, todayUp, monthDown, monthUp, applications);
     }
 
-    /**
-     * Totals for one application, or for all of them when the filter is blank, plus one entry per recorded
-     * day of the current month (newest first). Only byte counts exist; nothing here names a destination.
-     */
     public synchronized Report report(String applicationFilter) {
         String filter = applicationFilter == null ? "" : applicationFilter.trim();
         String today = LocalDate.now().toString();

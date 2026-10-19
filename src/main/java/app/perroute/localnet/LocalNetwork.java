@@ -7,14 +7,6 @@ import java.util.HexFormat;
 import java.util.List;
 import java.util.Locale;
 
-/**
- * A local network this computer is connected to, and the devices seen on it.
- *
- * @param id       stable identity: the network's address range and its router's hardware address, hashed, so the
- *                 same Wi-Fi is recognised again while a different network with the same range is not
- * @param cidr     the network's IPv4 range, such as 192.168.1.0/24
- * @param gatewayMac the router's hardware address, or blank when it could not be read
- */
 public record LocalNetwork(String id, String adapter, String address, String cidr, int prefix, String gateway, String gatewayMac,
                            List<String> dnsServers, List<Device> devices) {
 
@@ -23,7 +15,6 @@ public record LocalNetwork(String id, String adapter, String address, String cid
         devices = List.copyOf(devices);
     }
 
-    /** A device answering on the network, from the computer's neighbour table. */
     public record Device(String address, String mac, String name, boolean gateway) {}
 
     public static String identity(String cidr, String gatewayMac, String gateway) {
@@ -36,7 +27,6 @@ public record LocalNetwork(String id, String adapter, String address, String cid
         }
     }
 
-    /** The range of an IPv4 address with a prefix length: 192.168.1.20 and 24 give 192.168.1.0/24. */
     public static String cidrOf(String address, int prefix) {
         String[] parts = address.split("\\.");
         if (parts.length != 4 || prefix < 0 || prefix > 32) throw new IllegalArgumentException("Not an IPv4 address: " + address);
@@ -47,7 +37,6 @@ public record LocalNetwork(String id, String adapter, String address, String cid
         return ((network >> 24) & 0xff) + "." + ((network >> 16) & 0xff) + "." + ((network >> 8) & 0xff) + "." + (network & 0xff) + "/" + prefix;
     }
 
-    /** Whether an IPv4 address is inside a range. */
     public static boolean contains(String cidr, String address) {
         try {
             String[] split = cidr.split("/");
@@ -58,7 +47,6 @@ public record LocalNetwork(String id, String adapter, String address, String cid
         }
     }
 
-    /** The address ranges people use at home and at work (RFC 1918, link-local and carrier-grade NAT). */
     public static boolean privateRange(String address) {
         return contains("10.0.0.0/8", address) || contains("172.16.0.0/12", address) || contains("192.168.0.0/16", address)
                 || contains("169.254.0.0/16", address) || contains("100.64.0.0/10", address);

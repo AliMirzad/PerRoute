@@ -29,7 +29,6 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 
-/** Traffic: totals, the live chart and every selected app against its limits. Limits are edited from an app's menu. */
 @Composable
 internal fun SimpleTrafficPage(shell: Shell) {
     val model = trafficModel(shell)
@@ -93,7 +92,7 @@ internal fun SimpleTrafficPage(shell: Shell) {
                 }
                 rows.forEach { row ->
                     SimpleTableRow {
-                        Row(Modifier.weight(1.2f), verticalAlignment = Alignment.CenterVertically) {
+                        Row(Modifier.weight(1.2f).padding(end = 12.dp), verticalAlignment = Alignment.CenterVertically) {
                             AppAvatar(fileName(row.path), row.path, 34.dp)
                             Spacer(Modifier.width(14.dp))
                             Column {

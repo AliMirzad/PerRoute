@@ -43,10 +43,6 @@ import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 
-/**
- * PerRoute's logo in both designs: the lime route mark on a charcoal tile, exactly as the window, taskbar and tray
- * icon show it. The New design's rail and title bar keep the bare mark on their own charcoal background.
- */
 @Composable
 internal fun BrandMark(size: Dp = 30.dp) {
     Box(Modifier.size(size).clip(RoundedCornerShape(size * .24f)).background(NewColors.Charcoal).semantics { contentDescription = "PerRoute" },
@@ -68,7 +64,6 @@ internal fun BrandMark(size: Dp = 30.dp) {
     }
 }
 
-/** The colour of a check result in either design. */
 @Composable
 internal fun statusColor(status: CheckStatus): Color = when (status) {
     CheckStatus.PASS -> Cyan
@@ -94,7 +89,6 @@ internal fun statusWord(status: CheckStatus): String = when (status) {
     CheckStatus.SKIPPED -> "Not tested"
 }
 
-/** A round status mark: the icon on a tinted disc. */
 @Composable
 internal fun StatusMark(status: CheckStatus, size: Dp = 30.dp) {
     val color = statusColor(status)
@@ -103,10 +97,6 @@ internal fun StatusMark(status: CheckStatus, size: Dp = 30.dp) {
     }
 }
 
-/**
- * A page for the 3.5 tools in either design. New: heading on the bone area and [panel] in the charcoal detail
- * panel. Simple: the page title, the content in a card and [panel] in a second card below it.
- */
 @Composable
 internal fun FeaturePage(
     eyebrow: List<String>,
@@ -136,7 +126,6 @@ internal fun FeaturePage(
     }
 }
 
-/** A titled section: a rule above it in New, a divider below it in Simple, with an optional control on the right. */
 @Composable
 internal fun FeatureBlock(
     title: String,
@@ -166,7 +155,6 @@ internal fun FeatureBlock(
     if (!Tok.isNew) Divider()
 }
 
-/** The heading of a detail panel (New) or of the details card (Simple). */
 @Composable
 internal fun PanelHeading(eyebrow: String, title: String, subtitle: String = "", leading: (@Composable () -> Unit)? = null) {
     if (Tok.isNew) NewPanelHeading(eyebrow, title, subtitle, leading)
@@ -182,7 +170,6 @@ internal fun PanelHeading(eyebrow: String, title: String, subtitle: String = "",
     }
 }
 
-/** A group inside a detail panel. */
 @Composable
 internal fun PanelSection(title: String? = null, content: @Composable ColumnScope.() -> Unit) {
     if (Tok.isNew) NewPanelSection(title, content = content)
@@ -193,20 +180,17 @@ internal fun PanelSection(title: String? = null, content: @Composable ColumnScop
     }
 }
 
-/** A label and its value, as panels list them. */
 @Composable
 internal fun FactLine(label: String, value: String, valueColor: Color = White) {
     if (Tok.isNew) NewFact(label, value, valueColor) else DetailLine(label, value, 170.dp, valueColor)
 }
 
-/** A row in a feature list: selectable, hairline below; the same in both designs except for the selection mark. */
 @Composable
 internal fun FeatureRow(selected: Boolean = false, onClick: (() -> Unit)? = null, label: String? = null, content: @Composable RowScope.() -> Unit) {
     if (Tok.isNew) NewTableRow(selected, onClick = onClick, label = label, content = content)
     else SimpleTableRow(selected, onClick = onClick, label = label, content = content)
 }
 
-/** "12 min", "1 h 20 min" for a countdown. */
 internal fun formatRemaining(millis: Long): String {
     val minutes = ((millis + 59_999) / 60_000).coerceAtLeast(0)
     return when {
@@ -216,7 +200,6 @@ internal fun formatRemaining(millis: Long): String {
     }
 }
 
-/** A padded column for dialog content that keeps its lines readable. */
 @Composable
 internal fun DialogText(text: String, color: Color = White.copy(.85f)) {
     Text(text, color = color, fontSize = 12.sp, lineHeight = 17.sp, modifier = Modifier.padding(bottom = 6.dp))

@@ -25,26 +25,14 @@ import java.util.concurrent.atomic.AtomicInteger;
 import java.util.concurrent.atomic.LongAdder;
 import java.util.function.Consumer;
 
-/**
- * A small loopback relay between the per-app driver and Xray, one listener per selected application:
- * ProxiFyre sends an application's traffic to its listener, and the gateway forwards it unchanged to that
- * application's own Xray inbound. Because every connection of an application passes the same listener, the
- * gateway can enforce one shared download and upload limit per application and see each connection's
- * destination and byte counts. It understands just enough SOCKS5 to read the destination and to carry UDP
- * associations through its own UDP relay; it never reads, stores or changes payload.
- *
- * <p>Routing is untouched: Xray still decides every connection's server, rule and direct/block outcome.
- */
 public final class AppGateway implements AutoCloseable {
-    /** Upper bound of simultaneous connections per application, so memory stays bounded. */
     public static final int MAX_CONNECTIONS_PER_APP = 4_096;
     static final int BUFFER_SIZE = 16 * 1024;
+    static final int UDP_SOCKET_BUFFER = 4 * 1024 * 1024;
     private static final InetAddress LOOPBACK = InetAddress.getLoopbackAddress();
 
-    /** One application: the port ProxiFyre uses and the Xray inbound behind it. */
     public record Route(String applicationPath, int applicationIndex, int listenPort, int upstreamPort) {}
 
-    /** Totals of one application since the gateway started. */
     public record Counters(long downloadBytes, long uploadBytes, int openConnections, long rejectedConnections) {}
 
     private final Consumer<GatewayConnection> onOpen;
@@ -60,10 +48,6 @@ public final class AppGateway implements AutoCloseable {
 
     public boolean running() { return running; }
 
-    /**
-     * Opens every listener. Either all of them are bound or none stays open, so a partial start can never
-     * leave an application pointing at a port nobody listens on.
-     */
     public synchronized void start(List<Route> routes) throws IOException {
         stop();
         List<Channel> started = new ArrayList<>();
@@ -94,7 +78,6 @@ public final class AppGateway implements AutoCloseable {
         running = true;
     }
 
-    /** Closes every listener and every relayed connection. */
     public synchronized void stop() {
         running = false;
         channels.values().forEach(Channel::close);
@@ -103,7 +86,6 @@ public final class AppGateway implements AutoCloseable {
 
     @Override public void close() { stop(); }
 
-    /** Sets an application's limits in bytes per second (0 = unlimited). Applies to open connections at once. */
     public void setLimits(String applicationPath, long downloadBytesPerSecond, long uploadBytesPerSecond) {
         String key = key(applicationPath);
         if (downloadBytesPerSecond <= 0 && uploadBytesPerSecond <= 0) limits.remove(key);
@@ -112,7 +94,6 @@ public final class AppGateway implements AutoCloseable {
         if (channel != null) channel.setLimits(downloadBytesPerSecond, uploadBytesPerSecond);
     }
 
-    /** True when the application has a listener right now, so a limit set for it is enforced. */
     public boolean carries(String applicationPath) {
         return running && channels.containsKey(key(applicationPath));
     }
@@ -130,7 +111,6 @@ public final class AppGateway implements AutoCloseable {
 
     private static String key(String path) { return path == null ? "" : path.toLowerCase(java.util.Locale.ROOT); }
 
-    /** The listener, limiters and live connections of one application. */
     private final class Channel {
         final Route route;
         final ServerSocket server;
@@ -180,7 +160,6 @@ public final class AppGateway implements AutoCloseable {
         }
     }
 
-    /** One relayed connection: SOCKS5 negotiation, then TCP piping or a UDP association. */
     private final class Relay {
         final Channel channel;
         final Socket client;
@@ -227,7 +206,6 @@ public final class AppGateway implements AutoCloseable {
             int version = fromClient.read();
             if (version < 0) return;
             if (version != 5) {
-                // Not SOCKS5: relay it unchanged. Routing and limits still apply, the destination stays unknown.
                 connection.protocol(GatewayConnection.Protocol.OTHER);
                 toUpstream.write(version);
                 announce();
@@ -243,7 +221,6 @@ public final class AppGateway implements AutoCloseable {
             toClient.flush();
             if ((chosen[1] & 0xff) == 0xff) return;
             if ((chosen[1] & 0xff) == 0x02) {
-                // Username and password are passed through untouched and never kept.
                 ByteArrayOutputStream auth = new ByteArrayOutputStream();
                 auth.write(readByte(fromClient));
                 int userLength = readByte(fromClient);
@@ -292,7 +269,6 @@ public final class AppGateway implements AutoCloseable {
             try { onOpen.accept(connection); } catch (RuntimeException ignored) { }
         }
 
-        /** Copies both directions until both have ended, with half-close, limits and byte counts. */
         private void pipe(InputStream fromClient, OutputStream toUpstream, InputStream fromUpstream, OutputStream toClient)
                 throws InterruptedException {
             Thread downstream = Thread.ofVirtual().name("perroute-gateway-down").start(() ->
@@ -316,22 +292,21 @@ public final class AppGateway implements AutoCloseable {
                 }
                 try { target.shutdownOutput(); } catch (IOException ignored) { }
             } catch (IOException | InterruptedException error) {
-                // One side broke: end the whole connection so the other direction cannot hang.
                 abort();
                 if (error instanceof InterruptedException) Thread.currentThread().interrupt();
             }
         }
 
-        /**
-         * UDP: Xray's association is kept, but the application is given the gateway's own UDP port, so every
-         * datagram passes the same limits. Datagrams are only accepted from the loopback address.
-         */
         private void associate(Address bound, InputStream fromClient, OutputStream toClient, InputStream fromUpstream)
                 throws IOException, InterruptedException {
             InetAddress upstreamHost = bound.address() == null || bound.address().isAnyLocalAddress() ? LOOPBACK : bound.address();
             InetSocketAddress upstreamTarget = new InetSocketAddress(upstreamHost, bound.port());
             udpClient = new DatagramSocket(new InetSocketAddress(LOOPBACK, 0));
             udpUpstream = new DatagramSocket(new InetSocketAddress(LOOPBACK, 0));
+            for (DatagramSocket socket : new DatagramSocket[]{udpClient, udpUpstream}) {
+                socket.setReceiveBufferSize(UDP_SOCKET_BUFFER);
+                socket.setSendBufferSize(UDP_SOCKET_BUFFER);
+            }
             connection.udpLocalPort(udpUpstream.getLocalPort());
             byte[] port = {(byte) (udpClient.getLocalPort() >>> 8), (byte) udpClient.getLocalPort()};
             toClient.write(join(new byte[]{5, 0, 0, 1}, LOOPBACK.getAddress(), port));
@@ -384,7 +359,6 @@ public final class AppGateway implements AutoCloseable {
                     abort();
                 }
             });
-            // The association lives as long as its TCP control connection, from either side.
             Thread watcher = Thread.ofVirtual().name("perroute-gateway-udp-watch").start(() -> {
                 try { while (fromUpstream.read() >= 0) { } } catch (IOException ignored) { }
                 abort();
@@ -405,10 +379,6 @@ public final class AppGateway implements AutoCloseable {
         }
     }
 
-    /**
-     * A SOCKS5 address as it appeared on the wire after its type byte (which belongs to the 4-byte header that
-     * precedes it), plus its readable form.
-     */
     record Address(byte[] raw, String host, int port, InetAddress address) {}
 
     static Address readAddress(InputStream in, byte type) throws IOException {
@@ -442,7 +412,6 @@ public final class AppGateway implements AutoCloseable {
         return new Address(raw.toByteArray(), host, ((port[0] & 0xff) << 8) | (port[1] & 0xff), address);
     }
 
-    /** The header of a SOCKS5 UDP datagram. */
     record UdpHeader(int fragment, String host, int port, int length) {
         static UdpHeader parse(byte[] data, int length) {
             if (length < 10) return null;

@@ -32,13 +32,6 @@ import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import java.util.concurrent.atomic.AtomicBoolean
 
-// ============================================================================== shadow routing
-
-/**
- * Compares a live route (or, while disconnected, the current server) with [candidate], side by side, without
- * changing the route. [routeId] picks the route; null means the main route. The result offers to switch the
- * route, or to try the candidate for a while.
- */
 internal fun showShadowDialog(shell: Shell, candidate: ProxyNode? = null, routeId: String? = null) {
     val chosen = mutableStateOf(candidate?.key())
     val route = mutableStateOf(routeId ?: shell.activeRoutes.firstOrNull { it.main }?.id)
@@ -143,9 +136,6 @@ private fun ShadowReport(result: ShadowResult) {
 private fun millis(value: Long, failures: Int, total: Int): String =
     (if (value < 0) "—" else "$value ms") + if (failures > 0) "  ($failures/$total failed)" else ""
 
-// ============================================================================== gaming
-
-/** Tests servers for games one after another; [targets] defaults to the best five by quality and favorites. */
 internal fun showGamingDialog(shell: Shell, targets: List<ProxyNode>) {
     val results = mutableStateOf<Map<String, GamingScore>>(emptyMap())
     val running = mutableStateOf(true)
@@ -200,7 +190,6 @@ internal fun showGamingDialog(shell: Shell, targets: List<ProxyNode>) {
     }
 }
 
-/** "Gaming 86 · Excellent" as a small badge. */
 @Composable
 internal fun GamingBadge(score: GamingScore) {
     val color = when {
@@ -212,7 +201,6 @@ internal fun GamingBadge(score: GamingScore) {
     Badge(if (score.score() > 0) "${score.score()} ${score.label()}" else score.label(), color, icon = Icons.Rounded.SportsEsports)
 }
 
-/** A server's last gaming test, with a way to run one, for its detail panel or expanded row. */
 @Composable
 internal fun GamingSummary(shell: Shell, node: ProxyNode) {
     val score = shell.controller.gamingScore(node.key())
@@ -232,7 +220,6 @@ internal fun GamingSummary(shell: Shell, node: ProxyNode) {
     }
 }
 
-/** The five servers worth testing first: the main server, favorites, then the best by quality. */
 internal fun gamingCandidates(shell: Shell): List<ProxyNode> {
     val scores = shell.controller.qualityScores()
     val favorites = shell.nodes.filter { shell.controller.isFavorite(it.key()) }.mapTo(hashSetOf()) { it.key() }
@@ -241,9 +228,6 @@ internal fun gamingCandidates(shell: Shell): List<ProxyNode> {
         .thenByDescending { scores[it.key()]?.score() ?: -1 }).take(5)
 }
 
-// ============================================================================== subscription intelligence
-
-/** Usage, expiry, update history and findings of one subscription. */
 internal fun showSubscriptionDialog(shell: Shell, url: String) {
     shell.showDialog {
         val insight = shell.controller.subscriptionInsight(url)
@@ -310,7 +294,6 @@ internal fun showSubscriptionDialog(shell: Shell, url: String) {
     }
 }
 
-/** A small mark next to a subscription when it needs attention: expired, out of data, failing, or changed a lot. */
 @Composable
 internal fun SubscriptionAlert(shell: Shell, url: String) {
     val report = shell.controller.subscriptionHealth(url)

@@ -9,15 +9,9 @@ import java.util.Locale;
 import java.util.Map;
 import java.util.Set;
 
-/**
- * The browsers a workspace can use and how one is started. Only Chromium-based browsers are offered: they accept
- * a proxy, a separate profile folder and the leak protections below on the command line. Firefox keeps its proxy
- * in the profile instead and is not offered.
- */
 public final class WorkspaceBrowsers {
     private WorkspaceBrowsers() {}
 
-    /** A browser found on this computer. */
     public record Browser(String name, String path) {}
 
     private static final Map<String, String> NAMES = names();
@@ -42,7 +36,6 @@ public final class WorkspaceBrowsers {
         catch (RuntimeException invalid) { return path; }
     }
 
-    /** Browsers in their usual folders, plus any supported browser among {@code knownApps}. */
     public static List<Browser> find(List<String> knownApps) {
         Map<String, Browser> found = new LinkedHashMap<>();
         String programFiles = System.getenv("ProgramFiles");
@@ -69,11 +62,6 @@ public final class WorkspaceBrowsers {
         return List.copyOf(found.values());
     }
 
-    /**
-     * The command that opens a workspace. The proxy is SOCKS5 so host names are resolved on the far side; the
-     * resolver rule stops the browser from resolving anything itself, QUIC is off because it cannot use the
-     * proxy, and WebRTC may only use the proxy, so neither DNS nor WebRTC can leak the local connection.
-     */
     public static List<String> command(String browser, Path profile, int socksPort) {
         List<String> command = new ArrayList<>();
         command.add(browser);

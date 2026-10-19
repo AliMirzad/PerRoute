@@ -59,7 +59,6 @@ import androidx.compose.ui.unit.sp
 import app.perroute.backup.BackupService
 import app.perroute.model.ConnectionMode
 
-/** Settings: a card with the category list on the left and the chosen category on the right. */
 @Composable
 internal fun SimpleSettingsPage(shell: Shell) {
     val category = shell.settingsCategory
@@ -231,11 +230,14 @@ private fun SimpleRoutingSettings(shell: Shell) {
         ToggleSwitch(model.monitoring, "Route recovery") { model.changeMonitoring(it) }
     }
     SimpleSettingRow("Traffic gateway", "Enables app limits and detailed traffic. It never reads the contents of connections. Smart per-app only.",
-        note = if (shell.locked) "Disconnect to change." else "Change only while disconnected.", divider = false) {
+        note = if (shell.locked) "Disconnect to change." else "Change only while disconnected.") {
         Row(verticalAlignment = Alignment.CenterVertically) {
             if (shell.locked) { Icon(Icons.Rounded.Lock, null, tint = White.copy(.8f), modifier = Modifier.size(20.dp)); Spacer(Modifier.width(8.dp)); Text(if (model.gateway) "On" else "Off", color = White, fontSize = 14.sp); Spacer(Modifier.width(12.dp)) }
             ToggleSwitch(model.gateway, "Traffic gateway", enabled = !shell.locked) { model.changeGateway(it) }
         }
+    }
+    SimpleSettingRow("Block QUIC", QuicDetail, note = QuicNote, divider = false) {
+        ToggleSwitch(model.quicBlocked, "Block QUIC") { model.changeQuic(it) }
     }
 }
 
@@ -266,10 +268,11 @@ private fun SimpleUpdates(shell: Shell) {
     Text(model.statusLine, color = if (model.downloading) Cyan else Muted, fontSize = 13.sp, lineHeight = 18.sp)
     RollbackNote(shell)
     Spacer(Modifier.height(18.dp))
+    SimpleSettingRow("Update automatically", AutoUpdateDetail) { ToggleSwitch(model.auto, "Update automatically") { model.changeAuto(it) } }
     FieldLabel("Signed update feed")
-    TextInput(model.feed, { model.changeFeed(it) }, "Signed HTTPS manifest URL", height = 46.dp)
+    TextInput(model.feed, { model.changeFeed(it) }, "Official PerRoute releases", height = 46.dp)
     Spacer(Modifier.height(14.dp))
-    Note("Only manifests signed with PerRoute's offline Ed25519 release key are accepted, and every download is checked by size and SHA-256 before it can be installed.")
+    Note(UpdateFeedNote)
 }
 
 @Composable
@@ -380,7 +383,6 @@ private fun SimpleActivityLog(shell: Shell) {
     }
 }
 
-/** The restore review: what the backup holds, its checks, missing apps with remapping, and Merge or Replace. */
 @Composable
 private fun SimpleRestoreDialog(shell: Shell, backup: BackupModel, session: RestoreSession) {
     val preview = session.preview

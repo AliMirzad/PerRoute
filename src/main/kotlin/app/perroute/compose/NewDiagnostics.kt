@@ -54,7 +54,6 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import app.perroute.model.RouteRule
 
-/** Diagnostics: four tabs that each pair a list with a detail panel. */
 @Composable
 internal fun NewDiagnosticsPage(shell: Shell) {
     val model = diagnosticsModel(shell)
@@ -112,7 +111,7 @@ private fun NewRouteChecks(shell: Shell, model: DiagnosticsModel, now: Long) {
         }
         entries.forEach { entry ->
             NewTableRow(model.selectedRoute == entry.id, onClick = { model.selectedRoute = entry.id }, label = "Details of ${entry.title}") {
-                Row(Modifier.weight(1.5f), verticalAlignment = Alignment.CenterVertically) {
+                Row(Modifier.weight(1.5f).padding(end = 16.dp), verticalAlignment = Alignment.CenterVertically) {
                     RouteEntryAvatar(entry, 36.dp)
                     Spacer(Modifier.width(12.dp))
                     Column(Modifier.weight(1f)) {
@@ -334,7 +333,7 @@ private fun NewLoadedRules(shell: Shell, model: DiagnosticsModel) {
                 val state = states[index]
                 NewTableRow(model.selectedRule == rule.id(), onClick = { model.selectedRule = rule.id() }, label = "Runtime detail of ${PerRouteController.ruleDisplayName(rule)}") {
                     Text("${index + 1}", color = Muted, fontSize = 13.sp, modifier = Modifier.width(30.dp))
-                    Column(Modifier.weight(1.6f)) {
+                    Column(Modifier.weight(1.6f).padding(end = 12.dp)) {
                         EllipsisText(PerRouteController.ruleDisplayName(rule), White, 13.sp, fontWeight = FontWeight.SemiBold)
                         EllipsisText("${ruleTarget(rule)}  ·  ${rule.value()}", Muted, 11.5.sp)
                     }

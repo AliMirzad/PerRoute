@@ -35,15 +35,10 @@ import app.perroute.model.AppRoutes
 import app.perroute.model.ConnectionMode
 import app.perroute.model.ProxyNode
 
-/** The lengths offered for a temporary server, in minutes. */
 internal val TemporaryDurations = listOf(15, 30, 60, 120, 240)
 
 internal fun durationLabel(minutes: Int): String = if (minutes < 60) "$minutes min" else "${minutes / 60} h"
 
-/**
- * A server picker: favorites first, then by name, with a filter when there are many. [exclude] is left out, and
- * every entry says which server is the main one.
- */
 @Composable
 internal fun ServerChooser(shell: Shell, selectedKey: String?, label: String, modifier: Modifier = Modifier.fillMaxWidth(),
                            exclude: String? = null, enabled: Boolean = true, onChoose: (ProxyNode) -> Unit) {
@@ -79,10 +74,6 @@ internal fun ServerChooser(shell: Shell, selectedKey: String?, label: String, mo
     }
 }
 
-/**
- * Asks which server an app should use, and for how long. [app] and [server] preselect the choices when the dialog
- * is opened from an app or a server. Nothing permanent changes: the app's own route stays saved.
- */
 internal fun showTemporaryDialog(shell: Shell, app: String? = null, server: String? = null) {
     val chosenApp = mutableStateOf(app ?: shell.apps.firstOrNull())
     val chosenServer = mutableStateOf(server)
@@ -125,10 +116,6 @@ internal fun showTemporaryDialog(shell: Shell, app: String? = null, server: Stri
     }
 }
 
-/**
- * Small actions under the routes on the Connection screen: try a server for one app for a while, and compare a
- * live route with another server. Shown in both designs while there is something to act on.
- */
 @Composable
 internal fun ConnectionTools(shell: Shell) {
     if (shell.nodes.size < 2 || shell.mainNode == null) return
@@ -140,7 +127,6 @@ internal fun ConnectionTools(shell: Shell) {
     }
 }
 
-/** In an app's panel: its temporary server if it has one, and a way to start one. Saved apps only. */
 @Composable
 internal fun TemporaryAppAction(shell: Shell, path: String) {
     val active = shell.controller.temporaryRoute(path)
@@ -154,7 +140,6 @@ internal fun TemporaryAppAction(shell: Shell, path: String) {
     if (!shell.perApp) { Spacer(Modifier.height(6.dp)); Text("Needs Smart per-app mode.", color = Muted, fontSize = 11.5.sp) }
 }
 
-/** The apps on a temporary server, with the time left and a way to end it early. Shown on Connection and in Apps. */
 @Composable
 internal fun TemporaryRoutesCard(shell: Shell, modifier: Modifier = Modifier.fillMaxWidth(), only: String? = null) {
     val now by rememberNow()
@@ -178,10 +163,6 @@ internal fun TemporaryRoutesCard(shell: Shell, modifier: Modifier = Modifier.fil
     }
 }
 
-/**
- * The tray's own way to start a temporary server: pick an app, a length and a server from the list, all inside
- * Quick Access, without opening the main window.
- */
 @Composable
 internal fun QuickTemporaryPanel(apps: List<String>, nodes: List<ProxyNode>, mainKey: String?, working: Boolean,
                                  onStart: (String, String, Int) -> Unit, onClose: () -> Unit) {

@@ -18,27 +18,16 @@ import java.util.HexFormat;
 import java.util.LinkedHashMap;
 import java.util.Map;
 
-/**
- * The outer layer of a backup file: a small JSON envelope around the payload.
- *
- * <p>Encrypted backups use AES-256-GCM with a key derived from the password by PBKDF2-HMAC-SHA256
- * ({@link #ITERATIONS} iterations, random 16-byte salt, random 12-byte nonce). Every header field is bound to the
- * ciphertext as associated data, so neither the payload nor the header can be changed without the
- * authentication check failing. Unencrypted backups carry a SHA-256 digest that detects damage, but not a
- * deliberate change.
- */
 public final class BackupCodec {
     public static final String FORMAT = "perroute-backup";
     public static final int ENVELOPE_VERSION = 1;
     public static final int ITERATIONS = 600_000;
     public static final int MIN_PASSWORD_LENGTH = 8;
-    /** Backups larger than this are refused before anything is parsed. */
     public static final int MAX_FILE_BYTES = 32 * 1024 * 1024;
     private static final SecureRandom RANDOM = new SecureRandom();
 
     private BackupCodec() {}
 
-    /** What can be read from a backup without its password. */
     public record Header(int envelopeVersion, long createdAt, String application, int schema, boolean encrypted) {}
 
     public static final class BackupException extends Exception {
@@ -87,7 +76,6 @@ public final class BackupCodec {
                 integer(envelope, "schema"), Boolean.TRUE.equals(envelope.get("encrypted")));
     }
 
-    /** Returns the payload after checking its integrity, decrypting it when the backup is encrypted. */
     @SuppressWarnings("unchecked")
     public static byte[] decode(byte[] file, char[] password) throws BackupException {
         Map<String, Object> envelope = envelope(file);
@@ -149,7 +137,6 @@ public final class BackupCodec {
         return envelope;
     }
 
-    /** Every header field in a fixed order; the payload itself is excluded. */
     private static byte[] associatedData(Map<String, Object> header) {
         Map<String, Object> copy = new LinkedHashMap<>();
         for (String key : new String[]{"format", "version", "createdAt", "application", "schema", "encrypted", "kdf", "cipher"}) {

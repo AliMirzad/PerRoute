@@ -16,15 +16,9 @@ import java.util.Map;
 import java.util.Objects;
 import java.util.Set;
 
-/**
- * Compares a recipe with the current setup and describes exactly what importing it would change. Nothing is
- * changed here. Recipe rules are added after the user's own rules, so where the two disagree the user's rule
- * keeps winning and the conflict is shown.
- */
 public final class RecipePlanner {
     private RecipePlanner() {}
 
-    /** Name prefix of rules added by a recipe; they can be removed together. */
     public static final String RULE_PREFIX = "Recipe · ";
 
     public static String ruleName(Recipe recipe, Recipe.RuleEntry rule) {
@@ -41,14 +35,8 @@ public final class RecipePlanner {
         public String label() { return label; }
     }
 
-    /** @param conflictsWith the name of the user's rule that already decides the same destinations differently */
     public record RulePlan(Recipe.RuleEntry rule, RuleStatus status, String conflictsWith, String applicationPath) {}
 
-    /**
-     * @param path        where the app is on this computer, or null when it was not found
-     * @param currentMode how the app is routed now ("Not selected", "Main", "Manual", "Auto")
-     * @param configured  the app is selected and routed differently already; importing would change that
-     */
     public record AppPlan(Recipe.AppEntry app, String path, String currentMode, boolean configured) {}
 
     public record SettingPlan(String key, String label, boolean from, boolean to) {}
@@ -59,13 +47,6 @@ public final class RecipePlanner {
         public boolean usesRoles() { return apps.stream().anyMatch(app -> app.app().route() == Recipe.Route.ROLE); }
     }
 
-    /**
-     * @param rules       the current rules, in order
-     * @param selected    the selected apps (full paths)
-     * @param known       every app found on this computer (installed or running), full paths
-     * @param modes       how each selected app is routed now, by normalized path
-     * @param preferences current values of the automation switches
-     */
     public static Plan plan(Recipe recipe, List<RouteRule> rules, Collection<String> selected, Collection<String> known,
                             Map<String, String> modes, Map<String, Boolean> preferences) {
         List<AppPlan> apps = new ArrayList<>();
@@ -97,7 +78,6 @@ public final class RecipePlanner {
         return new Plan(recipe, List.copyOf(plans), List.copyOf(apps), List.copyOf(settings));
     }
 
-    /** How a recipe route is described in the same words as an app's current mode. */
     public static String describe(Recipe.Route route) {
         return switch (route) {
             case MAIN -> "Main";
@@ -106,7 +86,6 @@ public final class RecipePlanner {
         };
     }
 
-    /** A selected app first, then any known app, with the same file name. */
     static String find(String executable, Collection<String> selected, Collection<String> known) {
         for (Collection<String> source : List.of(selected, known)) {
             for (String path : source) {
@@ -143,12 +122,10 @@ public final class RecipePlanner {
         return result;
     }
 
-    /** Every entry of {@code incoming} is already in {@code existing}. */
     private static boolean covers(RouteRule.MatchType match, String existing, String incoming) {
         return entries(match, existing).containsAll(entries(match, incoming));
     }
 
-    /** Builds a recipe from the current setup; {@code roleOf} gives each Manual app's role id. */
     public static Recipe export(String name, String description, String author, String createdWith,
                                 List<Recipe.Role> roles, List<Recipe.AppEntry> apps, List<RouteRule> rules,
                                 Map<String, Boolean> settings, Set<String> skippedRuleIds) {
@@ -161,7 +138,6 @@ public final class RecipePlanner {
         return new Recipe(Recipe.FORMAT, name, description, author, createdWith, roles, apps, entries, settings);
     }
 
-    /** "Scenario · Work · Work tools" becomes "Work tools"; recipe rules lose their recipe name the same way. */
     static String stripPrefixes(String name) {
         String text = Objects.requireNonNullElse(name, "");
         for (String prefix : List.of("Scenario · ", RULE_PREFIX)) {

@@ -46,16 +46,13 @@ public final class WindowsSystemProxyManager {
         }
     }
 
-    /** What a restore found and did. */
     public enum RestoreOutcome { NOTHING_TO_RESTORE, RESTORED, LEFT_ALONE }
 
-    /** The proxy server value PerRoute writes; any other value was set by someone else. */
     public static String perRouteProxyServer() {
         return "http=127.0.0.1:" + AppProxyLauncher.HTTP_PORT + ";https=127.0.0.1:" + AppProxyLauncher.HTTP_PORT +
                 ";socks=127.0.0.1:" + AppProxyLauncher.SOCKS_PORT;
     }
 
-    /** Whether the Windows proxy setting is PerRoute's right now. */
     public boolean perRouteProxyActive() throws IOException, InterruptedException {
         Map<String, Object> enabled = readValue("ProxyEnable");
         Map<String, Object> server = readValue("ProxyServer");
@@ -67,11 +64,6 @@ public final class WindowsSystemProxyManager {
         restoreSafely();
     }
 
-    /**
-     * Puts the saved settings back, but only while the current proxy is still PerRoute's. When another program
-     * has set a proxy of its own since then, that setting is legitimate and is left exactly as it is; the saved
-     * copy is discarded so it can never overwrite the newer setting later.
-     */
     public synchronized RestoreOutcome restoreSafely() throws IOException, InterruptedException {
         if (!Files.isRegularFile(backupFile)) return RestoreOutcome.NOTHING_TO_RESTORE;
         Map<String, Object> server = readValue("ProxyServer");
@@ -102,7 +94,6 @@ public final class WindowsSystemProxyManager {
         return RestoreOutcome.RESTORED;
     }
 
-    /** The values PerRoute will put back, or an empty map when nothing is pending. Used to show what a restore does. */
     public Map<String, Object> pendingBackup() {
         try {
             return Files.isRegularFile(backupFile) ? Json.object(Files.readString(backupFile, StandardCharsets.UTF_8)) : Map.of();
@@ -111,18 +102,12 @@ public final class WindowsSystemProxyManager {
         }
     }
 
-    /** The four Internet Settings values as Windows has them now: name to "present", "type" and "data". */
     public Map<String, Map<String, Object>> currentValues() throws IOException, InterruptedException {
         Map<String, Map<String, Object>> values = new LinkedHashMap<>();
         for (String name : VALUES) values.put(name, readValue(name));
         return values;
     }
 
-    /**
-     * Removes a leftover PerRoute proxy when its saved copy is gone. With {@code baseline} (readings of a snapshot
-     * taken before PerRoute changed anything) those values are written back; without one the proxy is switched
-     * off and PerRoute's own server and bypass values are cleared. Values that are not PerRoute's stay untouched.
-     */
     public synchronized void resetLeftover(Map<String, String> baseline) throws IOException, InterruptedException {
         if (!perRouteProxyActive() && !perRouteProxyServer().equals(String.valueOf(readValue("ProxyServer").get("data")).trim())) return;
         if (baseline != null) {
@@ -146,13 +131,11 @@ public final class WindowsSystemProxyManager {
         else writeValue(name, "REG_SZ", data.trim());
     }
 
-    /** Whether the start-up entry that restores the proxy after a power loss is registered. */
     public boolean recoveryEntryRegistered() {
         try { return run(Duration.ofSeconds(5), "reg.exe", "query", RUN_ONCE_KEY, "/v", RUN_ONCE_VALUE).exitCode == 0; }
         catch (Exception unknown) { return false; }
     }
 
-    /** Removes the start-up entry when no restore is pending any more (it is left behind only after a crash). */
     public void removeStaleRecoveryEntry() {
         if (!hasPendingRestore()) unregisterRecovery();
     }

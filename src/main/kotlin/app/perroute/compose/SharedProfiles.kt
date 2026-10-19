@@ -34,14 +34,12 @@ import androidx.compose.ui.unit.sp
 import app.perroute.model.ConnectionMode
 import app.perroute.model.ConnectionProfile
 
-/** The icon of a preset. */
 internal fun scenarioIcon(id: String): ImageVector = when (id) {
     "work" -> Icons.Rounded.WorkOutline
     "gaming" -> Icons.Rounded.SportsEsports
     else -> Icons.Rounded.PlayCircleOutline
 }
 
-/** A profile in one line: apps, main server and mode, and how many of its servers are gone. */
 internal fun profileSummary(shell: Shell, profile: ConnectionProfile): Pair<String, Int> {
     val apps = profile.applicationPaths()
     val keys = shell.nodes.mapTo(hashSetOf()) { it.key() }
@@ -63,13 +61,11 @@ internal fun profileSummary(shell: Shell, profile: ConnectionProfile): Pair<Stri
 
 internal fun onOff(value: Boolean) = if (value) "On" else "Off"
 
-/** Presets and saved profiles: what applying would change, and the actions on each. */
 internal class ProfilesModel(private val shell: Shell) {
     private val controller = shell.controller
     val profiles = mutableStateListOf<ConnectionProfile>().also { it.addAll(controller.profiles()) }
     var activeScenario by mutableStateOf(controller.activeScenarioId())
     var activeProfile by mutableStateOf(controller.activeProfileId())
-    /** The preset whose changes are being reviewed. New shows it in the side panel, Simple in a dialog. */
     var previewing by mutableStateOf<ScenarioPreview?>(null)
 
     fun refresh() {
@@ -136,7 +132,6 @@ internal class ProfilesModel(private val shell: Shell) {
 
 internal fun profilesModel(shell: Shell): ProfilesModel = shell.screen("${Tab.Profiles.name}:profiles") { ProfilesModel(shell) }
 
-/** Everything a preset would change: automation before and after, rules added and removed, and what is kept. */
 @Composable
 internal fun PresetChanges(shell: Shell, preview: ScenarioPreview) {
     val locked = shell.locked
@@ -191,10 +186,8 @@ internal fun PresetChanges(shell: Shell, preview: ScenarioPreview) {
     }
 }
 
-/** The label of the action that applies a preset: "Apply preset", or "Apply again" when it is already active. */
 internal fun presetActionLabel(preview: ScenarioPreview): String = if (preview.alreadyActive) "Apply again" else "Apply preset"
 
-/** The Simple design's preset review: a dialog with the same content as New's side panel. */
 internal fun showPresetDialog(shell: Shell, model: ProfilesModel, scenario: Scenario) {
     model.preview(scenario)
     val preview = model.previewing ?: return

@@ -21,16 +21,11 @@ import app.perroute.service.WindowsNetworkState
 import java.nio.file.Path
 import java.util.function.Consumer
 
-/**
- * Everything the controller does to the machine while connecting: the Xray core, the per-app engine and
- * the Windows proxy settings. Tests replace it, so connection logic can run without touching any of them.
- */
 interface ConnectionBackend {
     fun coreReady(): Boolean
     fun perAppReady(): Boolean
     fun elevated(): Boolean
 
-    /** Throws when Xray rejects the config. Must not affect a running core. */
     fun validate(config: String, tun: Boolean)
     fun start(config: String, tun: Boolean)
     fun stop()
@@ -48,7 +43,6 @@ interface ConnectionBackend {
     fun checkTunnel(socksPort: Int): ProxyHealthCheck.Result
     fun readInboundCounters(): Map<String, Long>
 
-    /** The public address seen through one loopback SOCKS port, or through the direct route when it is null. */
     fun lookupPublicAddress(socksPort: Int?): RouteReport
     fun systemDnsServers(): List<String>
     fun publicResolver(): String?
@@ -56,15 +50,10 @@ interface ConnectionBackend {
     fun installedApplications(): List<InstalledApplicationDiscovery.InstalledApplication>
     fun runningApplications(): List<ProcessDiscovery.RunningApplication>
 
-    /**
-     * Moves one route of the running core to another outbound without a restart (see
-     * [XrayProcessManager.applyRuntimeChange]). Throws, leaving the core unchanged, when it cannot.
-     */
     fun applyRuntimeChange(change: XrayConfigGenerator.RuntimeChange, newTag: String, oldTag: String, config: String) {
         throw UnsupportedOperationException("This backend cannot change a running core")
     }
 
-    /** Opens the traffic gateway's listeners. All of them, or none. */
     fun startGateway(routes: List<AppGateway.Route>) {}
     fun stopGateway() {}
     fun setGatewayLimits(applicationPath: String, downloadBytesPerSecond: Long, uploadBytesPerSecond: Long) {}
@@ -72,60 +61,38 @@ interface ConnectionBackend {
     fun gatewayRunning(): Boolean = false
     fun addGatewayListener(listener: Consumer<GatewayConnection>) {}
 
-    // ---- Version 3.5. Every default leaves the machine alone, so test backends need not implement them.
-
-    /**
-     * Starts the per-app engine. With [bypassLan] off, local-network traffic of the selected apps also reaches
-     * the core, which is how local devices are blocked on networks that are not trusted.
-     */
     fun applyPerApp(applications: List<String>, bypassLan: Boolean) = applyPerApp(applications)
 
-    /**
-     * Changes the layout of the running core without a restart (see [XrayProcessManager.applyRuntimePlan]).
-     * Throws, leaving the core unchanged, when it cannot.
-     */
     fun applyRuntimePlan(plan: XrayConfigGenerator.RuntimePlan) {
         throw UnsupportedOperationException("This backend cannot change a running core")
     }
 
-    /** The readings of a network snapshot (see [app.perroute.netstate.NetworkStateKeys]); empty when unknown. */
     fun networkState(): Map<String, String> = emptyMap()
 
-    /** Removes a PerRoute proxy whose saved copy is gone, putting [baseline] values back when given. */
     fun resetSystemProxyLeftover(baseline: Map<String, String>?) {}
 
-    /** Removes PerRoute's start-up recovery entry when no restore is pending any more. */
     fun removeRecoveryEntry() {}
 
-    /** Whether the Windows proxy is PerRoute's right now. */
     fun perRouteProxyActive(): Boolean = false
 
-    /** Starts an [IsolatedTunnel] for [config] whose SOCKS port is [socksPort]. */
     fun startIsolatedCore(config: String, socksPort: Int): IsolatedTunnel =
         throw UnsupportedOperationException("This backend cannot start a core of its own")
 
-    /** Starts a program, such as a workspace browser, and returns it. */
     fun startProgram(command: List<String>): Process = throw UnsupportedOperationException("This backend cannot start programs")
 
-    /** Whether a browser profile folder is open in a running browser right now. */
     fun profileInUse(profile: Path): Boolean = false
 
-    /** Opens [file] through the Windows shell; with [elevated] Windows asks for Administrator approval first. */
     fun shellOpen(file: Path, arguments: List<String>, elevated: Boolean) {
         throw UnsupportedOperationException("This backend cannot open programs")
     }
 
-    /** The local networks this computer is connected to and the devices seen on them. */
     fun localNetworks(resolveNames: Boolean): List<LocalNetwork> = emptyList()
 
-    /** Whether Windows resolves [host] through its usual DNS servers. */
     fun systemResolves(host: String): Boolean = true
 
-    /** The time a public web server reports, read over the direct route, or null when it could not be read. */
     fun directServerTime(): Long? = null
 }
 
-/** A core of its own with one loopback SOCKS port, used by tests, comparisons and browser workspaces. */
 interface IsolatedTunnel : AutoCloseable {
     fun socksPort(): Int
     fun alive(): Boolean
@@ -133,7 +100,6 @@ interface IsolatedTunnel : AutoCloseable {
     override fun close()
 }
 
-/** The real machine: Xray, the per-app driver, Windows proxy settings and the network. */
 class SystemConnectionBackend : ConnectionBackend {
     private val coreInstaller by lazy { CoreInstaller() }
     private val xray by lazy { XrayProcessManager() }
@@ -235,17 +201,12 @@ class SystemConnectionBackend : ConnectionBackend {
             .redirectOutput(ProcessBuilder.Redirect.DISCARD).start()
     }
 
-    /** Chromium keeps a file named lockfile open, exclusively, for as long as a profile is in use. */
     override fun profileInUse(profile: Path): Boolean {
         val lock = profile.resolve("lockfile")
         if (!java.nio.file.Files.exists(lock)) return false
         return runCatching { java.nio.file.Files.delete(lock); false }.getOrDefault(true)
     }
 
-    /**
-     * ShellExecute rather than CreateProcess, so a program that asks for Administrator rights gets the usual
-     * Windows prompt instead of failing (ProcessBuilder cannot start such a program from a normal process).
-     */
     override fun shellOpen(file: Path, arguments: List<String>, elevated: Boolean) {
         val quoted = arguments.joinToString(",") { "'" + it.replace("'", "''") + "'" }
         val command = buildString {

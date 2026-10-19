@@ -47,7 +47,6 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import app.perroute.model.RouteRule
 
-/** Rules: the ordered list with its filter, and the rule editor in the panel. Read-only while connected. */
 @Composable
 internal fun NewRulesPage(shell: Shell) {
     val model = rulesModel(shell)
@@ -135,7 +134,6 @@ private fun NewRuleRow(shell: Shell, model: RulesModel, index: Int, rule: RouteR
     }
 }
 
-/** The panel: the editor while a rule is being added or changed, otherwise what each action means. */
 @Composable
 private fun ColumnScope.NewRulePanel(shell: Shell, model: RulesModel) {
     val editor = model.editor
@@ -173,7 +171,6 @@ private fun ColumnScope.NewRulePanel(shell: Shell, model: RulesModel) {
     if (locked) { Spacer(Modifier.height(12.dp)); NewLockNote("Disconnect to save this rule.") }
 }
 
-/** Profiles: presets that add to the setup, saved profiles that replace it, and the preset preview in the panel. */
 @Composable
 internal fun NewProfilesPage(shell: Shell) {
     val model = profilesModel(shell)

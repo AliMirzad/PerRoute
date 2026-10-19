@@ -93,7 +93,6 @@ public final class AllTests {
     @FunctionalInterface
     private interface CheckedTest { void run() throws Exception; }
 
-    /** Windows can keep a just-deleted file pending for a moment (for example while it is scanned), so retry. */
     private static void removeTemporaryDirectory(Path directory) throws Exception {
         for (int attempt = 1; ; attempt++) {
             try { V3DomainTests.deleteTree(directory); return; }
@@ -372,7 +371,7 @@ public final class AllTests {
                   "url": "https://updates.perroute.invalid/PerRoute-Setup-9.9.9.exe",
                   "sha256": "ae084cd577687fb114d695cd88447e8cc4be6d5048fde285d6c93669ab1a745d",
                   "size": 6644,
-                  "signature": "cXQpXAFvo8AuTb7q8ircyiBTu0Tia5zm7TRl3X3MeM9+GtNqTr0Bo2M9JOdBOQxgw25U/0gfVgkHvZGOTFeMAw=="
+                  "signature": "O8i6V/3UApes+NqiscDCiy/XFuQSs6lL3+Q7VTk+K3RJiGmxY6sWkPQTFrSOkvptSg5rvHZ7m9/2ITMP3YLcBQ=="
                 }
                 """;
         SecureUpdateService.UpdateInfo update = new SecureUpdateService().parseAndVerify(
@@ -465,8 +464,6 @@ public final class AllTests {
             check(result.detail().startsWith("Tunnel answered from") && result.detail().contains("204"), "Health check must describe the tunnel result: " + result.detail());
             responder.join(2_000);
         }
-        // Xray answers a CONNECT with success before dialling the server. A tunnel to a dead server therefore
-        // accepts the SOCKS request and then closes; that must count as a failure.
         try (ServerSocket server = new ServerSocket(0, 50, InetAddress.getLoopbackAddress())) {
             Thread responder = Thread.ofVirtual().start(() -> {
                 while (!server.isClosed()) {
@@ -639,7 +636,6 @@ public final class AllTests {
         Path directory = Files.createTempDirectory("perroute-state-legacy-");
         AppStateStore store = new AppStateStore(directory.resolve("state.bin"));
         ProxyNode node = new ShareLinkParser().parse("trojan://secret@legacy.example:443?security=tls#Legacy");
-        // Exactly what 1.0.0 wrote: no Advanced flag, no assignments, and a profile without the new fields.
         java.util.Properties legacy = new java.util.Properties();
         legacy.setProperty("node.count", "1");
         legacy.setProperty("node.0.link", node.sourceLink());
@@ -803,7 +799,6 @@ public final class AllTests {
         equal(List.of("perroute-app-0", "perroute-app-1", "perroute-check-0"),
                 ruleByTag(routingRules(shared), "perroute-app-route-0").get("inboundTag"));
 
-        // The per-app engine keeps mapping applications to their own port; only Xray decides the server.
         Map<String, Object> engine = Json.object(new ProxiFyreManager().generateConfig(apps));
         equal("127.0.0.1:" + XrayConfigGenerator.perAppPort(2),
                 ((Map<String, Object>)((List<Object>)engine.get("proxies")).get(2)).get("socks5ProxyEndpoint"));
@@ -894,7 +889,6 @@ public final class AllTests {
         validateWithBundledXray(Json.stringify(root));
     }
 
-    /** A profile shaped like a typical provider config: several outbounds, a balancer, an observatory, DNS and rules. */
     private static ProxyNode balancedProfile(String key, String host) {
         String json = """
                 {"remarks":"Balanced %s",
@@ -930,7 +924,6 @@ public final class AllTests {
                 new RouteRule("tools", "Work tools", "", RouteRule.MatchType.DOMAIN, "github.com", RouteRule.Action.PROXY, true));
         XrayConfigGenerator generator = new XrayConfigGenerator();
 
-        // Profile as Main, a second profile for Chrome, a plain server for Telegram, Discord follows Main.
         Map<String, Object> root = Json.object(generator.generateApplicationProxy(mainProfile, apps, source,
                 java.util.Arrays.asList(customProfile, plain, null)));
         List<String> tags = ((List<Object>)root.get("outbounds")).stream().map(item -> String.valueOf(((Map<String, Object>)item).get("tag"))).toList();
@@ -957,7 +950,6 @@ public final class AllTests {
         List<Map<String, Object>> rules = routingRules(root);
         List<String> mainInbounds = List.of("perroute-socks", "perroute-http", "perroute-app-2");
         List<String> customInbounds = List.of("perroute-app-0");
-        // Each profile's own rules reach only the applications on that profile.
         check(rules.stream().anyMatch(rule -> "direct".equals(rule.get("outboundTag")) && mainInbounds.equals(rule.get("inboundTag"))
                 && List.of("domain:local.main.example").equals(rule.get("domain"))), "The main profile's direct rule must stay with Main's apps");
         check(rules.stream().anyMatch(rule -> "block".equals(rule.get("outboundTag")) && mainInbounds.equals(rule.get("inboundTag"))),
@@ -980,7 +972,6 @@ public final class AllTests {
         equal(Map.of("servers", List.of("1.1.1.1")), root.get("dns"));
         validateWithBundledXray(Json.stringify(root));
 
-        // A plain server as Main with a profile as the custom server.
         Map<String, Object> mixed = Json.object(generator.generateApplicationProxy(plain, apps, source,
                 java.util.Arrays.asList(customProfile, null, null)));
         List<Map<String, Object>> mixedRules = routingRules(mixed);

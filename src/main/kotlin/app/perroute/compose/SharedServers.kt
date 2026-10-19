@@ -69,20 +69,14 @@ import kotlinx.coroutines.withContext
 import java.awt.FileDialog
 import java.nio.file.Path
 
-/** How the server list is ordered. */
 internal enum class ServerSort(val label: String) { DEFAULT("Default order"), QUALITY("Quality"), GAMING("Best for gaming"), FASTEST("Lowest latency"), SLOWEST("Highest latency") }
 private const val AutoSpeedTestLimit = 10
 
-/** What the list needs to know about a server besides the server itself. */
 internal data class ServerMeta(val source: String, val sourceLabel: String, val tag: String, val country: String, val favorite: Boolean)
 
 internal const val FILTER_ALL = "__all__"
 internal const val FILTER_FAVORITES = "__favorites__"
 
-/**
- * The Servers screen's working state and actions: filters, tests, favorites, tags and the main server. The New
- * design shows the highlighted server in its detail panel; the Simple design expands the row.
- */
 internal class ServersModel(private val shell: Shell) {
     private val controller = shell.controller
     var query by mutableStateOf("")
@@ -97,13 +91,10 @@ internal class ServersModel(private val shell: Shell) {
     var speeds by mutableStateOf(controller.cachedSpeeds())
     var speedTestingKey by mutableStateOf<String?>(null)
     private var speedJob: Job? = null
-    /** The server the user pointed at: the subject of the detail panel and of "Use as main server". */
     var highlightedKey by mutableStateOf(shell.selectedNodeKey)
     var expandedKey by mutableStateOf<String?>(null)
     var scores by mutableStateOf(controller.qualityScores())
-    /** A single server being re-measured from its detail panel. */
     var retestingKey by mutableStateOf<String?>(null)
-    /** The import in progress: a page in New, a dialog in Simple. */
     var import by mutableStateOf<ImportSession?>(null)
     var visible: List<ProxyNode> = emptyList()
 
@@ -130,7 +121,6 @@ internal class ServersModel(private val shell: Shell) {
     fun pingAll() { realTest = false; pingRevision++ }
     fun realTestAll() { realTest = true; pingRevision++ }
 
-    /** Measures the whole list; runs whenever the screen opens and whenever a test is asked for. */
     suspend fun measure(snapshot: List<ProxyNode>) {
         if (snapshot.isEmpty()) { latencies = emptyMap(); return }
         pinging = true
@@ -148,7 +138,6 @@ internal class ServersModel(private val shell: Shell) {
         }
     }
 
-    /** Re-measures one server with a real tunnel test, as its detail panel offers. */
     fun retest(node: ProxyNode) {
         if (retestingKey != null) return
         shell.scope.launch {
@@ -184,7 +173,6 @@ internal class ServersModel(private val shell: Shell) {
 
     fun subscriptions(): List<String> = controller.subscriptions()
 
-    /** Every tag in use, so a server can be put into an existing tag with one click instead of retyping it. */
     fun allTags(meta: Map<String, ServerMeta>): List<String> =
         meta.values.map { it.tag }.filter { it.isNotBlank() }.distinctBy { it.lowercase() }.sortedBy { it.lowercase() }
 
@@ -215,7 +203,6 @@ internal class ServersModel(private val shell: Shell) {
         }
     }
 
-    /** The tag menu of one server: every existing tag, a way to create one, and a way to clear it. */
     fun tagMenu(node: ProxyNode, current: String, allTags: List<String>): List<MenuEntry> =
         allTags.map { tag -> MenuEntry("#$tag", Icons.Rounded.Label, selected = current.equals(tag, true)) { assignTag(node, tag) } } +
             MenuEntry("New tag…", Icons.Rounded.AddCircle, "Create a tag and put this server in it") { editTag(node, allTags) } +
@@ -245,7 +232,6 @@ internal class ServersModel(private val shell: Shell) {
         }
     }
 
-    /** The row menu both designs show: main server, copy, tag, speed test and remove. */
     fun rowMenu(node: ProxyNode, clipboard: ClipboardManager, tags: List<String>, tag: String): List<MenuEntry> {
         val isMain = node.key() == shell.mainNode?.key()
         val locked = shell.locked
@@ -265,7 +251,6 @@ internal class ServersModel(private val shell: Shell) {
         )
     }
 
-    /** The Test servers menu. */
     fun testMenu(): List<MenuEntry> = listOf(
         MenuEntry("Ping all servers", Icons.Rounded.Schedule, "TCP latency to every endpoint", enabled = !pinging) { pingAll() },
         MenuEntry("Real tunnel test", Icons.Rounded.Speed, "Starts an isolated core per server", enabled = !pinging) { realTestAll() },
@@ -296,12 +281,10 @@ internal class ServersModel(private val shell: Shell) {
         }
         val sorted = when (sort) {
             ServerSort.DEFAULT -> matching
-            // Rated servers first, best first; unmeasured servers last, never ranked as healthy.
             ServerSort.QUALITY -> matching.sortedWith(
                 compareByDescending<ProxyNode> { scores[it.key()]?.usable() == true }
                     .thenByDescending { scores[it.key()]?.score() ?: -1 }
                     .thenByDescending { scores[it.key()]?.confidence() ?: 0.0 })
-            // Tested servers first, best first; a server that was never tested for games is not ranked.
             ServerSort.GAMING -> controller.gamingScores().let { gaming ->
                 matching.sortedWith(compareByDescending<ProxyNode> { (gaming[it.key()]?.score() ?: -1) > 0 }.thenByDescending { gaming[it.key()]?.score() ?: -1 })
             }
@@ -316,7 +299,6 @@ internal class ServersModel(private val shell: Shell) {
         return sorted to snapshot.size
     }
 
-    /** Tag and country filters, beside the source filters. */
     fun groupFilters(meta: Map<String, ServerMeta>): List<String> =
         meta.values.map { it.tag }.filter { it.isNotBlank() }.distinct().map { "tag:$it" } +
             meta.values.map { it.country }.filter { it.isNotBlank() }.distinct().map { "country:$it" }
@@ -329,7 +311,6 @@ internal class ServersModel(private val shell: Shell) {
         else -> PerRouteController.sourceLabel(filter)
     }
 
-    /** Which apps use a server: the route it carries, or every selected app for the main server. */
     fun usedBy(node: ProxyNode, rows: List<RouteRow>): List<String> {
         if (!shell.perApp) return emptyList()
         val routes = rows.filter { it.node.key() == node.key() }
@@ -343,7 +324,6 @@ internal class ServersModel(private val shell: Shell) {
 
 internal fun serversModel(shell: Shell): ServersModel = shell.screen("${Tab.Servers.name}:servers") { ServersModel(shell) }
 
-/** The background work of the Servers screen: measuring on open, refreshing scores and opening an import asked for elsewhere. */
 @Composable
 internal fun ServersEffects(shell: Shell, model: ServersModel, listState: LazyListState?) {
     LaunchedEffect(Unit) {
@@ -368,7 +348,6 @@ internal fun ServersEffects(shell: Shell, model: ServersModel, listState: LazyLi
     }
 }
 
-/** The latency in words and colour: green when quick, amber when slow, red when it did not answer. */
 @Composable
 internal fun latencyText(latencyMs: Long?, pinging: Boolean): Pair<String, Color> = when {
     pinging -> "Testing…" to Muted
@@ -379,7 +358,6 @@ internal fun latencyText(latencyMs: Long?, pinging: Boolean): Pair<String, Color
     else -> "$latencyMs ms" to Red
 }
 
-/** The last measured download speed in words. */
 @Composable
 internal fun speedText(bytesPerSecond: Long?, testing: Boolean): Pair<String, Color> {
     val megabits = bytesPerSecond?.takeIf { it >= 0 }?.let { it * 8 / 1_000_000.0 }
@@ -396,17 +374,12 @@ internal fun speedText(bytesPerSecond: Long?, testing: Boolean): Pair<String, Co
 internal fun formatMegabits(value: Double): String =
     if (value >= 100) "${value.toInt()} Mbps" else String.format(java.util.Locale.ROOT, "%.1f Mbps", value)
 
-/** The ways servers can be brought in. */
 internal enum class ImportMethod(val label: String, val icon: ImageVector) {
     SUBSCRIPTION("Subscription URL", Icons.Rounded.Link),
     PASTE("Paste links", Icons.Rounded.Description),
     QR("QR code", Icons.Rounded.QrCodeScanner)
 }
 
-/**
- * One import: the source, the review and the confirmation. Each source only produces a preview; the list and any
- * parser problems are shown first, and nothing is stored until Add servers is pressed.
- */
 internal class ImportSession(private val shell: Shell, initialMethod: ImportMethod = ImportMethod.SUBSCRIPTION, initialOutcome: ImportOutcome? = null) {
     private val controller = shell.controller
     var method by mutableStateOf(initialMethod)
@@ -444,7 +417,6 @@ internal class ImportSession(private val shell: Shell, initialMethod: ImportMeth
     }
     fun qrFromClipboard() = review("Reading the clipboard…") { controller.previewQrClipboard() }
 
-    /** Clears the review to edit the source again. */
     fun backToSource() { outcome = null }
 
     val canCommit: Boolean get() = preview != null && working.isBlank() && !(preview!!.replaceSource && shell.locked)
@@ -455,7 +427,6 @@ internal class ImportSession(private val shell: Shell, initialMethod: ImportMeth
         shell.run { controller.commitImport(accepted) }
     }
 
-    /** One line that says where the review is. */
     fun status(): String {
         val error = outcome?.error
         val p = preview
@@ -473,7 +444,6 @@ internal class ImportSession(private val shell: Shell, initialMethod: ImportMeth
         }
     }
 
-    /** The source of the review, as the summary names it. */
     fun sourceLabel(): String {
         val p = preview ?: return ""
         return when {
@@ -484,7 +454,6 @@ internal class ImportSession(private val shell: Shell, initialMethod: ImportMeth
     }
 }
 
-/** The source part of an import: a subscription URL, pasted links or a QR code. */
 @Composable
 internal fun ImportSourceForm(shell: Shell, session: ImportSession) {
     val locked = shell.locked
@@ -532,7 +501,6 @@ internal fun ImportSourceForm(shell: Shell, session: ImportSession) {
     }
 }
 
-/** A QR source the user can pick. */
 @Composable
 private fun ImportOption(icon: ImageVector, title: String, detail: String, enabled: Boolean, onClick: () -> Unit) {
     val shape = RowShape
@@ -551,7 +519,6 @@ private fun ImportOption(icon: ImageVector, title: String, detail: String, enabl
     }
 }
 
-/** The status line of an import: working, error, found or nothing yet. */
 @Composable
 internal fun ImportStatusLine(session: ImportSession) {
     val error = session.outcome?.error
@@ -567,7 +534,6 @@ internal fun ImportStatusLine(session: ImportSession) {
     }
 }
 
-/** The parser's warnings: links that could not be read and will be skipped. */
 @Composable
 internal fun ImportWarnings(preview: ImportPreview?) {
     val warnings = preview?.warnings.orEmpty()
@@ -586,6 +552,5 @@ internal fun ImportWarnings(preview: ImportPreview?) {
     }
 }
 
-/** A short "Network quality" line for unmeasured servers. Never presents an unmeasured server as healthy. */
 internal fun unmeasuredExplanation(score: QualityScore?): String =
     score?.explanation() ?: "Run a ping or a real tunnel test, or connect, to rate this server. An unmeasured server is never treated as healthy."

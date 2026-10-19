@@ -16,16 +16,7 @@ import java.util.ArrayList;
 import java.util.List;
 import java.util.concurrent.ThreadLocalRandom;
 
-/**
- * Measures what a game feels: many small round trips in a row through one SOCKS port, over TCP and over UDP.
- *
- * <p>TCP: one kept-alive HTTP connection through the tunnel, with a tiny request repeated; every answer is one
- * round trip from this computer through the server to the target and back. UDP: a SOCKS5 UDP association
- * carrying DNS queries to a public resolver, which is the only widely available service that answers a single
- * datagram. A server without UDP support fails the UDP part, which matters for most games.
- */
 public final class GamingProbe {
-    /** Round trips per protocol. */
     public static final int SAMPLES = 20;
     private static final int TIMEOUT_MILLIS = 2_000;
     private static final int GAP_MILLIS = 60;
@@ -36,14 +27,12 @@ public final class GamingProbe {
 
     public GamingProbe() { this("cp.cloudflare.com", 80, new InetSocketAddress("1.1.1.1", 53)); }
 
-    /** Targets are configurable so tests can measure against servers on loopback. */
     public GamingProbe(String tcpHost, int tcpPort, InetSocketAddress udpTarget) {
         this.tcpHost = tcpHost;
         this.tcpPort = tcpPort;
         this.udpTarget = udpTarget;
     }
 
-    /** Round trip times in milliseconds; -1 marks a lost sample. */
     public record Samples(List<Long> values, String error) {
         public int lost() { return (int) values.stream().filter(value -> value < 0).count(); }
         public List<Long> answered() { return values.stream().filter(value -> value >= 0).toList(); }
@@ -64,7 +53,6 @@ public final class GamingProbe {
             for (int index = 0; index < SAMPLES; index++) {
                 if (socket == null) {
                     socket = open(socksPort);
-                    // The first answer on a new connection includes the server's dial; it is a warm-up, not a sample.
                     roundTrip(socket);
                 }
                 try {
@@ -110,7 +98,6 @@ public final class GamingProbe {
         }
     }
 
-    /** One HEAD request on the open connection; returns the time until the whole response head arrived. */
     private long roundTrip(Socket socket) throws IOException {
         String request = "HEAD /generate_204 HTTP/1.1\r\nHost: " + tcpHost + "\r\nUser-Agent: PerRoute\r\nConnection: keep-alive\r\n\r\n";
         long started = System.nanoTime();
@@ -136,7 +123,6 @@ public final class GamingProbe {
             control.connect(new InetSocketAddress(InetAddress.getLoopbackAddress(), socksPort), TIMEOUT_MILLIS);
             control.setSoTimeout(TIMEOUT_MILLIS);
             greet(control.getInputStream(), control.getOutputStream());
-            // UDP ASSOCIATE from the address the datagrams will come from.
             ByteArrayOutputStream request = new ByteArrayOutputStream();
             request.writeBytes(new byte[]{0x05, 0x03, 0x00, 0x01, 127, 0, 0, 1});
             int local = datagrams.getLocalPort();
@@ -164,7 +150,6 @@ public final class GamingProbe {
         }
     }
 
-    /** Waits for the answer with this query id; answers to earlier, late queries are ignored. */
     private static long awaitAnswer(DatagramSocket datagrams, int id, long started) throws IOException {
         byte[] buffer = new byte[1500];
         long deadline = started + TIMEOUT_MILLIS * 1_000_000L;
@@ -183,7 +168,6 @@ public final class GamingProbe {
         return -1L;
     }
 
-    /** A DNS query for the A record of example.com with the given id. */
     static byte[] dnsQuery(int id) {
         ByteArrayOutputStream query = new ByteArrayOutputStream();
         query.writeBytes(new byte[]{(byte) (id >>> 8), (byte) id, 0x01, 0x00, 0x00, 0x01, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00});
@@ -195,7 +179,6 @@ public final class GamingProbe {
         return query.toByteArray();
     }
 
-    /** Wraps a datagram in the SOCKS5 UDP request header. */
     static byte[] socksUdp(InetSocketAddress destination, byte[] payload) {
         ByteArrayOutputStream packet = new ByteArrayOutputStream();
         packet.writeBytes(new byte[]{0x00, 0x00, 0x00});
@@ -208,7 +191,6 @@ public final class GamingProbe {
         return packet.toByteArray();
     }
 
-    /** Length of the SOCKS5 UDP header of a received datagram, or -1 when it is not one. */
     static int socksHeaderLength(byte[] data, int length) {
         if (length < 4 || data[2] != 0x00) return -1;
         return switch (data[3]) {

@@ -13,10 +13,6 @@ import java.util.Comparator;
 import java.util.List;
 import java.util.Map;
 
-/**
- * The recent network snapshots, newest last, in a small JSON file next to PerRoute's state. It is readable by
- * the standalone recovery tool, holds no credentials, and keeps at most {@link #LIMIT} snapshots.
- */
 public final class NetworkHistoryStore {
     public static final int LIMIT = 30;
     private final Path file;
@@ -36,7 +32,6 @@ public final class NetworkHistoryStore {
         NetworkSnapshot snapshot = new NetworkSnapshot(id, now, reason, version, values);
         snapshots.add(snapshot);
         while (snapshots.size() > LIMIT) {
-            // The newest clean baseline is never dropped while newer snapshots exist, so a restore always has one.
             NetworkSnapshot keep = baselineLocked();
             int index = 0;
             while (index < snapshots.size() - 1 && snapshots.get(index) == keep) index++;
@@ -51,7 +46,6 @@ public final class NetworkHistoryStore {
         return snapshots.stream().filter(snapshot -> snapshot.id() == id).findFirst().orElse(null);
     }
 
-    /** The newest snapshot taken while PerRoute had changed nothing: before a connection or at a clean start. */
     public synchronized NetworkSnapshot baseline() {
         load();
         return baselineLocked();

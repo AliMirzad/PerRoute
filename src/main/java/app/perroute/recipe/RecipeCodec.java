@@ -15,12 +15,6 @@ import java.util.Locale;
 import java.util.Map;
 import java.util.regex.Pattern;
 
-/**
- * Reads and writes recipes, as a {@code .perroute-recipe} file (JSON) or as one line of text for a chat
- * ({@code perroute-recipe:} followed by Base64). A recipe from someone else is untrusted input: every field is
- * checked and limited before anything is shown, and values that Xray could interpret in unexpected ways (local
- * files, unknown prefixes) are refused. A checksum catches a damaged copy; it does not prove who made it.
- */
 public final class RecipeCodec {
     private RecipeCodec() {}
 
@@ -31,7 +25,6 @@ public final class RecipeCodec {
     public static final int MAX_APPS = 200;
     public static final int MAX_ROLES = 12;
 
-    /** A recipe that cannot be used, with a sentence saying why. */
     public static final class RecipeException extends Exception {
         public RecipeException(String message) { super(message); }
     }
@@ -43,8 +36,6 @@ public final class RecipeCodec {
     private static final Pattern IPV4 = Pattern.compile("(25[0-5]|2[0-4]\\d|1?\\d?\\d)(\\.(25[0-5]|2[0-4]\\d|1?\\d?\\d)){3}(/([0-9]|[12]\\d|3[0-2]))?");
     private static final Pattern IPV6 = Pattern.compile("(?i)[0-9a-f:]{2,39}(/(\\d|[1-9]\\d|1[01]\\d|12[0-8]))?");
     private static final Pattern PORTS = Pattern.compile("\\d{1,5}(-\\d{1,5})?(,\\d{1,5}(-\\d{1,5})?)*");
-
-    // ------------------------------------------------------------------ writing
 
     public static String toJson(Recipe recipe) {
         Map<String, Object> body = body(recipe);
@@ -104,9 +95,6 @@ public final class RecipeCodec {
         }
     }
 
-    // ------------------------------------------------------------------ reading
-
-    /** Accepts the file contents, the one-line text form, or text that contains the one-line form. */
     public static Recipe parse(String input) throws RecipeException {
         if (input == null || input.isBlank()) throw new RecipeException("Paste a recipe or choose a recipe file.");
         if (input.length() > MAX_BYTES * 2) throw new RecipeException("This recipe is too large.");
@@ -183,7 +171,6 @@ public final class RecipeCodec {
                 string(root.get("author")), string(root.get("createdWith")), roles, apps, rules, settings);
     }
 
-    /** Checks a rule value and returns it normalized; every comma-separated part must be valid. */
     public static String validValue(RouteRule.MatchType match, String value) throws RecipeException {
         String text = value == null ? "" : value.trim();
         if (text.isEmpty() || text.length() > 4_000) throw new RecipeException("A rule has an empty or very long value.");

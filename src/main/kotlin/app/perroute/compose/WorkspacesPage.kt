@@ -36,7 +36,6 @@ import kotlinx.coroutines.isActive
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 
-/** The workspaces, which one is selected, and the browsers found on this computer. */
 internal class WorkspacesModel(private val shell: Shell) {
     private val controller = shell.controller
     var views by mutableStateOf(controller.workspaces())
@@ -72,7 +71,6 @@ internal class WorkspacesModel(private val shell: Shell) {
         }
     }
 
-    /** Creates a workspace (null) or edits one. */
     fun edit(view: WorkspaceView?) {
         val name = mutableStateOf(view?.workspace?.name ?: "")
         val browser = mutableStateOf(view?.workspace?.browserPath ?: browsers.firstOrNull()?.path.orEmpty())
@@ -114,7 +112,6 @@ internal class WorkspacesModel(private val shell: Shell) {
 
 internal fun workspacesModel(shell: Shell): WorkspacesModel = shell.screen("${Tab.Workspaces.name}:model") { WorkspacesModel(shell) }
 
-/** Workspaces: browser profiles with a route of their own, in either design. */
 @Composable
 internal fun WorkspacesPage(shell: Shell) {
     val model = workspacesModel(shell)

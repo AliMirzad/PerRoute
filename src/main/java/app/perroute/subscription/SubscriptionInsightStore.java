@@ -14,7 +14,6 @@ import java.util.LinkedHashMap;
 import java.util.Locale;
 import java.util.Map;
 
-/** Insights per subscription, by a SHA-256 of the link so the file never holds the link itself. */
 public final class SubscriptionInsightStore {
     private final Path file;
     private final Map<String, SubscriptionInsight> insights = new LinkedHashMap<>();
@@ -47,7 +46,6 @@ public final class SubscriptionInsightStore {
         if (insights.remove(keyOf(url)) != null) save();
     }
 
-    /** Drops insights of subscriptions that are no longer saved. */
     public synchronized void retain(java.util.Collection<String> urls) {
         load();
         java.util.Set<String> keep = new java.util.HashSet<>();

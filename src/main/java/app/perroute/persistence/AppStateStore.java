@@ -36,7 +36,6 @@ public final class AppStateStore {
         this.protector = new StateProtector(file.resolveSibling(file.getFileName() + ".key"));
     }
 
-    /** The state format written by this version. States without a version were written by PerRoute 2 or earlier. */
     public static final int STATE_VERSION = 3;
 
     public AppState load() throws IOException {
@@ -44,7 +43,6 @@ public final class AppStateStore {
         return parse(loadProperties());
     }
 
-    /** The decrypted key-value pairs of the file, including keys this version does not know. */
     public Properties loadProperties() throws IOException {
         byte[] plain = protector.unprotect(Files.readAllBytes(file));
         Properties properties = new Properties();
@@ -52,7 +50,6 @@ public final class AppStateStore {
         return properties;
     }
 
-    /** Reads a state from the bytes {@link #serialize} produced; used to copy a state without sharing anything. */
     public AppState parse(byte[] plain) throws IOException {
         Properties properties = new Properties();
         properties.load(new ByteArrayInputStream(plain));
@@ -110,7 +107,6 @@ public final class AppStateStore {
             catch (RuntimeException ignored) {}
         }
         state.setActiveProfileId(properties.getProperty("profile.active", ""));
-        // States written before Advanced routing existed have none of these keys: Advanced stays off.
         state.setAdvancedRouting(Boolean.parseBoolean(properties.getProperty("advanced.enabled", "false")));
         int routeCount = integer(properties, "route.count");
         for (int i = 0; i < routeCount; i++) {
@@ -121,8 +117,6 @@ public final class AppStateStore {
             String label = properties.getProperty("route." + i + ".label", "");
             if (!label.isBlank()) state.appRouteLabels().put(nodeKey, label);
         }
-        // Everything below was added in version 3. A state without these keys keeps every application in
-        // Main or Manual mode and unlimited, exactly as version 2 behaved.
         String version = properties.getProperty("state.version", "");
         state.setMigratedFromV2(version.isBlank() || Boolean.parseBoolean(properties.getProperty("state.migratedFromV2", "false")));
         int autoCount = integer(properties, "auto.count");

@@ -22,10 +22,6 @@ import java.nio.file.Files
 import java.util.concurrent.ConcurrentLinkedQueue
 import kotlin.coroutines.CoroutineContext
 
-/**
- * Switching between the Simple and New designs while connected must only redraw: the same Shell and controller,
- * no reconnect or core restart, the same routes and settings, and every unsaved draft kept.
- */
 object UiStyleSwitchTests {
     private var assertions = 0
     @JvmStatic fun assertions() = assertions
@@ -80,8 +76,6 @@ object UiStyleSwitchTests {
                 val shell = shells.single()
                 equal(true, shell.connected)
 
-                // Stage an unsaved Apps draft directly (the screen locks these controls while connected). It lives in the
-                // Shell, so it must neither reach the controller nor vanish when the design changes.
                 shell.draft.selected += apps[2]
                 shell.draft.focused = apps[0]
                 check(shell.draft.dirty(shell), "The Apps draft has unsaved changes")
@@ -93,7 +87,6 @@ object UiStyleSwitchTests {
                 check(shell.draft.isSelected(apps[2]), "The added app is still in the draft")
                 equal(applications, controller.applications())
 
-                // The design is chosen in Settings: the open category's unsaved form survives as well.
                 shell.closeDialog(); shell.draft.focused = null; shell.discardDraft()
                 shell.navigate(Tab.Settings); shell.selectSettings(SettingsCategory.Backup); settle()
                 val backup = backupModel(shell)
@@ -104,11 +97,10 @@ object UiStyleSwitchTests {
                 check(backupModel(shell) === backup, "The backup form is the same one after switching")
                 equal("draft password", backupModel(shell).password)
 
-                // A rule being edited stays open across a switch.
                 shell.navigate(Tab.Rules); settle()
                 val rules = rulesModel(shell)
                 rules.startNew()
-                equal(false, rules.editor != null) // locked while connected: no editor opens
+                equal(false, rules.editor != null)
                 shell.setUiStyle(UiStyle.NEW); settle()
 
                 equal(1, shells.size)

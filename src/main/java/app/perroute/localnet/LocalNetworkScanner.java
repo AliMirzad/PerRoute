@@ -18,14 +18,9 @@ import java.util.concurrent.TimeUnit;
 import java.util.regex.Matcher;
 import java.util.regex.Pattern;
 
-/**
- * Finds the local networks this computer is on and the devices in them. It only reads: the adapters, the route
- * table and the neighbour (ARP) table Windows already keeps. Nothing is scanned or probed on the network itself.
- */
 public final class LocalNetworkScanner {
     private static final Pattern ARP_ROW = Pattern.compile("^\\s*(\\d+\\.\\d+\\.\\d+\\.\\d+)\\s+([0-9a-fA-F]{2}(?:-[0-9a-fA-F]{2}){5})\\s+\\S+\\s*$");
 
-    /** @param gateways default gateways from the route table; @param dns the system resolvers */
     public List<LocalNetwork> scan(List<String> gateways, List<String> dns, boolean resolveNames) {
         Map<String, String> neighbours = neighbours();
         List<LocalNetwork> networks = new ArrayList<>();
@@ -56,7 +51,6 @@ public final class LocalNetworkScanner {
         return networks;
     }
 
-    /** The neighbour table: IPv4 address to hardware address, as {@code arp -a} prints it (rows are not localized). */
     static Map<String, String> neighbours() {
         String output = run("arp.exe", "-a");
         return output == null ? Map.of() : parseArp(output);
@@ -87,7 +81,6 @@ public final class LocalNetworkScanner {
         }
     }
 
-    /** Reverse lookups, all at once and bounded, so a slow resolver cannot hold up the screen. */
     private static List<LocalNetwork.Device> named(List<LocalNetwork.Device> devices) {
         if (devices.isEmpty()) return devices;
         ExecutorService executor = Executors.newVirtualThreadPerTaskExecutor();

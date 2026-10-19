@@ -50,10 +50,6 @@ import androidx.compose.ui.unit.sp
 import app.perroute.model.ProxyNode
 import app.perroute.service.RoutePlanner
 
-/**
- * What the tray panel shows and can do, the same for both designs: connect or disconnect, pick the main server,
- * reopen the window. Per-app assignments are summarised but never edited here. Quit lives in the overflow menu.
- */
 internal class QuickAccessState(
     val connected: Boolean,
     val busy: Boolean,
@@ -69,7 +65,6 @@ internal class QuickAccessState(
     val onServer: (String) -> Unit,
     val onOpen: () -> Unit,
     val onExit: () -> Unit,
-    /** Apps on a temporary server, the selected apps, and starting or ending a temporary server. */
     val temporaries: List<TemporaryRoute> = emptyList(),
     val apps: List<String> = emptyList(),
     val perApp: Boolean = false,
@@ -77,7 +72,6 @@ internal class QuickAccessState(
     val onEndTemporary: (String) -> Unit = {},
     val onShowTemporary: () -> Unit = {}
 ) {
-    /** Servers in use lead the list: the main server, then custom and Auto servers, then favorites. */
     val inUse: Map<String, RouteKindLabel> = plan.routes().filter { !it.main() }.associate {
         it.node().key() to when { it.temporary() -> RouteKindLabel.TEMPORARY; it.auto() -> RouteKindLabel.AUTO; else -> RouteKindLabel.CUSTOM }
     }
@@ -113,14 +107,12 @@ internal class QuickAccessState(
         MenuEntry("Quit PerRoute", Icons.Rounded.PowerSettingsNew, "Disconnects and closes the app", danger = true, onClick = onExit)
     )
 
-    /** "4 applications · 3 routes", or the mode outside Smart per-app. */
     val summary: String get() = if (plan.applications().isEmpty()) "No apps selected" else
         "${plural(plan.applications().size, "application")}  ·  ${plural(plan.routes().size, "route")}"
 
     val missing: Int get() = plan.missing().size
 }
 
-/** The last check of the main route in words: passed with its latency and age, failed, or not checked. */
 internal fun quickCheckText(state: QuickAccessState, now: Long): Pair<String, Boolean?> {
     val check = state.mainCheck
     return when {
@@ -164,7 +156,6 @@ internal fun QuickAccessWindow(
     }
 }
 
-/** The apps on a temporary server, one line each, with the time left and End. */
 @Composable
 private fun QuickTemporaries(state: QuickAccessState, now: Long) {
     state.temporaries.forEach { route ->
@@ -270,7 +261,6 @@ private fun NewQuickAccess(state: QuickAccessState, temporary: Boolean, closeTem
     }
 }
 
-/** One main-server choice: a radio, the server, its protocol and role, and whether it is a favorite. */
 @Composable
 internal fun QuickServerRow(state: QuickAccessState, node: ProxyNode) {
     val active = node.key() == state.main?.key()
@@ -302,7 +292,6 @@ internal fun QuickServerRow(state: QuickAccessState, node: ProxyNode) {
 }
 
 
-/** Simple's tray panel: one light (or dark) card with the status, the main server, live speed and the choices. */
 @Composable
 internal fun SimpleQuickAccess(state: QuickAccessState, temporary: Boolean = false, closeTemporary: () -> Unit = {}) {
     val now by rememberNow()

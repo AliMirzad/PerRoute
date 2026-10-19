@@ -57,18 +57,12 @@ import app.perroute.service.AppProxyLauncher
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.isActive
 
-/** A clock that ticks once a second, so "12 seconds ago" keeps moving and stale checks are noticed. */
 @Composable
 internal fun rememberNow(): State<Long> = produceState(System.currentTimeMillis()) {
     while (isActive) { delay(1_000); value = System.currentTimeMillis() }
 }
 
-/**
- * A route in use and the applications on it, as shown in route lists. Main and Manual routes are shared by
- * the apps on one server; every app in Auto mode has a route of its own. [id] is what checks are stored under.
- */
 internal class RouteRow(val node: ProxyNode, val main: Boolean, val applications: List<String>, val id: String = node.key(), val auto: Boolean = false) {
-    /** An app on a server for a limited time. */
     val temporary: Boolean get() = id.startsWith(app.perroute.service.RoutePlanner.TEMPORARY_ROUTE_PREFIX)
     val kind: RouteKindLabel get() = when {
         temporary -> RouteKindLabel.TEMPORARY
@@ -78,7 +72,6 @@ internal class RouteRow(val node: ProxyNode, val main: Boolean, val applications
     }
 }
 
-/** Routes of the running connection, or the ones a connection would use while disconnected. */
 internal fun routeRows(shell: Shell): List<RouteRow> =
     if (shell.connected) shell.activeRoutes.map { RouteRow(it.node, it.main, it.applications, it.id, it.auto) }
     else shell.plan.routes().map { RouteRow(it.node(), it.main(), if (shell.perApp) it.applications() else emptyList(), it.id(), it.auto()) }
@@ -86,7 +79,6 @@ internal fun routeRows(shell: Shell): List<RouteRow> =
 @Composable
 internal fun RouteKindBadge(row: RouteRow) = RoutePill(row.kind)
 
-/** The connection mode as it is named in the interface. */
 internal fun modeLabel(mode: ConnectionMode): String = when (mode) {
     ConnectionMode.NATIVE_PER_APP -> "Smart per-app"
     ConnectionMode.BROWSER_PROXY -> "Local proxy"
@@ -94,7 +86,6 @@ internal fun modeLabel(mode: ConnectionMode): String = when (mode) {
     ConnectionMode.TUN_COMPATIBILITY -> "TUN"
 }
 
-/** One sentence on what a connection mode does. */
 internal fun modeDetail(mode: ConnectionMode): String = when (mode) {
     ConnectionMode.NATIVE_PER_APP -> "Only selected apps use the proxy."
     ConnectionMode.BROWSER_PROXY -> "Apps you point at the local proxy use it."
@@ -102,7 +93,6 @@ internal fun modeDetail(mode: ConnectionMode): String = when (mode) {
     ConnectionMode.TUN_COMPATIBILITY -> "Network traffic goes through the compatibility tunnel."
 }
 
-/** The state of the connection in words, shared by both designs and Quick Access. */
 internal class ConnectionView(val shell: Shell) {
     val main: ProxyNode? = shell.mainNode
     val rows: List<RouteRow> = routeRows(shell)
@@ -130,7 +120,6 @@ internal class ConnectionView(val shell: Shell) {
     }
     val routeCount: Int = rows.map { it.id }.distinct().size
     val serverCount: Int = rows.map { it.node.key() }.distinct().size
-    /** Health of every live route, for the "2 healthy · 1 recovering" summary. */
     val healthy: Int = shell.routeHealth.count { it.health?.state() == RouteHealthTracker.State.HEALTHY }
     val affected: Int = shell.routeHealth.count { it.health?.affected() == true }
     val recovering: Boolean = shell.connected && monitoring && shell.routeHealth.any { it.health?.state() == RouteHealthTracker.State.RECOVERING }
@@ -138,12 +127,10 @@ internal class ConnectionView(val shell: Shell) {
     fun health(row: RouteRow): RouteHealthTracker.Snapshot? =
         if (shell.connected) shell.routeHealth.firstOrNull { it.route.id == row.id }?.health else null
 
-    /** The latest of the route checks of the rows shown, for "Last checked 1 min ago". */
     val lastChecked: Long? = (rows.mapNotNull { shell.routeChecks[it.id]?.takeIf { c -> c.state == RouteCheckState.PASSED || c.state == RouteCheckState.FAILED }?.atMillis } +
         shell.routeHealth.mapNotNull { it.health?.let { h -> maxOf(h.lastPassedAt(), h.lastFailedAt()).takeIf { at -> at > 0 } } }).maxOrNull()
 }
 
-/** What the connection needs from the user, or what to know about it, as one notice. */
 internal class ConnectionNotice(val text: String, val warning: Boolean, val action: String?, val onAction: (() -> Unit)?)
 
 internal fun connectionNotice(view: ConnectionView): ConnectionNotice? {
@@ -162,10 +149,6 @@ internal fun connectionNotice(view: ConnectionView): ConnectionNotice? {
     }
 }
 
-/**
- * What was last observed on one route, in words and with an icon. A route that was never checked, is
- * being checked, failed, or was checked too long ago each reads differently.
- */
 @Composable
 internal fun RouteCheckStatus(check: RouteCheck?, connected: Boolean, now: Long, modifier: Modifier = Modifier, showLatency: Boolean = true, showAge: Boolean = true) {
     val state = check?.state ?: RouteCheckState.NOT_CHECKED
@@ -197,7 +180,6 @@ internal fun RouteCheckStatus(check: RouteCheck?, connected: Boolean, now: Long,
     }
 }
 
-/** Healthy, recovering (with the attempt and the countdown) or failed, for one live route. */
 @Composable
 internal fun RouteHealthStatus(health: RouteHealthTracker.Snapshot?, check: RouteCheck?, connected: Boolean, now: Long, modifier: Modifier = Modifier, compact: Boolean = false) {
     val state = health?.state()
@@ -230,7 +212,6 @@ internal fun RouteHealthStatus(health: RouteHealthTracker.Snapshot?, check: Rout
     }
 }
 
-/** Server menu entries for moving one live route, favorites first. */
 @Composable
 private fun changeServerEntries(shell: Shell, row: RouteRow, filter: String, open: Boolean): List<MenuEntry> {
     val latencies = remember(open) { if (open) shell.controller.cachedLatencies() else emptyMap() }
@@ -247,10 +228,6 @@ private fun changeServerEntries(shell: Shell, row: RouteRow, filter: String, ope
         }
 }
 
-/**
- * Picks another server for one live route and moves it right away. The Apps screen is locked while
- * connected, so a failed route is fixed here instead of sending the user to a screen they cannot edit.
- */
 @Composable
 internal fun ChangeServerButton(shell: Shell, row: RouteRow, modifier: Modifier = Modifier, height: Dp = 40.dp) {
     var open by remember { mutableStateOf(false) }
@@ -266,10 +243,8 @@ internal fun ChangeServerButton(shell: Shell, row: RouteRow, modifier: Modifier 
     }
 }
 
-/** Retry the route now, as the recovery card offers it. */
 internal fun retryRoute(shell: Shell, row: RouteRow) = shell.run { shell.controller.retryRoute(row.id) }
 
-/** The sentence that explains who waits for a recovering route and what protects them meanwhile. */
 internal fun recoveryExplanation(shell: Shell, row: RouteRow): String {
     val killSwitch = shell.controller.killSwitch()
     val apps = joinNames(row.applications.map(::appName)).ifBlank { "Apps on this route" }
@@ -278,7 +253,6 @@ internal fun recoveryExplanation(shell: Shell, row: RouteRow): String {
         (if (row.auto) " Auto moves the app to another working server when this one does not recover." else "")
 }
 
-/** The last events of one route's recovery, newest last. */
 @Composable
 internal fun RecoveryTimeline(health: RouteHealthTracker.Snapshot, modifier: Modifier = Modifier, limit: Int = 4) {
     val events = health.events().takeLast(limit)
@@ -307,7 +281,6 @@ internal fun RecoveryTimeline(health: RouteHealthTracker.Snapshot, modifier: Mod
     }
 }
 
-/** The kill switch and "no direct fallback" facts of a recovering route. */
 @Composable
 internal fun RecoveryProtection(shell: Shell) {
     val killSwitch = shell.controller.killSwitch()
@@ -319,10 +292,6 @@ internal fun RecoveryProtection(shell: Shell) {
     }
 }
 
-/**
- * Why only this route is affected, what protects its apps, what happened so far and what the user can do.
- * Both designs show it inside the route that is recovering.
- */
 @Composable
 internal fun RecoveryDetails(shell: Shell, row: RouteRow, health: RouteHealthTracker.Snapshot, modifier: Modifier = Modifier, stacked: Boolean = false) {
     val content: @Composable (Modifier) -> Unit = { inner ->
@@ -363,7 +332,6 @@ internal fun RecoveryDetails(shell: Shell, row: RouteRow, health: RouteHealthTra
     }
 }
 
-/** A local proxy address that is copied when pressed. */
 @Composable
 internal fun ProxyEndpoints(shell: Shell, modifier: Modifier = Modifier) {
     val clipboard = LocalClipboardManager.current
@@ -389,7 +357,6 @@ internal fun ProxyEndpoints(shell: Shell, modifier: Modifier = Modifier) {
     }
 }
 
-/** Main-server choices as menu entries: favorites first, the current one ticked. Shared by Simple's "Change server". */
 @Composable
 internal fun mainServerEntries(shell: Shell, open: Boolean): List<MenuEntry> {
     val favorites = remember(open) { if (open) shell.nodes.filter { shell.controller.isFavorite(it.key()) }.mapTo(hashSetOf()) { it.key() } else emptySet() }
@@ -404,14 +371,12 @@ internal fun mainServerEntries(shell: Shell, open: Boolean): List<MenuEntry> {
     }
 }
 
-/** Names the selected applications that are sending traffic right now. */
 internal fun activeAppSummary(traffic: TrafficSnapshot): String {
     val active = traffic.applications.filter { it.active }
     if (active.isEmpty()) return "No selected app is using the tunnel right now"
     return "Active: " + active.joinToString(", ") { "${appName(it.path)} (${formatBytes(it.downloadBytes + it.uploadBytes)})" }
 }
 
-/** A rate in megabits per second, as both designs show live speed: "31.2 Mbps". */
 internal fun formatMbps(bytesPerSecond: Long): String {
     val megabits = bytesPerSecond.coerceAtLeast(0) * 8 / 1_000_000.0
     return when {

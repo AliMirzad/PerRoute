@@ -16,7 +16,6 @@ import java.util.List;
 import java.util.Map;
 import java.util.concurrent.TimeUnit;
 
-/** Reads the network settings a {@link app.perroute.netstate.NetworkSnapshot} records, without changing any of them. */
 public final class WindowsNetworkState {
     private final WindowsSystemProxyManager proxy;
     private final ProxiFyreManager engine;
@@ -30,7 +29,6 @@ public final class WindowsNetworkState {
         this.dataDirectory = dataDirectory;
     }
 
-    /** Every reading; one that cannot be taken is left out rather than guessed. */
     public Map<String, String> read(List<String> dnsServers) {
         Map<String, String> values = new LinkedHashMap<>();
         try {
@@ -40,7 +38,6 @@ public final class WindowsNetworkState {
             put(values, NetworkStateKeys.PROXY_OVERRIDE, current.get("ProxyOverride"));
             put(values, NetworkStateKeys.PROXY_PAC, current.get("AutoConfigURL"));
         } catch (IOException error) {
-            // Registry not readable: those readings stay missing.
         } catch (InterruptedException error) {
             Thread.currentThread().interrupt();
         }
@@ -74,7 +71,6 @@ public final class WindowsNetworkState {
 
     private static String yes(boolean value) { return value ? "yes" : "no"; }
 
-    /** "Direct" or the WinHTTP proxy server, from netsh. Null when it cannot be read. */
     static String winHttpProxy() {
         String output = run("netsh.exe", "winhttp", "show", "proxy");
         if (output == null) return null;
@@ -86,7 +82,6 @@ public final class WindowsNetworkState {
         return "Direct";
     }
 
-    /** Default gateways from the IPv4 route table; the rows are not localized even when the headings are. */
     public static List<String> defaultGateways() {
         String output = run("route.exe", "print", "-4", "0.0.0.0");
         if (output == null) return List.of();
@@ -100,7 +95,6 @@ public final class WindowsNetworkState {
         return new ArrayList<>(gateways);
     }
 
-    /** Connected adapters with their IPv4 networks: "Wi-Fi 192.168.1.20/24". */
     static String adapters() {
         List<String> parts = new ArrayList<>();
         try {
@@ -121,7 +115,6 @@ public final class WindowsNetworkState {
         try {
             Process process = new ProcessBuilder(command).redirectErrorStream(true).start();
             java.io.ByteArrayOutputStream output = new java.io.ByteArrayOutputStream();
-            // Read on the side so a tool that never exits cannot block the caller past the timeout.
             Thread drain = Thread.ofVirtual().start(() -> {
                 try { process.getInputStream().transferTo(output); } catch (IOException ignored) {}
             });
@@ -136,7 +129,6 @@ public final class WindowsNetworkState {
         }
     }
 
-    /** Console tools write in the OEM code page; it only matters for the few localized words read here. */
     private static Charset consoleCharset() {
         try { return Charset.forName(System.getProperty("sun.stdout.encoding", System.getProperty("native.encoding", "UTF-8"))); }
         catch (RuntimeException unknown) { return Charset.defaultCharset(); }

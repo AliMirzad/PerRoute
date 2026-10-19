@@ -51,10 +51,6 @@ public final class ProxiFyreManager {
         return generateConfig(applicationPaths, true);
     }
 
-    /**
-     * @param bypassLan when false, the selected apps' local-network traffic is also sent to the core, so it can be
-     *                  blocked on networks that are not trusted; the core still sends trusted local traffic direct
-     */
     public String generateConfig(List<String> applicationPaths, boolean bypassLan) {
         if (applicationPaths == null || applicationPaths.isEmpty()) {
             throw new IllegalArgumentException("At least one application must be selected");
@@ -136,7 +132,6 @@ public final class ProxiFyreManager {
         stopLimited();
     }
 
-    /** "running", "stopped" or "not installed", read from the service manager. */
     public String serviceState() {
         try {
             Process process = new ProcessBuilder("sc.exe", "query", SERVICE_NAME).redirectErrorStream(true).start();
@@ -149,11 +144,6 @@ public final class ProxiFyreManager {
         }
     }
 
-    /**
-     * Whose app list the engine uses: "perroute" while PerRoute's list is in place (PerRoute keeps the previous
-     * list, or a marker that there was none, exactly as long as its own list is installed), "other" when an app
-     * list exists that PerRoute did not write, "none" otherwise.
-     */
     public String configOwner() {
         Path directory = inspect().executable().getParent();
         if (directory == null) return "none";
@@ -161,13 +151,11 @@ public final class ProxiFyreManager {
         return Files.isRegularFile(directory.resolve("app-config.json")) ? "other" : "none";
     }
 
-    /** Whether PerRoute's saved copy of the engine's previous settings is waiting to be put back. */
     public boolean backupPending() {
         Path directory = inspect().executable().getParent();
         return directory != null && Files.exists(directory.resolve("app-config.perroute-backup.json"));
     }
 
-    /** How many apps the engine's current list redirects. */
     public int configuredApps() {
         Path directory = inspect().executable().getParent();
         try {
@@ -180,7 +168,6 @@ public final class ProxiFyreManager {
         }
     }
 
-    /** Whether PerRoute's own copy of the engine (used without Administrator rights) is still running. */
     public boolean limitedRunning() {
         Path runtime = AppDirectories.dataDirectory().resolve("proxifyre-limited");
         Path pidFile = runtime.resolve("perroute.pid");

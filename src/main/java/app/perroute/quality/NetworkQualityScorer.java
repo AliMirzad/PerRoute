@@ -4,21 +4,6 @@ import java.util.ArrayList;
 import java.util.Comparator;
 import java.util.List;
 
-/**
- * Turns the samples of one server into a 0-100 score. It is a pure function of its input and the given
- * clock, so the same history always produces the same score and explanation.
- *
- * <ul>
- *   <li>Success rate (35%): time-weighted, connections through the tunnel count twice as much as a port check.</li>
- *   <li>Latency (25%): median round trip; 40 ms or less is perfect, 600 ms or more scores nothing.</li>
- *   <li>Jitter (15%): mean change between consecutive latencies; 5 ms or less is perfect, 150 ms or more scores nothing.</li>
- *   <li>Stability (15%): how rarely the server flips between working and failing.</li>
- *   <li>Connection setup (10%): time to open a connection through the tunnel; 150 ms is perfect, 2.5 s scores nothing.</li>
- *   <li>Recent recoveries subtract up to 15 points for an hour after they happen.</li>
- * </ul>
- * A part that could not be measured is left out and the remaining weights are rescaled. A server whose tunnel
- * was never verified is capped at 74 (Good at best), and the last two checks failing make it Unavailable.
- */
 public final class NetworkQualityScorer {
     public static final long STALE_AFTER_MILLIS = 30 * 60_000L;
     public static final long FORGET_AFTER_MILLIS = 24 * 60 * 60_000L;
@@ -54,7 +39,6 @@ public final class NetworkQualityScorer {
         long age = now - lastCheck;
         boolean stale = age > STALE_AFTER_MILLIS;
 
-        // Success rate, weighted by age and by strength of evidence.
         double attempts = 0, successes = 0;
         for (QualitySample sample : checks) {
             double weight = Math.pow(0.5, (double) Math.max(0L, now - sample.atMillis()) / HALF_LIFE_MILLIS)
@@ -65,7 +49,6 @@ public final class NetworkQualityScorer {
         double successRate = attempts <= 0 ? 0 : successes / attempts;
         int recentFailures = (int) checks.stream().filter(s -> !s.success() && now - s.atMillis() <= RECOVERY_WINDOW_MILLIS).count();
 
-        // The strongest available evidence decides availability: tunnel checks when there are any.
         List<QualitySample> decisive = tunnel.isEmpty() ? reach : tunnel;
         boolean lastTwoFailed = decisive.size() >= 2
                 && !decisive.get(decisive.size() - 1).success() && !decisive.get(decisive.size() - 2).success();
@@ -97,7 +80,6 @@ public final class NetworkQualityScorer {
                 checks.size(), headline(label, parts, tunnelVerified, stale), explanation(parts, tunnelVerified, age));
     }
 
-    /** Mutable working copy of the components while they are computed. */
     private static final class Components {
         Long latencyMillis; Integer latencyScore; Long jitterMillis; Integer jitterScore;
         double successRate; int successScore; Integer stabilityScore; Long setupMillis; Integer setupScore;
@@ -116,8 +98,6 @@ public final class NetworkQualityScorer {
         parts.successScore = (int) Math.round(successRate * 100);
         parts.recentFailures = recentFailures;
 
-        // Latency and jitter come from one kind of measurement so they are comparable: the port check when
-        // there is one, otherwise the tunnel connection time.
         List<Long> latencies = successfulLatencies(reach.isEmpty() ? tunnel : reach);
         if (!latencies.isEmpty()) {
             parts.latencyMillis = median(latencies);
@@ -140,8 +120,6 @@ public final class NetworkQualityScorer {
             parts.setupScore = linear(parts.setupMillis, 150, 2_500);
         }
 
-        // A recovery, recorded or visible as a failure followed by a success, costs up to 6 points each,
-        // fading over an hour, and no more than 15 in total.
         double penalty = 0;
         for (QualitySample sample : all) {
             if (sample.kind() == QualitySample.Kind.RECOVERY && now - sample.atMillis() <= RECOVERY_WINDOW_MILLIS) {
@@ -160,10 +138,6 @@ public final class NetworkQualityScorer {
         return parts;
     }
 
-    /**
-     * Grows with the number of recent samples (eight are enough), shrinks as the newest sample ages, and is
-     * lower when only the server's port, not the tunnel, has been checked.
-     */
     static double confidence(List<QualitySample> checks, long now, boolean tunnelVerified) {
         long recent = checks.stream().filter(s -> now - s.atMillis() <= 6 * 60 * 60_000L).count();
         double amount = Math.min(1.0, recent / 8.0);
@@ -226,7 +200,6 @@ public final class NetworkQualityScorer {
         return sorted.size() % 2 == 1 ? sorted.get(middle) : Math.round((sorted.get(middle - 1) + sorted.get(middle)) / 2.0);
     }
 
-    /** 100 at or below {@code best}, 0 at or above {@code worst}, straight line in between. */
     static int linear(long value, long best, long worst) {
         if (value <= best) return 100;
         if (value >= worst) return 0;

@@ -36,7 +36,6 @@ import java.awt.FileDialog
 import java.nio.file.Files
 import java.nio.file.Path
 
-/** The Recipes section of the Profiles screen, the same in both designs. */
 @Composable
 internal fun RecipesSection(shell: Shell, first: Boolean = false) {
     FeatureBlock("Recipes", "Share how you route apps without sharing your servers. A recipe holds rules and app routes; servers become slots that the person importing it fills with their own.", first = first) {
@@ -62,7 +61,6 @@ internal fun RecipesSection(shell: Shell, first: Boolean = false) {
     }
 }
 
-/** Builds a recipe from the current setup after the user chose what to include, then saves it or copies it. */
 internal fun showRecipeExport(shell: Shell) {
     val draft = shell.controller.recipeDraft()
     val name = mutableStateOf("My routing recipe")
@@ -139,7 +137,6 @@ private fun CheckLine(text: String, checked: Boolean, enabled: Boolean = true, o
     }
 }
 
-/** Asks for a recipe (pasted text or a file), reads it, then shows what importing it would change. */
 internal fun showRecipeImport(shell: Shell) {
     val text = mutableStateOf("")
     shell.showDialog {
@@ -172,7 +169,6 @@ private fun review(shell: Shell, content: String) {
     }
 }
 
-/** The import review: rules with their conflicts, apps and where they were found, server slots and settings. */
 private fun showRecipeReview(shell: Shell, plan: RecipePlanner.Plan) {
     val recipe = plan.recipe()
     val roles = mutableStateMapOf<String, String>().apply { recipe.roles().forEach { role -> shell.selectedNodeKey.takeIf { it.isNotBlank() }?.let { put(role.id(), it) } } }

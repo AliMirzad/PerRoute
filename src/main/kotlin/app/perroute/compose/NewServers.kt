@@ -53,7 +53,6 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import app.perroute.model.ProxyNode
 
-/** Servers: the library with tests and filters, the highlighted server's detail, and Use as main server. */
 @Composable
 internal fun NewServersPage(shell: Shell) {
     val model = serversModel(shell)
@@ -75,7 +74,6 @@ internal fun NewServersPage(shell: Shell) {
                 PrimaryButton("Add servers", icon = Icons.Rounded.Add) { model.openImport() }
             }
             Spacer(Modifier.height(20.dp))
-            // On narrower windows the sort and test menus move down beside the count, so the search keeps its room.
             val oneRow = pageWidth >= 860.dp
             val sortMenu: @Composable () -> Unit = {
                 MenuButton(model.sort.label, ServerSort.entries.map { sort -> MenuEntry(sort.label, selected = model.sort == sort) { model.sort = sort } },
@@ -136,7 +134,6 @@ internal fun NewServersPage(shell: Shell) {
     }
 }
 
-/** The third filter chip: a subscription, the manual or imported group, a tag or a country, picked from a menu. */
 @Composable
 private fun SourceChip(model: ServersModel, meta: Map<String, ServerMeta>) {
     var open by remember { mutableStateOf(false) }
@@ -166,7 +163,7 @@ private fun NewServerRow(shell: Shell, model: ServersModel, node: ProxyNode, inf
     val isMain = node.key() == shell.mainNode?.key()
     val highlighted = node.key() == model.highlightedKey
     NewTableRow(highlighted, onClick = { model.highlightedKey = node.key() }, label = "Details of ${serverName(node)}") {
-        Row(Modifier.weight(1.6f), verticalAlignment = Alignment.CenterVertically) {
+        Row(Modifier.weight(1.6f).padding(end = 16.dp), verticalAlignment = Alignment.CenterVertically) {
             ServerAvatar(node, 36.dp)
             Spacer(Modifier.width(12.dp))
             Column(Modifier.weight(1f)) {
@@ -200,7 +197,6 @@ private fun NewServerRow(shell: Shell, model: ServersModel, node: ProxyNode, inf
     }
 }
 
-/** The highlighted server: its score and what it is made of, who uses it, the tests, and Use as main server. */
 @Composable
 private fun ColumnScope.NewServerPanel(shell: Shell, model: ServersModel, node: ProxyNode?, meta: Map<String, ServerMeta>, rows: List<RouteRow>, tags: List<String>) {
     val main = shell.mainNode
@@ -273,7 +269,6 @@ private fun ColumnScope.NewServerPanel(shell: Shell, model: ServersModel, node: 
         enabled = node.key() != main?.key() && !shell.busy) { model.useAsMain(node) }
 }
 
-/** Add servers as a page: the source on the left, the import summary in the panel, Back, Cancel and Add at the bottom. */
 @Composable
 private fun NewImportPage(shell: Shell, model: ServersModel, session: ImportSession) {
     val preview = session.preview
@@ -315,7 +310,7 @@ private fun NewImportPage(shell: Shell, model: ServersModel, session: ImportSess
                 }
                 preview.candidates.take(200).forEach { candidate ->
                     NewTableRow(false) {
-                        Row(Modifier.weight(1.4f), verticalAlignment = Alignment.CenterVertically) {
+                        Row(Modifier.weight(1.4f).padding(end = 12.dp), verticalAlignment = Alignment.CenterVertically) {
                             ServerAvatar(candidate.node, 30.dp)
                             Spacer(Modifier.width(11.dp))
                             EllipsisText(serverName(candidate.node), White, 13.sp, fontWeight = FontWeight.SemiBold)

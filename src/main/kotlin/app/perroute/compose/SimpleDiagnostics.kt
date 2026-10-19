@@ -45,7 +45,6 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import app.perroute.model.RouteRule
 
-/** Diagnostics: route checks, the connection inspector, loaded rules and the rule tester, each in a card. */
 @Composable
 internal fun SimpleDiagnosticsPage(shell: Shell) {
     val model = diagnosticsModel(shell)
@@ -88,7 +87,7 @@ private fun SimpleRouteChecks(shell: Shell, model: DiagnosticsModel, now: Long) 
         entries.forEach { entry ->
             val open = model.selectedRoute == entry.id
             SimpleTableRow {
-                Row(Modifier.weight(1.5f), verticalAlignment = Alignment.CenterVertically) {
+                Row(Modifier.weight(1.5f).padding(end = 16.dp), verticalAlignment = Alignment.CenterVertically) {
                     RouteEntryAvatar(entry, 46.dp)
                     Spacer(Modifier.width(16.dp))
                     Column(Modifier.weight(1f)) {
@@ -271,7 +270,7 @@ private fun SimpleLoadedRules(shell: Shell, model: DiagnosticsModel) {
             val state = states[index]
             SimpleTableRow {
                 Text("${index + 1}", color = White.copy(.85f), fontSize = 14.sp, modifier = Modifier.width(36.dp))
-                Column(Modifier.weight(1.6f)) {
+                Column(Modifier.weight(1.6f).padding(end = 12.dp)) {
                     EllipsisText(PerRouteController.ruleDisplayName(rule), White, 14.sp, fontWeight = FontWeight.SemiBold)
                     EllipsisText("${ruleTarget(rule)}  ·  ${rule.value()}  →  ${actionLabel(rule.action())}", Muted, 12.5.sp)
                 }

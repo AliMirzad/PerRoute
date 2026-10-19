@@ -53,18 +53,15 @@ import app.perroute.service.TrafficHistoryStore
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.isActive
 
-/** Which totals the usage part shows. */
 internal enum class TrafficView(val label: String) { Today("Today"), Month("This month"), Daily("Daily totals") }
 internal const val ChartWindowMillis = 90_000L
 
-/** Local byte totals, the live speed graph and the limits of each app. Only counts are stored, never destinations. */
 internal class TrafficModel(private val shell: Shell) {
     private val controller = shell.controller
     var view by mutableStateOf(TrafficView.Today)
     var appFilter by mutableStateOf("")
     var report by mutableStateOf(controller.trafficReport(""))
     var points by mutableStateOf(controller.trafficPoints())
-    /** The app the New design's side panel shows. */
     var selectedApp by mutableStateOf<String?>(null)
 
     fun reload() { report = controller.trafficReport(appFilter); points = controller.trafficPoints() }
@@ -85,7 +82,6 @@ internal class TrafficModel(private val shell: Shell) {
 
     fun moreMenu(): List<MenuEntry> = listOf(MenuEntry("Clear traffic history…", Icons.Rounded.DeleteSweep, danger = true) { clearHistory() })
 
-    /** Edit limits of one app: New selects it for the panel, Simple opens a dialog. */
     fun editLimits(path: String) {
         shell.showDialog {
             DialogCard("Bandwidth limits for ${appName(path)}", "The limit is the app's total across all of its connections, enforced by the traffic gateway.",
@@ -102,7 +98,6 @@ internal class TrafficModel(private val shell: Shell) {
         MenuEntry("Set unlimited", Icons.Rounded.AllInclusive, enabled = !policy.unlimited()) { setUnlimited(path) }
     )
 
-    /** What one app does right now against its limits. */
     fun appRows(): List<AppBandwidthRow> = shell.apps.map { path ->
         val usage = shell.traffic.applications.firstOrNull { it.path.equals(path, true) }
         val status = controller.bandwidthStatus(path)
@@ -112,7 +107,6 @@ internal class TrafficModel(private val shell: Shell) {
             policy.uploadBytesPerSecond().takeIf { it > 0 }?.let { (usage?.uploadBytesPerSecond ?: 0).toFloat() / it })
     }
 
-    /** Today's or this month's total of one app, for the "1.2 GB today" line. */
     fun usageOf(path: String): Long {
         val entries = if (view == TrafficView.Month) report.monthApplications() else report.todayApplications()
         return entries.firstOrNull { it.applicationPath().equals(path, true) }?.let { it.downloadBytes() + it.uploadBytes() } ?: 0L
@@ -128,7 +122,6 @@ internal class AppBandwidthRow(
     val upShare: Float?
 ) {
     val active: Boolean get() = usage?.active == true
-    /** The larger of the two shares: how close the app is to its tightest limit. */
     val utilization: Float? get() = listOfNotNull(downShare, upShare).maxOrNull()
 }
 
@@ -141,13 +134,10 @@ internal fun TrafficEffects(model: TrafficModel) {
     }
 }
 
-/** A limit in Mbps, or "Unlimited". */
 internal fun limitText(bitsPerSecond: Long): String = if (bitsPerSecond > 0) formatMbps(bitsPerSecond / 8) else "Unlimited"
 
-/** A percentage of a limit, or a dash when there is no limit. */
 internal fun shareText(share: Float?): String = share?.let { "${(it * 100).toInt().coerceAtMost(999)}%" } ?: "—"
 
-/** Download and upload per application, for one period. */
 @Composable
 internal fun UsageList(title: String, entries: List<TrafficHistoryStore.Entry>, filter: String, empty: String, download: Color, upload: Color) {
     val shown = entries.filter { filter.isBlank() || it.applicationPath().equals(filter, true) }
@@ -185,7 +175,6 @@ internal fun UsageList(title: String, entries: List<TrafficHistoryStore.Entry>, 
     }
 }
 
-/** Download and upload per day of the current month. */
 @Composable
 internal fun DailyList(days: List<TrafficHistoryStore.Day>, filter: String, download: Color, upload: Color) {
     Text("Daily totals this month" + if (filter.isBlank()) "" else " for ${appName(filter)}", color = White, fontSize = 14.sp, fontWeight = FontWeight.SemiBold)
@@ -216,7 +205,6 @@ internal fun DailyList(days: List<TrafficHistoryStore.Day>, filter: String, down
     }
 }
 
-/** The usage section for the chosen view. */
 @Composable
 internal fun UsageSection(model: TrafficModel, download: Color, upload: Color) {
     val report = model.report
@@ -229,7 +217,6 @@ internal fun UsageSection(model: TrafficModel, download: Color, upload: Color) {
     }
 }
 
-/** The next round value of the axis in megabits per second. */
 private fun niceMbps(value: Double): Double {
     for (step in doubleArrayOf(1.0, 2.0, 3.0, 5.0, 10.0, 15.0, 20.0, 30.0, 50.0, 75.0, 100.0, 150.0, 200.0, 300.0, 500.0, 1000.0)) if (step >= value) return step
     return Math.ceil(value / 1000.0) * 1000.0
@@ -239,10 +226,6 @@ private fun mbps(bytesPerSecond: Long): Double = bytesPerSecond.coerceAtLeast(0)
 
 private fun axisLabel(value: Double): String = if (value == Math.floor(value)) value.toInt().toString() else String.format(java.util.Locale.ROOT, "%.1f", value)
 
-/**
- * The last 90 seconds of download and upload speed in Mbps, with exact values under the pointer and the latest
- * value at the end of each line. [legendBelow] puts the legend under the chart as New does; Simple puts it above.
- */
 @Composable
 internal fun LiveSpeedChart(points: List<TrafficPoint>, connected: Boolean, download: Color, upload: Color, legendBelow: Boolean, modifier: Modifier = Modifier) {
     var now by remember { mutableStateOf(System.currentTimeMillis()) }
@@ -385,7 +368,6 @@ internal fun LiveSpeedChart(points: List<TrafficPoint>, connected: Boolean, down
     }
 }
 
-/** The chart legend as Simple places it, beside the chart title. */
 @Composable
 internal fun ChartLegend(download: Color, upload: Color) {
     Row(verticalAlignment = Alignment.CenterVertically) {

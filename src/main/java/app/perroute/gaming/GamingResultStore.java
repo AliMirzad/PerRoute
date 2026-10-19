@@ -13,7 +13,6 @@ import java.util.LinkedHashMap;
 import java.util.Map;
 import java.util.Set;
 
-/** The last gaming test of every server, by server key. Only measurements are stored, never server details. */
 public final class GamingResultStore {
     private final Path file;
     private final Map<String, GamingScore> results = new LinkedHashMap<>();

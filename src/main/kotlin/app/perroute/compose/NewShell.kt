@@ -58,13 +58,8 @@ import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 
-/** The width of the New design's navigation rail. */
 internal val NewRailWidth = 76.dp
 
-/**
- * The New design: a charcoal title bar and a narrow rail (Connect, Apps, Servers; Tools and Settings at the
- * bottom), bone pages, and a charcoal detail panel on the right of most pages.
- */
 @Composable
 internal fun NewWindow(shell: Shell, chrome: WindowChrome) {
     Column(Modifier.fillMaxSize().background(NewColors.Chrome)) {
@@ -93,10 +88,8 @@ internal fun NewWindow(shell: Shell, chrome: WindowChrome) {
 private fun NewTitleBar(chrome: WindowChrome) {
     CharcoalColors {
         Row(Modifier.fillMaxWidth().height(46.dp).background(NewColors.Chrome), verticalAlignment = Alignment.CenterVertically) {
-            Box(Modifier.width(NewRailWidth).fillMaxHeight())
-            Divider(Modifier.fillMaxHeight(), vertical = true)
             WindowDragArea(chrome.hostWindow, Modifier.weight(1f).fillMaxHeight()) {
-                Row(Modifier.fillMaxSize().padding(start = 22.dp), verticalAlignment = Alignment.CenterVertically) {
+                Row(Modifier.fillMaxSize().padding(start = (NewRailWidth - 25.dp) / 2), verticalAlignment = Alignment.CenterVertically) {
                     NewMark(25.dp)
                     Spacer(Modifier.width(11.dp))
                     Text("PerRoute", color = White, fontSize = 17.sp, fontWeight = FontWeight.Bold)
@@ -111,7 +104,6 @@ private fun NewTitleBar(chrome: WindowChrome) {
     }
 }
 
-/** The tools grouped under one rail entry, in the order of the Tools menu. */
 private val ToolTabs = listOf(Tab.Rules, Tab.Profiles, Tab.Workspaces, Tab.Diagnostics, Tab.Health, Tab.Traffic)
 
 @Composable
@@ -177,7 +169,6 @@ private fun RailItem(label: String, icon: ImageVector?, selected: Boolean, acces
     }
 }
 
-/** "TOOLS / RULES": where the page sits, in letter-spaced capitals. */
 @Composable
 internal fun NewEyebrow(vararg parts: String) {
     Row(verticalAlignment = Alignment.CenterVertically) {
@@ -189,7 +180,6 @@ internal fun NewEyebrow(vararg parts: String) {
     }
 }
 
-/** The page heading: eyebrow, a large title and its subtitle, with actions on the right. */
 @Composable
 internal fun NewHeading(eyebrow: List<String>, title: String, subtitle: String, modifier: Modifier = Modifier, actions: (@Composable RowScope.() -> Unit)? = null) {
     val compact = LocalCompact.current
@@ -217,7 +207,6 @@ internal fun NewHeading(eyebrow: List<String>, title: String, subtitle: String, 
     }
 }
 
-/** "● Not connected" in the corner of pages whose options lock while connected. */
 @Composable
 internal fun NewConnectionChip(shell: Shell) {
     val (label, color) = when {
@@ -233,16 +222,10 @@ internal fun NewConnectionChip(shell: Shell) {
     }
 }
 
-/** The width of the charcoal detail panel: about a third of the window, never cramped and never vast. */
 internal fun newPanelWidth(total: Dp): Dp = if (total < 980.dp) 260.dp else (total * .34f).coerceIn(290.dp, 470.dp)
 
-/** True when the working area of a page is narrow (small windows, large scaling): tables merge columns and buttons wrap. */
 internal val LocalCompact = androidx.compose.runtime.compositionLocalOf { false }
 
-/**
- * A page with a bone working area on the left and the charcoal detail panel on the right. [bottomBar] spans the
- * whole width under both, as the Add servers and Restore reviews do; [mainBar] only the working area.
- */
 @Composable
 internal fun NewSplitPage(
     panel: @Composable ColumnScope.() -> Unit,
@@ -276,7 +259,6 @@ internal fun NewSplitPage(
     }
 }
 
-/** A bar of actions under a page: a summary on the left, the decisions on the right. */
 @Composable
 internal fun NewBottomBar(modifier: Modifier = Modifier, content: @Composable RowScope.() -> Unit) {
     Column(modifier.fillMaxWidth()) {
@@ -286,7 +268,6 @@ internal fun NewBottomBar(modifier: Modifier = Modifier, content: @Composable Ro
     }
 }
 
-/** The panel heading: an eyebrow and a large title, optionally with a subtitle. */
 @Composable
 internal fun NewPanelHeading(eyebrow: String, title: String, subtitle: String = "", leading: (@Composable () -> Unit)? = null) {
     SectionLabel(eyebrow, White.copy(.85f))
@@ -303,7 +284,6 @@ internal fun NewPanelHeading(eyebrow: String, title: String, subtitle: String = 
     }
 }
 
-/** A titled group inside the detail panel, separated from the previous one by a rule. */
 @Composable
 internal fun NewPanelSection(title: String? = null, divider: Boolean = true, content: @Composable ColumnScope.() -> Unit) {
     Spacer(Modifier.height(18.dp))
@@ -315,7 +295,6 @@ internal fun NewPanelSection(title: String? = null, divider: Boolean = true, con
     Column(content = content)
 }
 
-/** A label and its value as the panels list them: muted label, value on the right. */
 @Composable
 internal fun NewFact(label: String, value: String, valueColor: Color = White) {
     Row(Modifier.fillMaxWidth().padding(vertical = 5.dp), verticalAlignment = Alignment.CenterVertically) {
@@ -326,7 +305,6 @@ internal fun NewFact(label: String, value: String, valueColor: Color = White) {
     }
 }
 
-/** A table row on a bone page: hairline below, lime bar and tint when selected. */
 @Composable
 internal fun NewTableRow(selected: Boolean, modifier: Modifier = Modifier, onClick: (() -> Unit)? = null, label: String? = null, content: @Composable RowScope.() -> Unit) {
     Column(modifier.fillMaxWidth()) {
@@ -339,7 +317,6 @@ internal fun NewTableRow(selected: Boolean, modifier: Modifier = Modifier, onCli
     }
 }
 
-/** A table header on a bone page. */
 @Composable
 internal fun NewTableHeader(content: @Composable RowScope.() -> Unit) {
     Column(Modifier.fillMaxWidth()) {
@@ -349,7 +326,6 @@ internal fun NewTableHeader(content: @Composable RowScope.() -> Unit) {
 }
 
 
-/** A panel placeholder when nothing is selected yet. */
 @Composable
 internal fun NewPanelEmpty(eyebrow: String, title: String, detail: String, action: (@Composable () -> Unit)? = null) {
     NewPanelHeading(eyebrow, title)
@@ -358,7 +334,6 @@ internal fun NewPanelEmpty(eyebrow: String, title: String, detail: String, actio
     if (action != null) { Spacer(Modifier.height(18.dp)); action() }
 }
 
-/** The New design's version of a locked notice: a small padlock line rather than a banner. */
 @Composable
 internal fun NewLockNote(text: String, modifier: Modifier = Modifier) {
     Note(text, modifier, icon = Icons.Rounded.Lock, color = Amber)

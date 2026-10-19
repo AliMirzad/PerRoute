@@ -21,7 +21,6 @@ public record RouteRule(
         applicationPath = Objects.requireNonNullElse(applicationPath, "").trim();
         matchType = Objects.requireNonNullElse(matchType, MatchType.DOMAIN);
         value = Objects.requireNonNullElse(value, "").trim();
-        // A site typed as a URL or with www. covers the whole site; older saved rules are cleaned the same way.
         if (matchType == MatchType.DOMAIN) value = DomainEntries.normalizeList(value);
         action = Objects.requireNonNullElse(action, Action.PROXY);
         if (value.isBlank()) throw new IllegalArgumentException("Rule value is empty");

@@ -8,13 +8,6 @@ import java.util.Locale;
 import java.util.Set;
 import java.util.regex.Pattern;
 
-/**
- * Turns whatever the user typed for a domain rule into the site it means, so one entry covers the whole site.
- * {@code https://www.snapp.ir/login?x=1}, {@code www.snapp.ir}, {@code SNAPP.IR:443} and {@code *.snapp.ir} all
- * become {@code snapp.ir}, which matches the domain and every subdomain. Entries with an explicit Xray prefix
- * keep their meaning: {@code full:} stays exact (only cleaned of a scheme or path), and {@code keyword:},
- * {@code regexp:}, {@code geosite:} and {@code ext:} are left as written.
- */
 public final class DomainEntries {
     private DomainEntries() {}
 
@@ -22,7 +15,6 @@ public final class DomainEntries {
     private static final Pattern PORT = Pattern.compile(":\\d{1,5}$");
     private static final Set<String> VERBATIM = Set.of("keyword", "regexp", "geosite", "ext", "dotless");
 
-    /** Normalizes a comma- or whitespace-separated list, drops empty entries and duplicates, keeps the order. */
     public static String normalizeList(String text) {
         if (text == null) return "";
         Set<String> entries = new LinkedHashSet<>();
@@ -33,7 +25,6 @@ public final class DomainEntries {
         return String.join(", ", entries);
     }
 
-    /** One entry; an empty result means nothing usable was typed. */
     public static String normalize(String raw) {
         if (raw == null) return "";
         String text = raw.trim().replaceAll("^[\"'<]+|[\"'>]+$", "");
@@ -51,7 +42,6 @@ public final class DomainEntries {
         return host(text, true);
     }
 
-    /** The host part of a URL or host name, lower-cased and in ASCII form. */
     private static String host(String value, boolean wholeSite) {
         String text = SCHEME.matcher(value.trim()).replaceFirst("");
         int end = text.length();
@@ -67,11 +57,10 @@ public final class DomainEntries {
         if (wholeSite && text.startsWith("www.") && text.indexOf('.', 4) > 0) text = text.substring(4);
         if (text.isEmpty()) return "";
         try { text = IDN.toASCII(text, IDN.ALLOW_UNASSIGNED); }
-        catch (IllegalArgumentException invalid) { /* kept as typed; the core reports it if it cannot use it */ }
+        catch (IllegalArgumentException invalid) { }
         return text;
     }
 
-    /** The entries of a normalized list, for display. */
     public static List<String> entries(String normalized) {
         List<String> result = new ArrayList<>();
         for (String entry : normalized.split(",")) if (!entry.isBlank()) result.add(entry.trim());

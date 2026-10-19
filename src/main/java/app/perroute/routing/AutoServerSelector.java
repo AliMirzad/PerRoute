@@ -7,23 +7,6 @@ import java.util.Comparator;
 import java.util.List;
 import java.util.Objects;
 
-/**
- * Decides which server an application in Auto mode should use. It is pure: the same candidates, current
- * choice, policy and clock always give the same decision.
- *
- * <p>The rules, in order:
- * <ol>
- *   <li>Only candidates whose score is backed by evidence (not Unknown, not Unavailable, enough confidence)
- *       and whose route is not failing are eligible. An unmeasured server is never treated as healthy.</li>
- *   <li>A failed current server is replaced by the best eligible one right away, but no more than once per
- *       {@link Policy#failoverIntervalMillis()}. With no eligible alternative the current server is kept:
- *       Auto never releases an application to the direct route.</li>
- *   <li>A working current server is only replaced when the cooldown since the last change has passed and the
- *       best candidate is at least {@link Policy#switchMargin()} points better.</li>
- *   <li>Without any choice yet, the best eligible server is taken; with no evidence at all, the main server is
- *       used until measurements exist.</li>
- * </ol>
- */
 public final class AutoServerSelector {
     private AutoServerSelector() {}
 
@@ -38,7 +21,6 @@ public final class AutoServerSelector {
         }
     }
 
-    /** One server Auto may pick. {@code routeFailed} is true while its live route is failing. */
     public record Candidate(String key, String name, QualityScore score, boolean routeFailed) {
         public Candidate {
             Objects.requireNonNull(key, "key");
@@ -46,7 +28,6 @@ public final class AutoServerSelector {
         }
     }
 
-    /** The server an application uses now, and when Auto last changed it (0 if never). */
     public record Current(String key, long lastChangeMillis) {}
 
     public enum Reason {
@@ -66,7 +47,6 @@ public final class AutoServerSelector {
                 .filter(candidate -> eligible(candidate, rules))
                 .max(Comparator.<Candidate>comparingInt(c -> c.score().score())
                         .thenComparingDouble(c -> c.score().confidence())
-                        // On a tie the current server wins, then the stable list order.
                         .thenComparing(c -> current != null && c.key().equals(current.key())))
                 .orElse(null);
         Candidate present = current == null ? null

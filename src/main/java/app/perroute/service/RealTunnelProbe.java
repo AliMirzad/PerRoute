@@ -6,7 +6,6 @@ import java.io.IOException;
 import java.time.Duration;
 import java.util.concurrent.atomic.AtomicInteger;
 
-/** End-to-end tests of one server through an {@link IsolatedCore}, so the running connection is never involved. */
 public final class RealTunnelProbe {
     private static final AtomicInteger NEXT_PORT = new AtomicInteger(22000);
     private final ProxyHealthCheck healthCheck = new ProxyHealthCheck();
@@ -39,11 +38,9 @@ public final class RealTunnelProbe {
         }
     }
 
-    /** What a probe does with the isolated core's SOCKS port while the core runs. */
     @FunctionalInterface
     public interface TunnelTask<T> { T run(IsolatedCore core, int socksPort) throws Exception; }
 
-    /** Runs {@code task} against an isolated core for {@code node}; the core is stopped afterwards whatever happens. */
     public <T> T withTunnel(ProxyNode node, TunnelTask<T> task) throws Exception {
         try (IsolatedCore core = IsolatedCore.forNode(node)) {
             return task.run(core, core.socksPort());
@@ -54,10 +51,6 @@ public final class RealTunnelProbe {
         return error.getMessage() == null ? error.getClass().getSimpleName() : error.getMessage();
     }
 
-    /**
-     * A loopback port for an isolated core. Ports are handed out in turn from 22000 to 30000 so concurrent probes
-     * never share one, and a port another program already listens on is skipped.
-     */
     public static int reservePort() {
         for (int attempt = 0; attempt < 200; attempt++) {
             int value = NEXT_PORT.getAndUpdate(current -> current >= 30000 ? 22000 : current + 1);

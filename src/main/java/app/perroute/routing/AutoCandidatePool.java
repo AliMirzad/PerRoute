@@ -2,10 +2,6 @@ package app.perroute.routing;
 
 import java.util.Locale;
 
-/**
- * Which servers Auto may choose from for one application: every server, the favorites, or the servers
- * with one tag. Stored as a short text so it survives in the state file and in backups.
- */
 public record AutoCandidatePool(Kind kind, String tag) {
     public enum Kind { ALL, FAVORITES, TAG }
 

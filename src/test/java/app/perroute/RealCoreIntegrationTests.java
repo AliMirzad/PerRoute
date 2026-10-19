@@ -42,13 +42,6 @@ import java.util.UUID;
 import java.util.concurrent.CopyOnWriteArrayList;
 import java.util.function.Consumer;
 
-/**
- * End to end with the real Xray core and the real traffic gateway, entirely on loopback. Local Xray processes act
- * as VLESS servers whose outbound redirects every connection to a local HTTP endpoint that answers with the
- * server's name, so each request shows which server actually carried it. The per-app driver and Windows proxy
- * settings are not touched; the test opens the connections the driver would open. All ports are shifted by
- * {@code perroute.portOffset}, so an installed PerRoute can keep running.
- */
 final class RealCoreIntegrationTests {
     private static int assertions;
     private RealCoreIntegrationTests() {}
@@ -69,12 +62,10 @@ final class RealCoreIntegrationTests {
         new RealCoreIntegrationTests().scenario(xray);
     }
 
-    /** One local VLESS server, its redirect target and the process. */
     private static final class LocalServer implements AutoCloseable {
         final String name;
         final String uuid = UUID.randomUUID().toString();
         final ServerSocket http;
-        /** Echoes datagrams on the same port number as the HTTP endpoint, so UDP redirected by the server comes back. */
         final java.net.DatagramSocket echo;
         final int vlessPort;
         Process process;
@@ -112,7 +103,6 @@ final class RealCoreIntegrationTests {
                     Map.of("type", "tcp", "security", "none", "encryption", "none"), "");
         }
 
-        /** Answers every request with this server's name; "/big" returns 1.5 MB. Keep-alive is honoured. */
         private void serveHttp() {
             while (!http.isClosed()) {
                 Socket client;
@@ -155,7 +145,6 @@ final class RealCoreIntegrationTests {
         }
     }
 
-    /** The real core and gateway; the per-app driver, Windows proxy settings and discovery are left alone. */
     private static final class LoopbackBackend implements ConnectionBackend {
         final SystemConnectionBackend real = new SystemConnectionBackend();
         volatile int starts;
@@ -224,7 +213,6 @@ final class RealCoreIntegrationTests {
             live.onLog(line -> { logs.add(line); return kotlin.Unit.INSTANCE; });
             check(live.trafficGateway() && live.routeMonitoring(), "A fresh installation uses the gateway and route monitoring");
 
-            // Chat is in Auto (B measures best), Game has Manual server C, Browser follows Main (A).
             seed(live, b, 15);
             seed(live, c, 60);
             seed(live, d, 90);
@@ -239,7 +227,6 @@ final class RealCoreIntegrationTests {
             waitFor(() -> live.routeHealth().stream().allMatch(view -> view.getHealth() != null
                     && view.getHealth().state() == RouteHealthTracker.State.HEALTHY), 30_000);
 
-            // A connection Chat keeps open while the main server changes.
             try (KeepAlive chatConnection = new KeepAlive(XrayConfigGenerator.perAppPort(1))) {
                 equal("server-b", chatConnection.get("/"));
                 int starts = backend.starts;
@@ -253,7 +240,6 @@ final class RealCoreIntegrationTests {
                 System.out.println("    main switched A -> D in place; Chat's open connection kept working");
             }
 
-            // Server B goes away: only Chat's route recovers, and Auto moves Chat in place.
             int starts = backend.starts;
             b.kill();
             live.retryRoute(autoRoute(live, chat).getId());
@@ -271,7 +257,6 @@ final class RealCoreIntegrationTests {
             check(logs.stream().anyMatch(line -> line.contains("Auto moved") && line.contains("Other routes were not touched")), "The failover is logged");
             System.out.println("    server B stopped; Chat failed over to " + moved.toUpperCase() + " in place, Browser and Game unaffected");
 
-            // A real limit, enforced by the real gateway on traffic carried by the real core.
             live.setBandwidthPolicy(browser, new BandwidthPolicy(4_000_000, 0));
             long started = System.nanoTime();
             int size = download(0, "/big");
@@ -287,7 +272,6 @@ final class RealCoreIntegrationTests {
             System.out.printf("    unlimited: %.0f KB/s%n", unlimited / 1024);
             check(unlimited > rate * 2, "Removing the limit must speed the download up");
 
-            // The inspector reports what the core itself logged for these connections.
             request(1);
             waitFor(() -> live.inspectorRows().stream().anyMatch(row -> row.getApplicationPath().equals(chat)
                     && row.getObserved().getRouteLabel() != null), 10_000);
@@ -302,7 +286,6 @@ final class RealCoreIntegrationTests {
             System.out.println("    inspector: Chat -> integration.test observed on " + chatRow.getObserved().getRouteLabel()
                     + " via outbound " + chatRow.getObserved().getOutboundTag());
 
-            // 3.5: a temporary server for Browser starts and ends in place; Game's open connection keeps working.
             try (KeepAlive gameConnection = new KeepAlive(XrayConfigGenerator.perAppPort(2))) {
                 equal("server-c", gameConnection.get("/"));
                 int before = backend.starts;
@@ -321,7 +304,6 @@ final class RealCoreIntegrationTests {
                 System.out.println("    temporary server for Browser started and ended in place; Game's open connection kept working");
             }
 
-            // 3.5: the gaming test through a core of its own, with UDP carried by the real core to the server's echo.
             var gaming = live.gamingTest(List.of(c.node()), () -> false, (node, score) -> kotlin.Unit.INSTANCE).get(c.node().key());
             check(gaming != null && gaming.udpSupported() && gaming.lossPercent() == 0 && gaming.score() > 0,
                     "The gaming test must measure TCP and UDP through the real core: " + (gaming == null ? "no result" : gaming.note()));
@@ -355,7 +337,6 @@ final class RealCoreIntegrationTests {
                 .findFirst().orElseThrow();
     }
 
-    /** What the per-app driver does for application {@code index}: a SOCKS5 CONNECT to its gateway port. */
     private static Socket open(int index) throws IOException {
         Socket socket = new Socket(InetAddress.getLoopbackAddress(), XrayConfigGenerator.perAppPort(index));
         socket.setSoTimeout(15_000);
@@ -388,7 +369,6 @@ final class RealCoreIntegrationTests {
         }
     }
 
-    /** A keep-alive connection through one app's gateway port, reused across requests. */
     private static final class KeepAlive implements AutoCloseable {
         final Socket socket;
         KeepAlive(int port) throws IOException { socket = open(port - XrayConfigGenerator.PER_APP_PORT_BASE); }

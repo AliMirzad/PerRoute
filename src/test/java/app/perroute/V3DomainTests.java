@@ -48,7 +48,6 @@ import java.util.Set;
 import java.util.concurrent.CopyOnWriteArrayList;
 import java.util.concurrent.atomic.AtomicLong;
 
-/** Tests of the v3 building blocks. Network tests use loopback servers created here; nothing leaves the machine. */
 final class V3DomainTests {
     private static int assertions;
     private static final long NOW = 1_800_000_000_000L;
@@ -57,6 +56,7 @@ final class V3DomainTests {
     static int assertions() { return assertions; }
 
     static void runAll() throws Exception {
+        run("Store apps: an updated app is found at its new folder", V3DomainTests::testStoreAppPaths);
         run("Quality: unknown without evidence", V3DomainTests::testQualityUnknown);
         run("Quality: excellent, explained and deterministic", V3DomainTests::testQualityExcellent);
         run("Quality: port checks alone are capped", V3DomainTests::testQualityUnverifiedCap);
@@ -117,8 +117,6 @@ final class V3DomainTests {
         test.run();
     }
 
-    // ------------------------------------------------------------------ quality
-
     private static List<QualitySample> steady(int count, long spacingMillis, long reachMs, long tunnelMs) {
         List<QualitySample> samples = new ArrayList<>();
         for (int i = count; i >= 1; i--) {
@@ -127,6 +125,28 @@ final class V3DomainTests {
             samples.add(QualitySample.tunnel(at + 1_000, true, tunnelMs + (i % 3), ""));
         }
         return samples;
+    }
+
+    private static void testStoreAppPaths() {
+        String old = "C:\\Program Files\\WindowsApps\\Claude_2.37337.1.0_x64__pzs8sxrjxfjjc\\app\\Claude.exe";
+        String now = "C:\\Program Files\\WindowsApps\\Claude_2.42304.0.0_x64__pzs8sxrjxfjjc\\app\\claude.exe";
+        String older = "C:\\Program Files\\WindowsApps\\Claude_2.40000.0.0_x64__pzs8sxrjxfjjc\\app\\Claude.exe";
+        String otherPublisher = "C:\\Program Files\\WindowsApps\\Claude_9.0.0.0_x64__someoneelse01\\app\\Claude.exe";
+        String otherArch = "C:\\Program Files\\WindowsApps\\Claude_9.0.0.0_arm64__pzs8sxrjxfjjc\\app\\Claude.exe";
+        String chatgpt = "C:\\Program Files\\WindowsApps\\OpenAI.Codex_26.1013.3656.0_x64__2p2nqsd0c76g0\\app\\ChatGPT.exe";
+        java.util.Set<String> installed = java.util.Set.of(now, older, otherPublisher, otherArch, chatgpt);
+        java.util.function.Predicate<String> exists = installed::contains;
+        check(app.perroute.service.StoreAppPaths.isStorePath(old), "A WindowsApps package path is recognised");
+        check(!app.perroute.service.StoreAppPaths.isStorePath("C:\\Program Files\\Google\\Chrome\\Application\\chrome.exe"), "An ordinary path is not a Store path");
+        equal(now, app.perroute.service.StoreAppPaths.resolve(old, installed, exists));
+        equal(chatgpt, app.perroute.service.StoreAppPaths.resolve(
+            "C:\\Program Files\\WindowsApps\\OpenAI.Codex_26.1007.2314.0_x64__2p2nqsd0c76g0\\app\\ChatGPT.exe", installed, exists));
+        equal(now, app.perroute.service.StoreAppPaths.resolve(now, installed, exists));
+        equal("C:\\Apps\\tool.exe", app.perroute.service.StoreAppPaths.resolve("C:\\Apps\\tool.exe", installed, exists));
+        String unknown = "C:\\Program Files\\WindowsApps\\Unknown.App_1.0.0.0_x64__abcdefabcdef1\\Unknown.exe";
+        equal(unknown, app.perroute.service.StoreAppPaths.resolve(unknown, installed, exists));
+        equal(old, app.perroute.service.StoreAppPaths.resolve(old, java.util.List.of(otherPublisher, otherArch), exists));
+        equal(old, app.perroute.service.StoreAppPaths.resolve(old, java.util.List.of(now), path -> false));
     }
 
     private static void testQualityUnknown() {
@@ -235,8 +255,6 @@ final class V3DomainTests {
         }
     }
 
-    // ------------------------------------------------------------------ auto selection
-
     private static QualityScore scored(int score) {
         return new QualityScore(score, QualityLabel.forScore(score), 0.9, NOW, false, true,
                 QualityScore.Components.EMPTY, 10, "h", "e");
@@ -330,8 +348,6 @@ final class V3DomainTests {
         equal(AutoCandidatePool.ALL, AutoCandidatePool.decode("tag:"));
     }
 
-    // ------------------------------------------------------------------ route health
-
     private static void testRouteHealth() {
         RouteHealthTracker tracker = new RouteHealthTracker("r", "Route", RouteHealthTracker.Policy.DEFAULT, NOW);
         check(tracker.due(NOW), "A new route is checked at once");
@@ -370,9 +386,6 @@ final class V3DomainTests {
         check(tracker.snapshot().events().stream().anyMatch(e -> e.title().equals("Failure detected")), "The failure is in the timeline");
     }
 
-    // ------------------------------------------------------------------ gateway
-
-    /** A minimal SOCKS5 server standing in for Xray's per-app inbound. CONNECT goes to 127.0.0.1:{port}; port 1 is refused. */
     private static final class FakeSocks implements AutoCloseable {
         final ServerSocket server = new ServerSocket(0, 50, InetAddress.getLoopbackAddress());
         final List<Integer> clientPorts = new CopyOnWriteArrayList<>();
@@ -450,7 +463,6 @@ final class V3DomainTests {
         }
     }
 
-    /** Serves {@code bytes} zero bytes to every connection, or echoes, or swallows and counts uploads. */
     private static final class Target implements AutoCloseable {
         enum Kind { SOURCE, ECHO, SINK }
         final ServerSocket server = new ServerSocket(0, 50, InetAddress.getLoopbackAddress());
@@ -492,7 +504,6 @@ final class V3DomainTests {
         try (ServerSocket socket = new ServerSocket(0, 1, InetAddress.getLoopbackAddress())) { return socket.getLocalPort(); }
     }
 
-    /** Opens a SOCKS5 CONNECT through the gateway to 127.0.0.1:{targetPort}, using a domain-name address. */
     private static Socket connect(int gatewayPort, String host, int targetPort) throws IOException {
         Socket socket = new Socket(InetAddress.getLoopbackAddress(), gatewayPort);
         socket.setSoTimeout(15_000);
@@ -672,7 +683,6 @@ final class V3DomainTests {
                 equal(GatewayConnection.Status.FAILED, opened.get(0).status());
                 check(opened.get(0).failure().contains("connection refused"), opened.get(0).failure());
 
-                // The listener of a second app cannot bind: nothing may stay open.
                 try (ServerSocket busy = new ServerSocket(0, 1, InetAddress.getLoopbackAddress())) {
                     int first = freePort();
                     AppGateway other = new AppGateway(c -> { }, line -> { });
@@ -684,8 +694,6 @@ final class V3DomainTests {
                         check(expected.getMessage().contains("C.exe"), "The error must name the application: " + expected.getMessage());
                     }
                     check(!other.running(), "A failed start leaves the gateway stopped");
-                    // The released port must be bindable again. Another program on this computer can briefly take a
-                    // freed ephemeral port too, so a few attempts are allowed before this counts as a leak.
                     for (int attempt = 1; ; attempt++) {
                         try (ServerSocket again = new ServerSocket()) {
                             again.bind(new InetSocketAddress(InetAddress.getLoopbackAddress(), first));
@@ -721,8 +729,6 @@ final class V3DomainTests {
         KEPT.add(echo);
         return echo.port();
     }
-
-    // ------------------------------------------------------------------ inspector
 
     private static void testLogParser() {
         var access = (XrayLogParser.Access) XrayLogParser.parse("2026/10/14 13:22:17.818097 from tcp:127.0.0.1:57338 accepted tcp:104.20.23.154:80 [perroute-app-0 -> slot]");
@@ -762,7 +768,6 @@ final class V3DomainTests {
                 socket.getInputStream().readNBytes(512);
                 long now = System.currentTimeMillis();
                 int upstream = socks.clientPorts.get(socks.clientPorts.size() - 1);
-                // The core's lines may arrive before or after the gateway announces the connection.
                 inspector.onLogLine("2026/10/14 13:22:17 [Info] [77] proxy/socks: TCP Connect request to tcp:203.0.113.7:" + echo.port(), now);
                 inspector.onLogLine("2026/10/14 13:22:17 [Info] [77] app/dispatcher: sniffed domain: news.example", now);
                 inspector.onLogLine("2026/10/14 13:22:17 [Info] [77] app/dispatcher: Hit route rule: [perroute-custom-r1] so taking detour [direct] for [tcp:news.example:" + echo.port() + "]", now);
@@ -803,8 +808,6 @@ final class V3DomainTests {
         }
         check(inspector.size() <= ConnectionInspector.MAX_RECORDS, "The table stays bounded: " + inspector.size());
     }
-
-    // ------------------------------------------------------------------ backup
 
     private static ProxyNode node(String key, String host) {
         return new ProxyNode(key, host, Protocol.VLESS, host, 443, "11111111-1111-1111-1111-111111111111", Map.of("security", "tls"), "");
@@ -873,7 +876,6 @@ final class V3DomainTests {
             Map<String, String> prefs = Map.of("darkTheme", "false", "perAppKillSwitch", "true");
             byte[] file = BackupService.export(source, prefs, EnumSet.allOf(BackupService.Section.class), "a good password".toCharArray(), "PerRoute 3.0.0", NOW);
 
-            // This machine: Telegram lives somewhere else, and one manual server is already saved.
             java.util.function.Predicate<String> exists = path -> !path.equalsIgnoreCase(telegram) && BackupService.executableExists(path);
             AppState current = new AppState();
             current.nodes().addAll(List.of(node("local-m", "manual.example"), node("local-x", "x.example")));
@@ -897,7 +899,6 @@ final class V3DomainTests {
             equal(elsewhereTelegram, preview.missingPaths().get(0).suggestion());
 
             AppStateStore codec = new AppStateStore(directory.resolve("unused.bin"));
-            // Merge, with Telegram remapped to its location on this machine.
             AppState mergeCopy = codec.parse(codec.serialize(current));
             BackupService.Plan merge = BackupService.plan(preview, mergeCopy, Map.of("darkTheme", "true"), BackupService.Mode.MERGE,
                     Map.of(telegram, elsewhereTelegram), exists);
@@ -916,7 +917,6 @@ final class V3DomainTests {
             check(merged.favoriteNodeKeys().contains("s2") && "Work".equals(merged.nodeTags().get("s1")), "Server metadata travels with new servers");
             equal(0, merge.skippedApplications());
 
-            // Replace, without a remap: Telegram is skipped instead of pointing at a missing file.
             AppState replaceCopy = codec.parse(codec.serialize(current));
             BackupService.Plan replace = BackupService.plan(preview, replaceCopy, Map.of(), BackupService.Mode.REPLACE, Map.of(), exists);
             AppState replaced = replace.state();
@@ -938,8 +938,6 @@ final class V3DomainTests {
             deleteTree(directory);
         }
     }
-
-    // ------------------------------------------------------------------ state
 
     private static void testStateMigration() throws Exception {
         Path directory = Files.createTempDirectory("perroute-state3-");
@@ -988,8 +986,6 @@ final class V3DomainTests {
         }
     }
 
-    // ------------------------------------------------------------------ helpers
-
     @FunctionalInterface private interface Failing { void run() throws Exception; }
 
     private static void expectFailure(Failing action, BackupCodec.BackupException.Reason reason) throws Exception {
@@ -1004,7 +1000,6 @@ final class V3DomainTests {
         check(condition.getAsBoolean(), "Timed out waiting for a condition");
     }
 
-    /** Removes a temporary directory. Windows can keep a deleted file pending for a moment, so it retries. */
     static void deleteTree(Path directory) throws IOException {
         for (int attempt = 1; ; attempt++) {
             if (!Files.exists(directory)) return;

@@ -4,31 +4,19 @@ import java.util.ArrayList;
 import java.util.List;
 import java.util.Map;
 
-/**
- * What a safe restore would do to the network settings as they are now. Only PerRoute's own leftovers are
- * undone; anything Windows or another program set is listed as left alone. Nothing here touches the machine.
- */
 public final class NetworkRestorePlan {
     public enum Action {
-        /** Put the Windows proxy settings PerRoute saved back. */
         RESTORE_PROXY,
-        /** PerRoute's proxy is still set but its saved copy is gone: put back the settings of the baseline snapshot. */
         RESET_PROXY,
-        /** Another program set a proxy since: PerRoute's outdated saved copy is dropped so it can never overwrite it. */
         DISCARD_PROXY_COPY,
         REMOVE_RECOVERY_ENTRY,
         STOP_CORES,
         RESTORE_ENGINE,
         STOP_LIMITED_ENGINE,
         CLEAR_SESSION,
-        /** Not an action: a value set by someone else, listed so it is clear why it is kept. */
         LEAVE
     }
 
-    /**
-     * @param needsAdmin the step changes the per-app engine service and needs Administrator approval
-     * @param releasesApps the step lets apps the kill switch was holding back reach the network again
-     */
     public record Step(Action action, String title, String detail, boolean needsAdmin, boolean releasesApps) {}
 
     private final List<Step> steps;
@@ -40,17 +28,11 @@ public final class NetworkRestorePlan {
     }
 
     public List<Step> steps() { return steps; }
-    /** Why a restore cannot run now, or null. */
     public String blocked() { return blocked; }
     public List<Step> actions() { return steps.stream().filter(step -> step.action() != Action.LEAVE).toList(); }
     public List<Step> leftAlone() { return steps.stream().filter(step -> step.action() == Action.LEAVE).toList(); }
     public boolean needed() { return !actions().isEmpty(); }
 
-    /**
-     * @param current  readings taken just now
-     * @param baseline the last snapshot taken before PerRoute changed anything, or null
-     * @param connected a restore is refused while connected: the settings are in use then
-     */
     public static NetworkRestorePlan build(NetworkSnapshot current, NetworkSnapshot baseline, boolean connected) {
         if (connected) return new NetworkRestorePlan(List.of(), "Disconnect first. While connected these settings are in use and are restored when you disconnect.");
         Map<String, String> values = current.values();

@@ -44,16 +44,12 @@ import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 
-// ============================================================================== recovery (network time machine)
-
-/** The network state now, the restore plan, the saved snapshots and the comparison the user picked. */
 internal class RecoveryModel(private val shell: Shell) {
     private val controller = shell.controller
     var loading by mutableStateOf(false)
     var current by mutableStateOf<NetworkSnapshot?>(null)
     var plan by mutableStateOf<NetworkRestorePlan?>(null)
     var snapshots by mutableStateOf<List<NetworkSnapshot>>(emptyList())
-    /** The snapshot compared with now; null means the baseline. */
     var compareWith by mutableStateOf<Long?>(null)
     var showUnchanged by mutableStateOf(false)
     var rollback by mutableStateOf<String?>(null)
@@ -147,7 +143,6 @@ internal class RecoveryModel(private val shell: Shell) {
 
 internal fun recoveryModel(shell: Shell): RecoveryModel = settingsModel(shell, SettingsCategory.Recovery) { RecoveryModel(shell) }
 
-/** Settings > Recovery in both designs: undo PerRoute's network changes, compare snapshots, the recovery tool and rollback. */
 @Composable
 internal fun RecoverySettings(shell: Shell) {
     val model = recoveryModel(shell)
@@ -250,7 +245,6 @@ internal fun formatSnapshotTime(millis: Long): String =
     java.time.Instant.ofEpochMilli(millis).atZone(java.time.ZoneId.systemDefault())
         .format(java.time.format.DateTimeFormatter.ofPattern("MMM d, HH:mm", java.util.Locale.ENGLISH))
 
-/** The rollback line under Updates, in both designs. */
 @Composable
 internal fun RollbackNote(shell: Shell) {
     val model = recoveryModel(shell)
@@ -261,8 +255,6 @@ internal fun RollbackNote(shell: Shell) {
         LinkAction("Go back", arrow = false, enabled = !shell.busy) { model.rollBack() }
     })
 }
-
-// ============================================================================== local network
 
 internal class LocalNetworkModel(private val shell: Shell) {
     private val controller = shell.controller
@@ -307,7 +299,6 @@ internal class LocalNetworkModel(private val shell: Shell) {
     }
 }
 
-/** Settings > Local network in both designs. */
 @Composable
 internal fun LocalNetworkSettings(shell: Shell) {
     val model = settingsModel(shell, SettingsCategory.LocalNetwork) { LocalNetworkModel(shell) }

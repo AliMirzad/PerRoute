@@ -9,14 +9,14 @@
 A modern Windows client for VLESS, VMess, Trojan and Shadowsocks, built on [Xray-core](https://github.com/XTLS/Xray-core).
 
 ![Platform](https://img.shields.io/badge/platform-Windows%2010%20%7C%2011%20x64-0078D6)
-![Version](https://img.shields.io/badge/version-3.5.0-6B57D9)
+![Version](https://img.shields.io/badge/version-3.5.1-6B57D9)
 ![Built with](https://img.shields.io/badge/built%20with-Kotlin%20%2B%20Compose%20Desktop-7F52FF)
 ![Core](https://img.shields.io/badge/core-Xray-0B9B83)
 ![License](https://img.shields.io/badge/license-GPL--3.0-blue)
 
-[Download](#download) · [Features](#features) · [Tour](#tour) · [Connection modes](#connection-modes) · [Build from source](#build-from-source)
+[Download](#download) · [What's new](#whats-new-in-351) · [Features](#features) · [Tour](#tour) · [Speed](#speed) · [Build from source](#build-from-source)
 
-<img src="docs/screenshots/dashboard-connected.png" width="820" alt="PerRoute connected in Smart per-app mode">
+<img src="docs/screenshots/connection.png" width="820" alt="PerRoute connected in Smart per-app mode, one row per route">
 
 </div>
 
@@ -28,11 +28,22 @@ Most proxy clients are all-or-nothing: either the whole system goes through the 
 
 When you do want everything proxied, System proxy and Local proxy modes are one click away.
 
+## What's new in 3.5.1
+
+- **Faster downloads and YouTube for routed apps.** The new **Block QUIC** setting (*Settings > Routing*, on by default) makes routed apps use HTTPS over TCP instead of QUIC, the same as behind a system proxy. QUIC carried inside a server's TCP connection was often much slower. See [Speed](#speed).
+- **Automatic updates.** PerRoute checks the official releases when it starts and every six hours, downloads and verifies a new version in the background, and asks once to restart. The installer then updates PerRoute in place and reopens it. No link needs to be entered; turn it off in *Settings > Updates*.
+- **Microsoft Store apps after an update.** Store apps move to a new folder on every Store update. PerRoute now finds the installed version, so they keep their route and their real icon, and are listed once.
+- **Dark logos stay visible** in the dark theme, and icons are sharper at 150% scaling.
+- **Layout fixes.** Long server and app names no longer run into the **Main** badge or the next column, and the title bar of the New design starts with the logo.
+
+Full notes: [docs/releases/v3.5.1.md](docs/releases/v3.5.1.md).
+
 ## Features
 
 | | |
 |---|---|
-| **Per-application routing** | Route arbitrary Windows applications, including ones with no proxy settings of their own. Already-running applications are picked up without being restarted. |
+| **Per-application routing** | Route arbitrary Windows applications, including ones with no proxy settings of their own. Already-running applications are picked up without being restarted, and Microsoft Store apps keep their route after the Store updates them. |
+| **Two designs, light and dark** | **New** (a narrow rail with a detail panel) and **Simple** (a wide menu with every section), each in a light and a dark theme. Switch in *Settings > General*; nothing else changes. |
 | **A server per app (optional)** | Advanced routing lets each selected application follow the main server, use a server you pick, or let PerRoute pick one automatically. It is off by default. |
 | **Network quality score** *(3.0)* | Every server gets an explainable 0–100 score from latency, jitter, success rate, stability and tunnel setup time, with a confidence level and freshness. Unmeasured servers are shown as Unknown, never as healthy. |
 | **Auto server per app** *(3.0)* | An application in Auto mode gets its own route to the best measured server. It changes only when another server is clearly better and a cooldown has passed, fails over when its server stops working, and never falls back to the direct route. |
@@ -50,6 +61,7 @@ When you do want everything proxied, System proxy and Local proxy modes are one 
 | **Connection Doctor and Safety Center** *(3.5)* | Why something does not connect, with repairs you confirm; and real tests that protection works as configured. |
 | **Subscription intelligence** *(3.5)* | Usage, quota, expiry and update history of every subscription, with warnings for expired, exhausted, failing or suddenly changed ones. |
 | **Gaming test** *(3.5)* | Steady latency, jitter, packet loss and UDP support per server, and a score built for games. |
+| **Block QUIC** *(3.5.1)* | Routed apps use HTTPS over TCP instead of QUIC, which is usually much faster through a tunnel. On by default, one switch to turn off. |
 | **Three connection modes** | Smart per-app, System proxy, and Local proxy (SOCKS5 + HTTP). |
 | **Subscriptions** | Import by URL, pasted share links, Xray JSON, or QR code (image, clipboard, or camera). Updates keep your favorites, tags and selection. |
 | **Latency and speed tests** | Endpoint ping, a real tunnel test, and a download speed test per server, with sorting and filtering. |
@@ -63,8 +75,7 @@ When you do want everything proxied, System proxy and Local proxy modes are one 
 | **Traffic history** | Live speed graph plus daily, monthly and per-application totals. Stored locally; destinations are never recorded. |
 | **Quick Access** | A compact tray panel to connect, switch the main server or jump to the fastest one. |
 | **Safe recovery** | Windows proxy settings are restored after a crash, forced close, or sudden restart. |
-| **Signed updates** | Update manifests are verified against a pinned Ed25519 key; downloads are checked by size and SHA-256. |
-| **Light and dark themes** | |
+| **Automatic, signed updates** | New versions are found, downloaded and verified by themselves; you only choose when to restart. Update manifests are verified against a pinned Ed25519 key; downloads are checked by size and SHA-256. |
 
 ## Download
 
@@ -72,15 +83,15 @@ Get the latest build from the [Releases](https://github.com/AliMirzad/PerRoute/r
 
 | Package | Use it when |
 |---|---|
-| `PerRoute-Setup-3.5.0.exe` | You want everything, including Smart per-app mode. The installer asks for Administrator approval once and installs PerRoute together with the per-app engine. |
-| `PerRoute-Portable-3.5.0.zip` | You want a no-install build. Extract the folder and run `PerRoute.exe`. System proxy and Local proxy work out of the box; Smart per-app works only if the per-app engine is already installed. |
+| `PerRoute-Setup-3.5.1.exe` | You want everything, including Smart per-app mode. The installer asks for Administrator approval once and installs PerRoute together with the per-app engine. |
+| `PerRoute-Portable-3.5.1.zip` | You want a no-install build. Extract the folder and run `PerRoute.exe`. System proxy and Local proxy work out of the box; Smart per-app works only if the per-app engine is already installed. |
 
 **Requirements:** Windows 10 or 11, 64-bit. The Java runtime and Xray core are bundled; nothing else needs to be installed.
 
 Verify a download against the SHA-256 values published with each release:
 
 ```powershell
-Get-FileHash .\PerRoute-Setup-3.5.0.exe -Algorithm SHA256
+Get-FileHash .\PerRoute-Setup-3.5.1.exe -Algorithm SHA256
 ```
 
 ## Quick start
@@ -92,24 +103,33 @@ Get-FileHash .\PerRoute-Setup-3.5.0.exe -Algorithm SHA256
 
 ## Tour
 
-The window has eight labelled sections: Connection, Apps, Servers, Rules, Profiles, Diagnostics, Traffic and Settings.
+PerRoute has two designs over the same app. **New** (the default) has a narrow rail with Connect, Apps and Servers, plus Tools (Rules, Profiles, Workspaces, Diagnostics, Health, Traffic) and Settings at the bottom; most pages have a detail panel on the right. **Simple** has a wide menu with every section. Both come in light and dark. Choose under *Settings > General > Interface style*. Switching only redraws the window: it does not disconnect or change any setting. The screenshots below show the New design unless noted.
+
+<p align="center">
+  <img src="docs/screenshots/connection-dark.png" width="49%" alt="The New design in the dark theme">
+  <img src="docs/screenshots/simple-connection.png" width="49%" alt="The Simple design in the light theme">
+</p>
 
 ### Connection
 
 Shows the connection state, the active mode, live download and upload speed, session duration, the main server's latency, and one row per route in use with the applications on it and its own health. A dot marks the selected applications that are sending traffic right now.
 
+**Use a server for a while** puts one app on another server for 15 minutes to 4 hours and brings it back by itself; **Compare a route with another server** opens the same sites through both, side by side, without touching the live route.
+
 With route monitoring on (*Settings > Routing*), each route is checked through its own port once a minute. A route that stops answering shows **Recovering** with the attempt number and a countdown; it expands to say that only this route is affected, whether the kill switch is holding its apps, that there is no direct fallback, and a short recovery timeline. **Retry now** checks it again at once. Healthy routes keep running and are not restarted.
 
 <p align="center">
-  <img src="docs/screenshots/dashboard.png" width="49%" alt="Connection, ready to connect">
-  <img src="docs/screenshots/dashboard-light.png" width="49%" alt="Connection in the light theme">
+  <img src="docs/screenshots/temporary.png" width="49%" alt="An app on a temporary server">
+  <img src="docs/screenshots/simple-connection-dark.png" width="49%" alt="Connection in the Simple design, dark theme">
 </p>
 
 ### Servers
 
 Add and update subscriptions, filter by subscription, favorites, tag or country, search, and sort by latency or quality. Each server shows its ping, measured download speed and **network quality** (score, label and freshness), and carries a badge when it is the main server, a favorite, or tagged. Expand a server to see what its score is made of: latency, jitter, success rate, stability, tunnel setup time, when it was last tested, the confidence, and a sentence explaining the result. Star a server to make it a favorite. The tag button on each row lists your existing tags, so a server goes into one with a single click; **New tag** creates another, and **No tag** clears it. Click a speed chip to test only that server. Select a server and choose **Use as main server** to make it the main route; this also works while connected.
 
-<p align="center"><img src="docs/screenshots/servers.png" width="820" alt="Server list with latency, speed and usage"></p>
+<p align="center"><img src="docs/screenshots/servers.png" width="820" alt="Server list with quality scores and the server detail panel"></p>
+
+Select a subscription and open its details for the provider's **usage, quota and expiry**, its update interval and the history of every update (servers added, removed and changed). Expired, used-up, failing or suddenly changed subscriptions are flagged. The **Test servers** menu also runs the **gaming test**, and **Best for gaming** sorts by it.
 
 - **Add servers** takes a subscription URL, pasted share links, or a QR code (image, clipboard or camera). Whatever you choose is only read first: you see the servers that were found and any entries that could not be parsed before anything is saved. The camera stays off until you start it.
 - **Real tunnel test** starts an isolated Xray instance per server and verifies actual traffic through the tunnel.
@@ -120,11 +140,11 @@ Add and update subscriptions, filter by subscription, favorites, tag or country,
 
 ### Apps
 
-Choose from installed applications, running applications, or browse for any executable. Multi-process applications appear once. Changes are staged: nothing is applied until you choose **Save changes**, and leaving the screen with unsaved edits asks whether to save or discard them.
+Choose from installed applications, running applications, or browse for any executable. Multi-process applications appear once. Microsoft Store apps are found at their current version after the Store updates them, so they keep their selection, route and icon. Changes are staged: nothing is applied until you choose **Save changes**, and leaving the screen with unsaved edits asks whether to save or discard them.
 
 Select an application to open its panel on the right: its route mode, the current decision and the reason for it, and its **bandwidth limit** (download and upload in megabits per second, or unlimited). Limits are saved and applied at once, even while connected; the panel says whether the limit is **Enforced**, **Throttling**, **Pending** (applies when you connect) or **Not enforced** and why.
 
-<p align="center"><img src="docs/screenshots/applications.png" width="820" alt="Choosing applications to route"></p>
+<p align="center"><img src="docs/screenshots/apps.png" width="820" alt="Choosing applications to route, with one app's configuration panel"></p>
 
 ### Advanced routing: a server per app
 
@@ -142,8 +162,7 @@ How **Auto** behaves:
 - Manual choices are never changed automatically. Auto is off for every application until you choose it.
 
 <p align="center">
-  <img src="docs/screenshots/advanced-apps.png" width="49%" alt="Choosing a custom server for an application">
-  <img src="docs/screenshots/advanced-connection.png" width="49%" alt="One row per server while connected">
+  <img src="docs/screenshots/simple-apps.png" width="820" alt="Main, Custom and Auto routes in the Simple design">
 </p>
 
 - Turning Advanced routing off does not delete anything. Your custom choices are kept and apply again when you turn it back on.
@@ -180,7 +199,17 @@ A **preset** is a ready-made bundle. It sets the automation switches and adds it
 
 A **profile** saves your own applications, main server, mode, Advanced routing with its app routes, and rules together, so you can switch whole setups at once with **Apply**. Apply a preset first and save a profile to keep it.
 
-<p align="center"><img src="docs/screenshots/scenarios-profiles.png" width="820" alt="Presets and saved profiles"></p>
+<p align="center"><img src="docs/screenshots/profiles.png" width="820" alt="Presets and saved profiles"></p>
+
+**Recipes** (*Profiles > Recipes*) share your rules and app routes as a file or one line of text, without servers, addresses, links, passwords or folders. Importing shows every change first and can be undone.
+
+<p align="center"><img src="docs/screenshots/recipes.png" width="820" alt="Routing recipes"></p>
+
+### Workspaces
+
+A browser profile of its own for work, personal use or anything else, each on a route of its own, with DNS, QUIC and WebRTC kept inside it. Works with Chrome, Edge, Brave, Vivaldi and Chromium.
+
+<p align="center"><img src="docs/screenshots/workspaces.png" width="820" alt="Browser workspaces"></p>
 
 ### Diagnostics
 
@@ -188,10 +217,16 @@ The **Inspector** tab lists the live connections of the selected applications in
 
 **Run checks** looks up the public IP and country of the direct route and of every server in use, each through its own connection, and records when it last passed or failed. The system DNS section shows the resolvers Windows uses; they describe the computer, not a single server. The rule tester tells you which rule and which server a destination would get, and while connected every rule shows whether it is loaded in the running core.
 
-<p align="center"><img src="docs/screenshots/inspector.png" width="820" alt="Connection diagnostics with one check per route"></p>
+<p align="center"><img src="docs/screenshots/inspector.png" width="820" alt="The connection inspector"></p>
 
 > [!NOTE]
 > Diagnostics report what public servers observed at that moment, and the rule tester predicts a routing decision without opening a connection. Neither captures packets, and neither is a substitute for a dedicated leak test.
+
+### Health
+
+The **Connection Doctor** takes an app (and optionally a site) that does not work and checks from the outside in: your connection, DNS and clock, the core and the per-app engine, the Windows proxy, the server, the tunnel and the rule for the site. It names the most likely cause and offers a repair that runs only after you confirm. The **Safety Center** tests every route's exit address, explains where name lookups go, and finds rules that are not loaded or can never apply.
+
+<p align="center"><img src="docs/screenshots/health.png" width="820" alt="Connection Doctor"></p>
 
 ### Traffic
 
@@ -199,17 +234,24 @@ A live speed graph for the last 90 seconds, with exact values under the pointer,
 
 **Bandwidth by app** lists every selected application with its current rate, session totals, limits, how much of each limit it is using, and whether the limit is enforced or throttling right now. Limits can be edited or removed from each row.
 
-<p align="center"><img src="docs/screenshots/traffic-history.png" width="820" alt="Traffic and usage"></p>
+<p align="center"><img src="docs/screenshots/traffic.png" width="820" alt="Traffic and bandwidth by app"></p>
 
 ### Settings
 
-Grouped into General (theme and reset), Connection (mode and Advanced routing), Routing (background quality checks, Auto margin and cooldown, route monitoring, the traffic gateway), Automation, Updates, Components, Backup & Restore, and a selectable Activity log.
+Grouped into General (design, theme and reset), Connection (mode and Advanced routing), Routing (background quality checks, Auto margin and cooldown, route monitoring, the traffic gateway, Block QUIC), Automation, Updates, Components, Backup & Restore, Local network, Recovery, and a selectable Activity log.
+
+**Updates** is automatic: PerRoute checks the official releases at start and every six hours, downloads and verifies a new version, and offers **Restart and update**. Windows asks for Administrator approval once, the installer updates the existing folder without further questions, and the new version opens by itself. **Update automatically** turns the download off (new versions are then only shown); the feed field can stay empty, or hold a signed feed of your own. A portable copy is offered the normal installer instead. **Local network** lists your networks and devices, keeps names such as `printer.local` on your network, and lets you mark a network as not trusted so routed apps cannot reach its devices. **Recovery** holds the Network Time Machine (snapshots of the settings PerRoute touches, a comparison that says who changed what, and a restore of PerRoute's own leftovers) and the rollback to the previous version. **PerRoute Recovery** in the Start menu does the same when PerRoute itself does not open.
 
 **Backup & Restore** writes a `.prb` file with the parts you choose: subscriptions, manual servers, app assignments (with route modes and bandwidth limits), rules, profiles and preferences. Encryption with a password is on by default (AES-256-GCM, key derived with PBKDF2-HMAC-SHA256 and 600,000 iterations; every header field is authenticated). Restoring shows a preview first: what the backup contains, whether it is compatible, which applications are missing on this computer (with a way to point to their new location, or skip them), and **Merge** (adds what is new, keeps everything you have, including preferences) or **Replace** (replaces the parts the backup contains). A rollback snapshot is written before anything changes, the restore is applied in one step, and **Undo last restore** brings the previous setup back. Restoring works while disconnected.
 
 **Reset everything** under *Settings > General* returns PerRoute to how it was when first installed: it clears every server and subscription, the selected applications and their routes, rules, profiles, the traffic history and all settings. It asks for confirmation, works only while disconnected, and cannot be undone. Installed components are not touched.
 
-<p align="center"><img src="docs/screenshots/settings.png" width="820" alt="Connection settings"></p>
+<p align="center"><img src="docs/screenshots/settings.png" width="820" alt="Routing settings with Block QUIC"></p>
+
+<p align="center">
+  <img src="docs/screenshots/local-network.png" width="49%" alt="Local network settings">
+  <img src="docs/screenshots/recovery.png" width="49%" alt="Recovery and the Network Time Machine">
+</p>
 
 ### Quick Access
 
@@ -225,9 +267,9 @@ Closing or minimizing the main window keeps PerRoute in the notification area. C
 | Compare with a live route | A server's menu in Servers, the Connection screen |
 | Gaming test, Best for gaming | Servers: Test servers menu, a server's menu and its details, the sort menu |
 | Subscription details | Servers: select a subscription, then the details button next to it |
-| Recipes | Profiles > Recipes |
-| Browser workspaces | Tools > Workspaces |
-| Connection Doctor, Safety Center | Tools > Health |
+| Recipes | Tools > Profiles > Recipes (New), Profiles > Recipes (Simple) |
+| Browser workspaces | Tools > Workspaces (New), Workspaces (Simple) |
+| Connection Doctor, Safety Center | Tools > Health (New), Health (Simple) |
 | Local network | Settings > Local network |
 | Network Time Machine, rollback | Settings > Recovery; **PerRoute Recovery** in the Start menu |
 
@@ -255,10 +297,24 @@ The gateway understands just enough SOCKS5 to read destinations and to carry UDP
 
 - Limits apply in Smart per-app mode only. System proxy and Local proxy have no per-application path, so their limits show **Not enforced**.
 - Applications that are not selected are not routed through PerRoute and cannot be limited.
-- The gateway adds a loopback hop: about 0.7–1.3 ms when a connection opens and roughly 0.2–0.7 ms of CPU per megabyte transferred (measured on loopback; see [docs/v3-engineering-report.md](docs/v3-engineering-report.md)). Throughput was not reduced in the same test.
+- The gateway adds a loopback hop. On loopback, one download through the gateway and the core reached 2.4–2.5 Gbps against 3.4–3.7 Gbps through the core alone (see [Speed](#speed)): far above any internet connection, so it does not limit real downloads. UDP associations use 4 MB socket buffers, so bursts are queued rather than dropped.
 - Priority classes (High/Normal/Low) are not offered: without a shared bottleneck they cannot be enforced honestly.
 
 The gateway and the switch are part of the data path, so it can only be turned on or off while disconnected.
+
+## Speed
+
+PerRoute's own data path was measured on loopback, with an isolated Xray core and no internet involved, so only PerRoute's overhead counts:
+
+| Path | One download | 8 at once |
+|---|---|---|
+| Xray alone | 3.4–3.7 Gbps | 6.6–6.9 Gbps |
+| Traffic gateway, then Xray | 2.4–2.5 Gbps | 4.8–5.0 Gbps |
+
+Both are many times faster than home or mobile connections. What made routed browsers and YouTube slower than in system-proxy clients was QUIC: in Smart per-app mode they sent QUIC (UDP) through the tunnel, and a server's TCP transport (gRPC, WebSocket, TCP+TLS, Reality) carries it poorly. **Block QUIC** (*Settings > Routing*, on by default) makes them use TCP, as they do behind a system proxy. If speed is still lower than expected:
+
+- turn off *Automatic speed tests* (*Settings > Automation*) on slow or metered connections; they download up to 10 MB from each of the 10 best servers after a ping pass;
+- compare servers in **Servers** or with **Compare a route with another server**; DNS and the domain strategy come from your server or profile, as in other Xray clients.
 
 ## Upgrading from 2.x
 
@@ -275,9 +331,9 @@ The tunnel health check is stricter in 3.0: a route only passes when an HTTP req
 ## Security and privacy
 
 - **Saved state is encrypted** with AES-256-GCM. The key is wrapped with Windows DPAPI for the signed-in account, so the state file cannot be opened from another Windows account or machine.
-- **No telemetry.** PerRoute talks only to your subscription URLs, your proxy servers, the endpoints used by the tests you start, and the update feed you configure.
+- **No telemetry.** PerRoute talks only to your subscription URLs, your proxy servers, the endpoints used by the tests you start, and the update feed: the official GitHub releases, or the feed you enter. The update check is a plain HTTPS download of the signed manifest.
 - **Traffic history is local** and stores byte totals only, never destinations.
-- **Updates are verified.** Only an HTTPS manifest signed with the project's offline Ed25519 key is accepted, and the installer's size and SHA-256 are checked before it is used.
+- **Updates are verified.** Only an HTTPS manifest signed with the project's offline Ed25519 key is accepted, and the installer's size and SHA-256 are checked before it is used. An update is never installed without your **Restart and update** and Windows' Administrator prompt.
 - **Pinned dependencies.** The Full Installer embeds unmodified, hash-verified copies of ProxiFyre, Windows Packet Filter and the Visual C++ Runtime.
 - **Loopback only.** Local proxy, gateway and statistics ports listen on `127.0.0.1`. Loopback ports are not separated between Windows accounts: on a computer shared by several signed-in users, another user could use the local proxy ports, and, while route monitoring or an Auto app is in use, the core's routing API (which has no authentication). On a single-user computer this changes nothing.
 - **Backups protect credentials.** Server credentials are inside a backup. Encrypted backups use AES-256-GCM with a password-derived key (PBKDF2-HMAC-SHA256, 600,000 iterations, random salt and nonce) and authenticate every header field; the password is never stored or logged. An unencrypted backup is only checksummed and should be kept like a password file.
@@ -311,13 +367,11 @@ The tunnel health check is stricter in 3.0: a route only passes when an HTTP req
 
 The suite includes the connection logic of the controller, run against a fake machine so that no Xray process, driver or proxy setting is touched. When the Xray core is present in `tools/xray/`, generated configs are also validated with `xray run -test`, and an end-to-end test runs the real core and the traffic gateway on loopback against local VLESS servers: per-app routing, an in-place main switch that keeps another app's open connection, Auto failover when a server stops, an end-to-end bandwidth limit, and inspector observations from the core's own log. All of its ports are shifted (`-Dperroute.portOffset=20000`), so it can run next to an installed PerRoute; it never touches the per-app driver or Windows proxy settings.
 
-To review the interface without a display, render every screen off-screen with demonstration data (baseline size, narrow size, 150% scaling, both themes) into `build/ui-snapshots/`:
+To review the interface without a display, render every screen of both designs off-screen with demonstration data (baseline size, narrow size, 150% scaling, both themes) into `build/ui-snapshots/`:
 
 ```powershell
 .\gradlew.bat renderUiSnapshots
 ```
-
-Checks that need the installed driver and real servers are listed in [docs/v3-verification.md](docs/v3-verification.md) and [docs/advanced-routing-verification.md](docs/advanced-routing-verification.md).
 
 **3. Run from source.**
 
@@ -335,9 +389,9 @@ This produces the following in `dist/`:
 
 | Output | Description |
 |---|---|
-| `PerRoute-Setup-3.5.0.exe` | Offline installer with the per-app engine |
-| `PerRoute-Portable-3.5.0.zip` | Self-contained portable build |
-| `PerRoute-3.5.0/` | Unpacked application image |
+| `PerRoute-Setup-3.5.1.exe` | Offline installer with the per-app engine |
+| `PerRoute-Portable-3.5.1.zip` | Self-contained portable build |
+| `PerRoute-3.5.1/` | Unpacked application image |
 
 The installer dependencies are downloaded on first use and verified against pinned SHA-256 digests.
 
@@ -375,16 +429,18 @@ docs/screenshots/                      Images used in this document
 Updates are distributed as a signed manifest next to the installer. Keep the private key outside the repository.
 
 ```powershell
-java tools\update\UpdateManifestTool.java sign 3.5.0 dist\PerRoute-Setup-3.5.0.exe https://github.com/AliMirzad/PerRoute/releases/download/v3.5.0/PerRoute-Setup-3.5.0.exe release-secrets\perroute-update-private.pk8 dist\update.json
+java tools\update\UpdateManifestTool.java sign 3.5.1 dist\PerRoute-Setup-3.5.1.exe https://github.com/AliMirzad/PerRoute/releases/download/v3.5.1/PerRoute-Setup-3.5.1.exe release-secrets\perroute-update-private.pk8 dist\update.json
 ```
 
-Attach `update.json` to the release. Users enable updates by entering this feed once in *Settings > Updates*:
+Attach `update.json` to **every** release. PerRoute reads it from the latest release by itself, at this address (built in as the default feed):
 
 ```
 https://github.com/AliMirzad/PerRoute/releases/latest/download/update.json
 ```
 
-The public verification key is pinned in the application. Replacing the private key requires shipping a new build.
+A release without `update.json` makes the update check fail for everyone until one is attached.
+
+The public verification key is pinned in the application; 3.5.1 introduced the current key. Replacing the private key requires shipping a new build, and versions that pin the old key can only move to that build by a manual install. Keep a copy of `release-secrets/perroute-update-private.pk8` somewhere safe outside this computer: without it no further update can be signed.
 
 ### Diagnostics
 
@@ -396,6 +452,8 @@ Setting the environment variable `PERROUTE_PERF=1` writes start-up and frame tim
 |---|---|
 | Smart per-app is disabled in Settings | The per-app engine is missing. Install with the Full Installer and approve its single Administrator prompt. |
 | A subscription adds no servers | Open *Settings > Activity log* for the parser warnings. Supported formats are VLESS, VMess, Trojan and Shadowsocks share links (plain or Base64) and Xray JSON. |
+| Downloads or YouTube are slower than in another client | Keep **Block QUIC** on (*Settings > Routing*) and reconnect. Turn off *Automatic speed tests* on slow connections. See [Speed](#speed). |
+| A Microsoft Store app shows a letter instead of its icon, or is not routed | Open **Apps** once (or reconnect): PerRoute looks up the Store app's current version. If the Activity log says it was not found, choose it again in Apps. |
 | A selected application keeps its old route after connecting | Existing TCP connections may stay on their previous route until the application opens new ones. Restarting the application forces it. |
 | Browsers have no internet after a crash | Open PerRoute once; it restores the Windows proxy settings on start. |
 | A bandwidth limit shows *Not enforced* | Limits need Smart per-app mode and the traffic gateway (*Settings > Routing*, switched while disconnected). The status line says which one is missing. |
@@ -431,4 +489,4 @@ PerRoute is a network client. You are responsible for using it in accordance wit
 
 ## Author
 
-Created by **Ali Mirzad** · [github.com/AliMirzad](https://github.com/AliMirzad)
+Created By **Vexor** · [github.com/AliMirzad](https://github.com/AliMirzad)

@@ -40,7 +40,6 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import app.perroute.routing.AppRouteMode
 
-/** Apps: the list with each app's route, the configuration of the focused app, and Save changes. */
 @Composable
 internal fun NewAppsPage(shell: Shell) {
     val model = appsModel(shell)
@@ -59,7 +58,6 @@ internal fun NewAppsPage(shell: Shell) {
             if (locked) Text("  ·  Routes can be edited while disconnected.", color = Amber, fontSize = 13.sp)
             else if (dirty) Text("  ·  Unsaved changes", color = Amber, fontSize = 13.sp, fontWeight = FontWeight.Medium)
             Spacer(Modifier.weight(1f))
-            // On a narrow window the browse action keeps only its icon so Cancel and Save changes always fit.
             if (LocalCompact.current) IconAction(Icons.Rounded.FolderOpen, "Browse for an EXE", size = 40.dp, enabled = !locked) { model.browseExe() }
             else SecondaryButton("Browse for an EXE", icon = Icons.Rounded.FolderOpen, enabled = !locked) { model.browseExe() }
             SecondaryButton("Cancel", enabled = dirty) { shell.discardDraft() }
@@ -135,13 +133,12 @@ private fun NewAppRow(shell: Shell, model: AppsModel, app: AppChoice) {
     val locked = shell.locked
     val cell = routeCellText(shell, app.path)
     NewTableRow(focused, onClick = { model.focus(app.path) }, label = "Configure ${app.title}") {
-        // Only the box toggles the selection; the rest of the row opens the app's configuration.
         Box(
             Modifier.width(34.dp).alpha(if (locked) .6f else 1f).toggleable(selected, enabled = !locked, role = Role.Checkbox) { model.toggle(app.path) }
                 .semantics { contentDescription = "Route ${app.title} through the proxy" }.padding(vertical = 6.dp),
             contentAlignment = Alignment.CenterStart
         ) { CheckMark(selected) }
-        Row(Modifier.weight(1.35f), verticalAlignment = Alignment.CenterVertically) {
+        Row(Modifier.weight(1.35f).padding(end = 12.dp), verticalAlignment = Alignment.CenterVertically) {
             AppAvatar(app.name, app.path, 34.dp)
             Spacer(Modifier.width(12.dp))
             Column(Modifier.weight(1f)) {
@@ -180,7 +177,6 @@ private fun NewAppRow(shell: Shell, model: AppsModel, app: AppChoice) {
 }
 
 
-/** The configuration of one app: whether it is routed, how it picks its server, Auto's decision and its limits. */
 @Composable
 private fun ColumnScope.NewAppPanel(shell: Shell, path: String) {
     val draft = shell.draft
@@ -226,7 +222,6 @@ private fun ColumnScope.NewAppPanel(shell: Shell, path: String) {
     if (locked) { Spacer(Modifier.height(14.dp)); NewLockNote("Route modes change while disconnected. Limits apply right away.") }
 }
 
-/** With no app focused: what is selected, how each app is routed and the main server. */
 @Composable
 private fun ColumnScope.NewSelectionPanel(shell: Shell, model: AppsModel) {
     val draft = shell.draft

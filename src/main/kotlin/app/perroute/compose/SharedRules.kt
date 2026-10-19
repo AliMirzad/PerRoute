@@ -26,21 +26,18 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import app.perroute.model.RouteRule
 
-/** A rule action as it is named in the interface. */
 internal fun actionLabel(action: RouteRule.Action): String = when (action) {
     RouteRule.Action.PROXY -> "Proxy"
     RouteRule.Action.DIRECT -> "Direct"
     RouteRule.Action.BLOCK -> "Block"
 }
 
-/** The icon that accompanies a rule action, so it is never told apart by colour alone. */
 internal fun actionIcon(action: RouteRule.Action): ImageVector = when (action) {
     RouteRule.Action.PROXY -> Icons.AutoMirrored.Rounded.CallSplit
     RouteRule.Action.DIRECT -> Icons.AutoMirrored.Rounded.ArrowForward
     RouteRule.Action.BLOCK -> Icons.Rounded.Block
 }
 
-/** The accent of an action: the design's accent for Proxy, plain for Direct, red for Block. */
 @Composable
 internal fun actionColor(action: RouteRule.Action): Color = when (action) {
     RouteRule.Action.PROXY -> if (Tok.isNew) White else Violet2
@@ -48,21 +45,18 @@ internal fun actionColor(action: RouteRule.Action): Color = when (action) {
     RouteRule.Action.BLOCK -> Red
 }
 
-/** A match type as it is named in the interface. */
 internal fun matchLabel(type: RouteRule.MatchType): String = when (type) {
     RouteRule.MatchType.DOMAIN -> "Domain"
     RouteRule.MatchType.IP -> "IP"
     RouteRule.MatchType.PORT -> "Port"
 }
 
-/** One sentence on what an action does to a matching connection. */
 internal fun actionExplanation(action: RouteRule.Action): String = when (action) {
     RouteRule.Action.PROXY -> "Matching connections use the app's assigned server."
     RouteRule.Action.DIRECT -> "Matching connections use your regular connection."
     RouteRule.Action.BLOCK -> "Matching connections of the routed app are dropped."
 }
 
-/** The rule being created or changed. A blank id means a new rule. */
 internal class RuleEditor(rule: RouteRule?) {
     val id = rule?.id().orEmpty()
     var name by mutableStateOf(rule?.name().orEmpty())
@@ -73,12 +67,10 @@ internal class RuleEditor(rule: RouteRule?) {
     val isNew: Boolean get() = id.isBlank()
 }
 
-/** The ordered rule list with search, filter, reordering and the editor. Read-only while connected. */
 internal class RulesModel(private val shell: Shell) {
     private val controller = shell.controller
     val rules = mutableStateListOf<RouteRule>().also { it.addAll(controller.rules()) }
     var query by mutableStateOf("")
-    /** null: every rule; "": rules for all routed apps; a path: that app's rules. */
     var appFilter by mutableStateOf<String?>(null)
     var editor by mutableStateOf<RuleEditor?>(null)
 
@@ -153,13 +145,10 @@ internal class RulesModel(private val shell: Shell) {
 
 internal fun rulesModel(shell: Shell): RulesModel = shell.screen("${Tab.Rules.name}:rules") { RulesModel(shell) }
 
-/** What a rule applies to, in words. */
 internal fun ruleTarget(rule: RouteRule): String = if (rule.applicationPath().isBlank()) "All routed apps" else appName(rule.applicationPath())
 
-/** The type and values of a rule on one line: "Domain · example.com". */
 internal fun ruleMatchLine(rule: RouteRule): String = "${matchLabel(rule.matchType())}  ·  ${rule.value()}"
 
-/** The fields of the rule editor. Both designs place it differently: New in its side panel, Simple in a dialog. */
 @Composable
 internal fun RuleEditorFields(editor: RuleEditor, apps: List<String>, locked: Boolean) {
     Column {

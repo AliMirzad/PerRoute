@@ -44,7 +44,6 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import app.perroute.model.RouteRule
 
-/** Rules: the ordered list in a card. Adding or editing a rule opens the editor in a dialog. */
 @Composable
 internal fun SimpleRulesPage(shell: Shell) {
     val model = rulesModel(shell)
@@ -148,7 +147,6 @@ private fun SimpleRuleDialog(shell: Shell, model: RulesModel) {
     }
 }
 
-/** Profiles: presets (reviewed in a dialog before applying) and saved profiles. */
 @Composable
 internal fun SimpleProfilesPage(shell: Shell) {
     val model = profilesModel(shell)

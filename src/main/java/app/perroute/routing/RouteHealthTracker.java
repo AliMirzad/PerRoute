@@ -3,17 +3,6 @@ package app.perroute.routing;
 import java.util.ArrayDeque;
 import java.util.List;
 
-/**
- * The health of one live route, driven only by checks of that route. It decides when the next check is
- * due and what recovery step to take; it never touches the network itself, so it can be tested with a
- * fake clock.
- *
- * <p>A healthy route is checked every {@link Policy#healthyIntervalMillis()}. The first failure starts
- * recovery: retries back off exponentially ({@code base * 2^(attempt-1)}, capped), the route's outbound is
- * rebuilt once at {@link Policy#refreshAtAttempt()}, and after {@link Policy#maxAttempts()} the route is
- * marked failed. A failed route is then only checked every {@link Policy#failedIntervalMillis()}, so there is
- * never an endless restart loop, and it becomes healthy again by itself as soon as a check passes.
- */
 public final class RouteHealthTracker {
     public enum State { CHECKING, HEALTHY, RECOVERING, FAILED }
 
@@ -21,7 +10,6 @@ public final class RouteHealthTracker {
 
     public record Event(long atMillis, EventType type, String title, String detail) {}
 
-    /** What the caller must do after a result was recorded. */
     public enum Action { NONE, REFRESH_ROUTE, EXHAUSTED, RECOVERED }
 
     public record Policy(long healthyIntervalMillis, long backoffBaseMillis, long backoffMaxMillis, int maxAttempts,
@@ -42,7 +30,6 @@ public final class RouteHealthTracker {
         }
     }
 
-    /** An immutable view for the screen. */
     public record Snapshot(String routeId, State state, int attempt, int maxAttempts, long nextCheckAt,
                            long lastPassedAt, long lastFailedAt, Long lastLatencyMillis, String lastError,
                            List<Event> events) {
@@ -76,7 +63,6 @@ public final class RouteHealthTracker {
 
     public synchronized State state() { return state; }
 
-    /** Records the outcome of one check of this route and returns the recovery step to take. */
     public synchronized Action record(boolean passed, long latencyMillis, String detail, long now) {
         if (passed) {
             boolean wasAffected = state == State.RECOVERING || state == State.FAILED;
@@ -122,7 +108,6 @@ public final class RouteHealthTracker {
         return Action.NONE;
     }
 
-    /** The user asked to retry now: a failed route gets a fresh set of attempts. */
     public synchronized void retryNow(long now) {
         if (state == State.FAILED) { state = State.RECOVERING; attempt = 0; }
         nextCheckAt = now;

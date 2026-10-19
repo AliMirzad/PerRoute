@@ -5,13 +5,8 @@ import app.perroute.model.RouteRule
 import java.nio.file.Path
 import java.util.Locale
 
-/** The result of one check. PASS and FAIL are observations; INFO explains, SKIPPED says why it did not run. */
 enum class CheckStatus { PASS, WARN, FAIL, INFO, SKIPPED }
 
-/**
- * A fix the Doctor can offer. Every repair is shown first and only runs when the user confirms it; none of them
- * changes a Windows setting that PerRoute did not change itself.
- */
 enum class Repair(val label: String, val detail: String) {
     RECONNECT("Reconnect", "Stops the connection and starts it again with your current setup."),
     RESTORE_NETWORK("Restore network settings", "Removes what PerRoute left behind, and nothing that Windows or another program set."),
@@ -24,7 +19,6 @@ enum class Repair(val label: String, val detail: String) {
     OPEN_APPS("Open Apps", "Lets you select the app or change its route.")
 }
 
-/** One finding of the Doctor or the Safety Center. */
 data class HealthFinding(
     val id: String,
     val area: String,
@@ -34,14 +28,12 @@ data class HealthFinding(
     val repair: Repair? = null
 )
 
-/** A finished run: every finding, and the one most likely to explain a problem (the first failure, else the first warning). */
 data class HealthReport(val findings: List<HealthFinding>, val atMillis: Long, val subject: String) {
     val cause: HealthFinding? get() = findings.firstOrNull { it.status == CheckStatus.FAIL } ?: findings.firstOrNull { it.status == CheckStatus.WARN }
     val passed: Int get() = findings.count { it.status == CheckStatus.PASS }
     val problems: Int get() = findings.count { it.status == CheckStatus.FAIL || it.status == CheckStatus.WARN }
 }
 
-/** Reading the core's own log for the reason a server refuses connections. Pure functions, so they can be tested. */
 internal object CoreLogHints {
     data class Hint(val title: String, val detail: String)
 
@@ -62,7 +54,6 @@ internal object CoreLogHints {
             "Something between you and the server resets the connection. This is typical of filtering; a different server or transport may work.")
     )
 
-    /** The most frequent recognised problem in [lines], or null. */
     fun analyze(lines: List<String>): Hint? {
         val failing = lines.filter { line -> line.contains("fail", true) || line.contains("error", true) || line.contains("rejected", true) || line.contains("refused", true) }
         if (failing.isEmpty()) return null
@@ -71,7 +62,6 @@ internal object CoreLogHints {
     }
 }
 
-/** Rule problems that can be seen without any traffic: a rule that can never apply, because an earlier one always decides first. */
 internal object RuleAnalysis {
     data class Shadowed(val rule: RouteRule, val by: RouteRule)
 
@@ -83,7 +73,6 @@ internal object RuleAnalysis {
             if (laterValues.isEmpty() || laterValues.any { it.startsWith("geosite:") || it.startsWith("geoip:") || it.startsWith("regexp:") || it.startsWith("keyword:") }) continue
             for (earlier in enabled.subList(0, index)) {
                 if (earlier.matchType() != later.matchType()) continue
-                // An earlier rule for every app covers a later rule for one app, not the other way round.
                 if (earlier.applicationPath().isNotBlank() && !earlier.applicationPath().equals(later.applicationPath(), ignoreCase = true)) continue
                 val earlierValues = values(earlier)
                 if (laterValues.all { value -> earlierValues.any { covers(later.matchType(), it, value) } }) { result += Shadowed(later, earlier); break }
@@ -97,7 +86,6 @@ internal object RuleAnalysis {
         return text.split(',').map { it.trim().lowercase(Locale.ROOT) }.filter { it.isNotEmpty() }
     }
 
-    /** Whether entry [earlier] matches everything entry [later] matches. */
     private fun covers(type: RouteRule.MatchType, earlier: String, later: String): Boolean = when (type) {
         RouteRule.MatchType.DOMAIN -> {
             val e = earlier.removePrefix("domain:")
@@ -130,6 +118,5 @@ internal object RuleAnalysis {
     }.getOrDefault(false)
 }
 
-/** "chrome" from a full path, for sentences. */
 internal fun healthAppName(path: String?): String =
     path?.let { runCatching { Path.of(it).fileName.toString().removeSuffix(".exe").removeSuffix(".EXE") }.getOrDefault(it) }.orEmpty()
