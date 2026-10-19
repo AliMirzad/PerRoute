@@ -31,7 +31,6 @@ import kotlinx.coroutines.withContext
 
 internal enum class HealthTab(val label: String) { Doctor("Connection doctor"), Safety("Safety center") }
 
-/** The Doctor's inputs and both reports, kept while the screen is open so both designs show the same state. */
 internal class HealthModel(private val shell: Shell) {
     private val controller = shell.controller
     var tab by mutableStateOf(HealthTab.Doctor)
@@ -60,7 +59,6 @@ internal class HealthModel(private val shell: Shell) {
 
     val report: HealthReport? get() = if (tab == HealthTab.Doctor) doctor else safety
 
-    /** Shows what a repair does and runs it only when confirmed; Open actions just go there. */
     fun repair(repair: Repair) {
         when (repair) {
             Repair.OPEN_COMPONENTS -> { shell.openSettings(SettingsCategory.Components); return }
@@ -78,7 +76,6 @@ internal class HealthModel(private val shell: Shell) {
 
 internal fun healthModel(shell: Shell): HealthModel = shell.screen("${Tab.Health.name}:model") { HealthModel(shell) }
 
-/** Health: the Connection Doctor and the Routing Safety Center, in either design. */
 @Composable
 internal fun HealthPage(shell: Shell) {
     val model = healthModel(shell)
@@ -148,7 +145,6 @@ private fun HealthFindings(model: HealthModel, report: HealthReport) {
             Spacer(Modifier.width(12.dp))
             Column(Modifier.weight(1f)) {
                 Text(finding.title, color = White, fontSize = 13.sp, fontWeight = FontWeight.SemiBold)
-                // New shows the explanation in the panel; Simple shows it here.
                 if (!Tok.isNew && finding.detail.isNotBlank()) Text(finding.detail, color = Muted, fontSize = 12.sp, lineHeight = 17.sp)
             }
             if (finding.repair != null && (!Tok.isNew || model.selected != finding.id)) {

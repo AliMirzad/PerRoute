@@ -39,9 +39,7 @@ public final class AppState {
     public Map<String, String> nodeTags() { return nodeTags; }
     public List<RouteRule> routeRules() { return routeRules; }
     public List<ConnectionProfile> profiles() { return profiles; }
-    /** Custom server per application: {@link AppRoutes#normalize normalized path} to server key. */
     public Map<String, String> appRoutes() { return appRoutes; }
-    /** Last known display name of every assigned server, kept so a removed server can still be named. */
     public Map<String, String> appRouteLabels() { return appRouteLabels; }
     public String activeProfileId() { return activeProfileId; }
     public void setActiveProfileId(String value) { activeProfileId = value == null ? "" : value; }
@@ -53,19 +51,13 @@ public final class AppState {
     public void setSelectedNodeKey(String value) { selectedNodeKey = value == null ? "" : value; }
     public boolean advancedRouting() { return advancedRouting; }
     public void setAdvancedRouting(boolean value) { advancedRouting = value; }
-    /** Normalized paths of the applications in Auto mode. Their Manual choice, if any, stays in {@link #appRoutes()}. */
     public Set<String> autoApps() { return autoApps; }
-    /** Which servers Auto may pick for an application (normalized path to {@code AutoCandidatePool} text). */
     public Map<String, String> autoPools() { return autoPools; }
-    /** The server Auto chose last for each application, so a working route survives a restart. */
     public Map<String, app.perroute.routing.AutoSelection> autoSelections() { return autoSelections; }
-    /** Download and upload limits by normalized application path. Absent means unlimited. */
     public Map<String, BandwidthPolicy> bandwidthPolicies() { return bandwidthPolicies; }
-    /** True when this state was written by PerRoute 2 or earlier: new automatic features then start switched off. */
     public boolean migratedFromV2() { return migratedFromV2; }
     public void setMigratedFromV2(boolean value) { migratedFromV2 = value; }
 
-    /** Replaces everything in this state with a copy of {@code other}. Used to commit a restored backup in one step. */
     public void replaceWith(AppState other) {
         nodes.clear(); nodes.addAll(other.nodes);
         appPaths.clear(); appPaths.addAll(other.appPaths);

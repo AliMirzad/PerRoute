@@ -14,14 +14,6 @@ import java.nio.file.Path;
 import java.util.ArrayList;
 import java.util.List;
 
-/**
- * Draws PerRoute's logo, the lime route mark on a charcoal tile, as the application icon files: a large PNG, the
- * 256 px PNG used for the window, taskbar and tray, and a Windows .ico with every common size. Each size is drawn
- * on its own (at four times the size, then reduced) instead of shrinking one picture, so small icons stay sharp.
- * The geometry matches BrandMark in the interface.
- *
- * Usage: java tools/IconRenderer.java <output folder>
- */
 public final class IconRenderer {
     private static final Color CHARCOAL = new Color(0x1E, 0x20, 0x20);
     private static final Color LIME = new Color(0xD8, 0xF2, 0x4A);
@@ -43,7 +35,6 @@ public final class IconRenderer {
         writeIco(folder.resolve("perroute.ico"), images);
     }
 
-    /** The logo at {@code size} pixels square. */
     static BufferedImage render(int size) {
         int scale = 4;
         int big = size * scale;
@@ -52,7 +43,6 @@ public final class IconRenderer {
         g.setRenderingHint(RenderingHints.KEY_ANTIALIASING, RenderingHints.VALUE_ANTIALIAS_ON);
         g.setRenderingHint(RenderingHints.KEY_STROKE_CONTROL, RenderingHints.VALUE_STROKE_PURE);
         g.setRenderingHint(RenderingHints.KEY_RENDERING, RenderingHints.VALUE_RENDER_QUALITY);
-        // Tiny icons get a slightly larger mark and a smaller corner, so the route stays readable at 16 px.
         double markShare = size <= 24 ? .82 : size <= 48 ? .78 : .74;
         double corner = big * (size <= 24 ? .18 : .24);
         g.setColor(CHARCOAL);
@@ -79,7 +69,6 @@ public final class IconRenderer {
         g.fill(new Ellipse2D.Double(x - radius, y - radius, radius * 2, radius * 2));
     }
 
-    /** Halves the picture until it has the target size, which keeps edges smooth without blurring them. */
     private static BufferedImage reduce(BufferedImage source, int size) {
         BufferedImage current = source;
         while (current.getWidth() > size) {

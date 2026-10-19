@@ -48,10 +48,8 @@ import kotlinx.coroutines.isActive
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 
-/** The sections of the Diagnostics screen, in the order both designs show them. */
 internal enum class DiagnosticsTab(val label: String) { Routes("Route checks"), Inspector("Inspector"), Loaded("Loaded rules"), Tester("Rule tester") }
 
-/** One line of the route check list: the direct route or a server in use. */
 internal class RouteCheckEntry(
     val id: String,
     val node: ProxyNode?,
@@ -63,17 +61,12 @@ internal class RouteCheckEntry(
     val checkable: Boolean
 )
 
-/**
- * Route checks, the loaded-rule comparison and the selection the New design shows in its panel. Checks are
- * observations at one moment, never inferred from another route.
- */
 internal class DiagnosticsModel(private val shell: Shell) {
     private val controller = shell.controller
     var checking by mutableStateOf(false)
     var dns by mutableStateOf(controller.dnsObservation())
     var loadedRuleIds by mutableStateOf<Set<String>?>(null)
     var dnsOpen by mutableStateOf(false)
-    /** The route or rule the detail panel describes. */
     var selectedRoute by mutableStateOf<String?>(null)
     var selectedRule by mutableStateOf<String?>(null)
     val tester = RuleTesterModel(shell)
@@ -102,7 +95,6 @@ internal class DiagnosticsModel(private val shell: Shell) {
 
     suspend fun onOpen() {
         loadedRuleIds = withContext(Dispatchers.IO) { controller.loadedRuleIds() }
-        // The direct route is looked up once when the screen opens; servers are only checked on request.
         if (controller.routeChecks()[PerRouteController.DIRECT_ROUTE_KEY] == null) recheck(PerRouteController.DIRECT_ROUTE_KEY)
     }
 
@@ -124,7 +116,6 @@ internal class DiagnosticsModel(private val shell: Shell) {
         }
     }
 
-    /** "2 proxy routes passed", counted from what was observed, never from what is configured. */
     fun summary(entries: List<RouteCheckEntry>, now: Long): Pair<String, Boolean> {
         val proxies = entries.filter { it.node != null }
         if (!shell.connected) return "Not connected: servers are checked through the running connection" to false
@@ -163,7 +154,6 @@ internal fun DiagnosticsEffects(shell: Shell, model: DiagnosticsModel) {
     LaunchedEffect(shell.connected) { model.onOpen() }
 }
 
-/** The public address a route was last seen from, in words. */
 internal fun publicIpText(entry: RouteCheckEntry): Pair<String, String> {
     val check = entry.check
     return when {
@@ -175,7 +165,6 @@ internal fun publicIpText(entry: RouteCheckEntry): Pair<String, String> {
     }
 }
 
-/** Status, round trip and time of one check, for detail panels. */
 @Composable
 internal fun RouteCheckFacts(entry: RouteCheckEntry, now: Long, labelWidth: Dp = 120.dp) {
     val check = entry.check
@@ -199,7 +188,6 @@ internal fun RouteCheckFacts(entry: RouteCheckEntry, now: Long, labelWidth: Dp =
     if (!check?.detail.isNullOrBlank()) DetailLine("Detail", check!!.detail, labelWidth)
 }
 
-/** Whether a rule reached the running core: off, saved for the next connection, loaded, or not loaded and why. */
 internal class LoadedState(val label: String, val tone: Int, val why: String)
 
 internal fun loadedState(rule: RouteRule, loadedRuleIds: Set<String>?): LoadedState = when {
@@ -212,7 +200,6 @@ internal fun loadedState(rule: RouteRule, loadedRuleIds: Set<String>?): LoadedSt
 @Composable
 internal fun loadedColor(state: LoadedState): Color = when (state.tone) { 1 -> Cyan; 2 -> Amber; else -> Muted }
 
-/** Predicts which rule a destination would hit. It evaluates saved rules; it does not open a connection. */
 internal class RuleTesterModel(private val shell: Shell) {
     var destination by mutableStateOf("")
     var port by mutableStateOf("443")
@@ -228,7 +215,6 @@ internal class RuleTesterModel(private val shell: Shell) {
     val target: ProxyNode? get() = if (app.isBlank()) shell.mainNode else shell.plan.nodeFor(app) ?: shell.mainNode
     val missing: Boolean get() = app.isNotBlank() && shell.plan.missing().any { it.applicationPath().equals(app, true) }
 
-    /** The predicted result in words: "Proxy → Germany DE-01", "Direct" or "Blocked". */
     fun headline(result: RouteRuleEvaluator.Verdict): String = (if (result.certain()) "" else "Probably ") + when (result.action()) {
         RouteRule.Action.PROXY -> "Proxy"
         RouteRule.Action.DIRECT -> "Direct"
@@ -245,7 +231,6 @@ internal class RuleTesterModel(private val shell: Shell) {
         RouteRule.Action.BLOCK -> "Dropped"
     }
 
-    /** Which mode decides the app's server: the main server, its own server, or Auto. */
     fun routeMode(): String {
         if (app.isBlank()) return if (shell.plan.advancedEffective()) "Main server (apps without their own)" else "Main server"
         if (!shell.plan.advancedEffective()) return "Main server"
@@ -257,7 +242,6 @@ internal class RuleTesterModel(private val shell: Shell) {
         }
     }
 
-    /** "Rule 2 of 5", or that no rule matched. */
     fun ruleOrder(result: RouteRuleEvaluator.Verdict): String {
         val rule = result.rule() ?: return "No rule matched"
         val rules = shell.controller.rules()
@@ -285,14 +269,8 @@ internal class RuleTesterModel(private val shell: Shell) {
     }
 }
 
-/** Which connections the inspector lists. */
 internal enum class InspectorStatusFilter(val label: String) { ALL("All statuses"), ACTIVE("Active"), PROBLEMS("Failed or blocked"), CLOSED("Closed") }
 
-/**
- * What each selected application is connected to and how each connection is routed. Three kinds of facts are
- * kept apart everywhere: what PerRoute is configured to do, what the running core was observed doing, and what
- * an external check of the route verified. Nothing is stored; the list lives in memory and is bounded.
- */
 internal class InspectorModel(private val shell: Shell) {
     var rows by mutableStateOf<List<InspectorRow>>(emptyList())
     var live by mutableStateOf(true)
@@ -334,7 +312,6 @@ internal class InspectorModel(private val shell: Shell) {
     }
 }
 
-/** One refresh every two seconds while the list is live and visible; nothing runs while paused. */
 @Composable
 internal fun InspectorEffects(shell: Shell, model: InspectorModel) {
     val available = model.available
@@ -348,7 +325,6 @@ internal fun InspectorEffects(shell: Shell, model: InspectorModel) {
     }
 }
 
-/** The three kinds of facts the inspector keeps apart. */
 internal enum class FactKind(val label: String, val subtitle: String, val icon: ImageVector) {
     CONFIGURED("Configured", "Predicted from settings", Icons.Rounded.Info),
     OBSERVED("Observed", "Seen by the core", Icons.Rounded.Visibility),
@@ -362,7 +338,6 @@ internal fun factColor(kind: FactKind): Color = when (kind) {
     FactKind.VERIFIED -> Cyan
 }
 
-/** The status of one connection as a word and a colour. */
 @Composable
 internal fun inspectorStatus(row: InspectorRow): Pair<String, Color> = when (row.status) {
     "ACTIVE" -> "Active" to Cyan
@@ -386,7 +361,6 @@ internal fun InspectorStatusLabel(row: InspectorRow) {
     }
 }
 
-/** "Configured: NL-01 / Observed: NL-01", the two route facts of one connection. */
 @Composable
 internal fun RouteFacts(row: InspectorRow) {
     Column {
@@ -401,7 +375,6 @@ internal fun RouteFacts(row: InspectorRow) {
     }
 }
 
-/** The facts of one kind for one connection. */
 @Composable
 internal fun FactLines(kind: FactKind, row: InspectorRow, labelWidth: Dp = 110.dp, more: Boolean = false) {
     when (kind) {
@@ -445,7 +418,6 @@ internal fun FactLines(kind: FactKind, row: InspectorRow, labelWidth: Dp = 110.d
     }
 }
 
-/** The heading of one block of facts: its icon, name and what kind of fact it is. */
 @Composable
 internal fun FactHeading(kind: FactKind) {
     Row(verticalAlignment = Alignment.CenterVertically) {
@@ -460,14 +432,12 @@ internal fun FactHeading(kind: FactKind) {
     }
 }
 
-/** The note under each block that says what the fact does and does not prove. */
 internal fun factNote(kind: FactKind): String = when (kind) {
     FactKind.CONFIGURED -> "Prediction, not measurement."
     FactKind.OBSERVED -> "What the running core reported."
     FactKind.VERIFIED -> "Confirms the route, not the destination."
 }
 
-/** A plain-text copy of one connection, with each fact labelled. No payload exists to include. */
 internal fun describe(row: InspectorRow): String = buildString {
     appendLine("${appName(row.applicationPath)} (${row.applicationPath})")
     appendLine("Destination: ${row.destination} ${row.protocol}" + (row.observed.sniffedDomain?.let { " ($it)" } ?: ""))
@@ -479,7 +449,6 @@ internal fun describe(row: InspectorRow): String = buildString {
     append("Verified: " + if (verified == null) "not verified" else "${verified.routeLabel} exit ${verified.publicIp ?: "-"} (${if (verified.passed) "passed" else "failed"}, ${formatAgo(verified.atMillis)})")
 }
 
-/** The live traffic of one connection, or a dash when the gateway does not carry it. */
 @Composable
 internal fun LiveTraffic(row: InspectorRow) {
     if (row.viaGateway) Column {
@@ -488,7 +457,6 @@ internal fun LiveTraffic(row: InspectorRow) {
     } else Text("—", color = Muted, fontSize = 12.sp)
 }
 
-/** The empty or unavailable state of the inspector. Returns false when the list can be shown. */
 @Composable
 internal fun InspectorUnavailable(shell: Shell, modifier: Modifier): Boolean {
     if (shell.connected && shell.perApp) return false
@@ -499,7 +467,6 @@ internal fun InspectorUnavailable(shell: Shell, modifier: Modifier): Boolean {
     return true
 }
 
-/** The direct route uses a globe; servers use their avatar. */
 @Composable
 internal fun RouteEntryAvatar(entry: RouteCheckEntry, size: Dp = 36.dp) {
     if (entry.node != null) ServerAvatar(entry.node, size)

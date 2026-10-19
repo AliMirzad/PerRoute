@@ -8,12 +8,10 @@ import java.util.Comparator;
 import java.util.List;
 import java.util.Locale;
 
-/** Reads a {@link SubscriptionInsight} and says, in plain words, what deserves attention. */
 public final class SubscriptionHealth {
     private SubscriptionHealth() {}
 
     public static final long DAY = 24L * 60 * 60 * 1000;
-    /** A subscription not updated for this long is reported as stale, unless its provider asks for less often. */
     public static final long STALE_AFTER = 7 * DAY;
     public static final long EXPIRING_WITHIN = 3 * DAY;
 

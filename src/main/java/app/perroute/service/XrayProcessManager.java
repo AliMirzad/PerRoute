@@ -59,10 +59,6 @@ public final class XrayProcessManager implements AutoCloseable {
         });
     }
 
-    /**
-     * Checks a complete config with Xray without touching the running core or its config file, so a
-     * rejected config can never interrupt the current connection.
-     */
     public void validate(String config, boolean requiresWintun) throws IOException, InterruptedException {
         Path coreDir = AppDirectories.coreDirectory();
         Path executable = coreDir.resolve("xray.exe");
@@ -124,20 +120,11 @@ public final class XrayProcessManager implements AutoCloseable {
         fireState(false);
     }
 
-    /**
-     * Moves one route of the running core to a new outbound without restarting it: the new outbound is added,
-     * all routing rules are swapped in one call, and only then is the old outbound removed. Until the swap the
-     * old route keeps working; after it, new connections use the new outbound. If adding or swapping fails,
-     * whatever was added is removed again and the running core is left exactly as it was.
-     *
-     * @param config the complete config the core now corresponds to; it replaces current-config.json
-     */
     public synchronized void applyRuntimeChange(String outbounds, String routing, String newTag, String oldTag, String config)
             throws IOException, InterruptedException {
         if (!isRunning()) throw new IOException("The connection core is not running");
         Path data = AppDirectories.dataDirectory();
         Files.createDirectories(data);
-        // These files hold server credentials, exactly like current-config.json, and are removed right away.
         Path outboundFile = data.resolve("runtime-outbound.json");
         Path routingFile = data.resolve("runtime-routing.json");
         try {
@@ -159,16 +146,10 @@ public final class XrayProcessManager implements AutoCloseable {
         }
     }
 
-    /**
-     * Changes the layout of the running core: new inbounds and outbounds are added, the rule list is swapped in one
-     * step, and only then is everything that is no longer used removed. If adding or swapping fails, whatever was
-     * added is removed again, so the core keeps working exactly as it was.
-     */
     public synchronized void applyRuntimePlan(XrayConfigGenerator.RuntimePlan plan) throws IOException, InterruptedException {
         if (!isRunning()) throw new IOException("The connection core is not running");
         Path data = AppDirectories.dataDirectory();
         Files.createDirectories(data);
-        // Like current-config.json these files can hold credentials; they are removed right away.
         Path inboundFile = data.resolve("runtime-inbounds.json");
         Path outboundFile = data.resolve("runtime-outbounds.json");
         Path routingFile = data.resolve("runtime-routing.json");
@@ -224,7 +205,6 @@ public final class XrayProcessManager implements AutoCloseable {
         return text;
     }
 
-    /** Xray processes of PerRoute's core folder that this process did not start: leftovers of an earlier session. */
     public int orphanCount() {
         String executable = AppDirectories.coreDirectory().resolve("xray.exe").toString();
         java.util.Set<Long> own = ProcessHandle.current().descendants()

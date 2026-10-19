@@ -10,15 +10,6 @@ import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 
-/**
- * What the running core and the traffic gateway actually observed for each connection, kept in memory only
- * and bounded in size. Nothing is written to disk and no payload is ever seen.
- *
- * <p>Connections come from the gateway (destination, protocol, bytes, open/closed) and are joined with Xray's
- * own log: the access line names the outbound Xray chose for the gateway's source port, and the session lines
- * name the sniffed domain and the rule that matched. Without the gateway, connections are built from the access
- * lines alone and carry no byte counts.
- */
 public final class ConnectionInspector {
     public static final int MAX_RECORDS = 1_500;
     static final long CLOSED_RETENTION_MILLIS = 120_000L;
@@ -27,7 +18,6 @@ public final class ConnectionInspector {
     static final int MAX_SESSIONS = 2_048;
     static final int MAX_PENDING_ACCESS = 512;
 
-    /** An observed connection. Every field here was seen at runtime; nothing is predicted. */
     public record Observation(long id, String applicationPath, String inboundTag, String protocol,
                               String destinationHost, int destinationPort, String sniffedDomain,
                               String observedOutbound, String observedRuleTag, boolean ruleObserved,
@@ -87,7 +77,6 @@ public final class ConnectionInspector {
     private long nextCoreId = -1;
     private volatile boolean gatewayActive;
 
-    /** Whether connections arrive through the gateway. Without it the access log is the only source. */
     public void gatewayActive(boolean active) { gatewayActive = active; }
 
     public synchronized void clear() {
@@ -195,10 +184,6 @@ public final class ConnectionInspector {
         return session;
     }
 
-    /**
-     * Joins a session (sniffed domain, rule) to the earliest connection with the same destination, opened
-     * within a few seconds and, when the outbound is already known on both sides, sent to the same outbound.
-     */
     private void attach(Session session) {
         if (session.attached || session.host.isBlank() || session.ruleTag == null) return;
         Record best = null;
@@ -277,7 +262,6 @@ public final class ConnectionInspector {
         pending.removeIf(entry -> now - entry.at() > 10_000L);
     }
 
-    /** Drops the oldest finished records first, then the oldest of all, so the table never grows unbounded. */
     private void enforceLimit() {
         if (records.size() <= MAX_RECORDS) return;
         Iterator<Record> iterator = records.values().iterator();

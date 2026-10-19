@@ -50,10 +50,6 @@ import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 
-/**
- * The Simple design: a wide menu with all eight sections on the left and light (or dark) pages made of cards,
- * with a violet accent. It draws the same Shell as the New design.
- */
 @Composable
 internal fun SimpleWindow(shell: Shell, chrome: WindowChrome) {
     BoxWithConstraints(Modifier.fillMaxSize().background(Ink)) {
@@ -132,10 +128,6 @@ private fun SimpleSidebar(shell: Shell, chrome: WindowChrome, modifier: Modifier
     }
 }
 
-/**
- * The page frame: a large title (with an optional pill beside it), its subtitle, actions on the right, then the
- * content. [scroll] lets the whole page scroll when its content is taller than the window.
- */
 @Composable
 internal fun SimplePage(
     title: String,
@@ -175,21 +167,18 @@ internal fun SimplePage(
     }
 }
 
-/** A white (or graphite) card with the Simple design's rounded corners. */
 @Composable
 internal fun SimpleCard(modifier: Modifier = Modifier, padding: Dp = 22.dp, content: @Composable ColumnScope.() -> Unit) {
     val shape = RoundedCornerShape(16.dp)
     Column(modifier.fillMaxWidth().background(Surface, shape).border(1.dp, Line, shape).padding(padding), content = content)
 }
 
-/** A table header inside a card. */
 @Composable
 internal fun SimpleTableHeader(content: @Composable RowScope.() -> Unit) {
     Row(Modifier.fillMaxWidth().height(38.dp).padding(horizontal = 10.dp), verticalAlignment = Alignment.CenterVertically, content = content)
     Divider()
 }
 
-/** A table row inside a card: hairline below, lavender when selected. */
 @Composable
 internal fun SimpleTableRow(selected: Boolean = false, modifier: Modifier = Modifier, onClick: (() -> Unit)? = null, label: String? = null, content: @Composable RowScope.() -> Unit) {
     Row(
@@ -201,7 +190,6 @@ internal fun SimpleTableRow(selected: Boolean = false, modifier: Modifier = Modi
     Divider()
 }
 
-/** A settings row: what it is on the left, its control on the right, an optional line under the control. */
 @Composable
 internal fun SimpleSettingRow(title: String, detail: String, note: String = "", divider: Boolean = true, control: (@Composable () -> Unit)? = null) {
     Row(Modifier.fillMaxWidth().padding(vertical = 16.dp), verticalAlignment = Alignment.CenterVertically) {
@@ -220,7 +208,6 @@ internal fun SimpleSettingRow(title: String, detail: String, note: String = "", 
     if (divider) Divider()
 }
 
-/** A card section title with an optional action on the right. */
 @Composable
 internal fun SimpleSectionTitle(title: String, detail: String = "", trailing: (@Composable RowScope.() -> Unit)? = null) {
     Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
@@ -232,7 +219,6 @@ internal fun SimpleSectionTitle(title: String, detail: String = "", trailing: (@
     }
 }
 
-/** The Simple design's lock notice: an amber banner that names what is locked and why. */
 @Composable
 internal fun SimpleLockNote(text: String, modifier: Modifier = Modifier.fillMaxWidth()) =
     InfoBanner(text, modifier, Amber, Icons.Rounded.Lock)

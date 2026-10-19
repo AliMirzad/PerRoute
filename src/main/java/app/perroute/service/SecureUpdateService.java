@@ -26,9 +26,10 @@ import java.util.Map;
 import java.util.function.Consumer;
 
 public final class SecureUpdateService {
-    public static final String CURRENT_VERSION = "3.5.0";
+    public static final String CURRENT_VERSION = "3.5.1";
+    public static final String OFFICIAL_FEED = "https://github.com/AliMirzad/PerRoute/releases/latest/download/update.json";
     private static final String UPDATE_PUBLIC_KEY =
-            "MCowBQYDK2VwAyEAxO/TDTxdoBCM5F0jwU0n31a3ymgOCfDXbLXs2pyxDMY=";
+            "MCowBQYDK2VwAyEAJHclwauxFVQNKkuskeYcPWLr4eSC9emFIsm5fLqkiVw=";
     private static final int MAX_MANIFEST_BYTES = 64 * 1024;
     private static final long MAX_INSTALLER_BYTES = 250L * 1024L * 1024L;
     private final HttpClient client = HttpClient.newBuilder()

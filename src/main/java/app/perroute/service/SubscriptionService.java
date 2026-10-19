@@ -18,10 +18,6 @@ public final class SubscriptionService {
             .build();
     private final SubscriptionParser parser = new SubscriptionParser();
 
-    /**
-     * A fetched subscription with the provider's usage, expiry and title headers. Header names are lower case
-     * and only the first value of each is kept.
-     */
     public record Fetched(ParseResult result, java.util.Map<String, String> headers) {
         public app.perroute.subscription.SubscriptionUserInfo userInfo() {
             return app.perroute.subscription.SubscriptionUserInfo.parse(headers.get("subscription-userinfo"));

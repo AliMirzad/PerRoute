@@ -46,11 +46,6 @@ public final class TunnelHttp {
         }
     }
 
-    /**
-     * Time until an HTTPS server answers a HEAD request through {@code route}: the TCP connection through the
-     * tunnel, the TLS handshake and the response head together, which is what a page load waits for first.
-     * Any HTTP status counts as an answer.
-     */
     public static long timeHead(Route route, String host, int timeoutMillis) throws IOException {
         long started = System.nanoTime();
         Socket raw = new Socket();

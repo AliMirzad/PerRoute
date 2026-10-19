@@ -63,7 +63,6 @@ import androidx.compose.ui.unit.sp
 import app.perroute.backup.BackupService
 import app.perroute.model.ConnectionMode
 
-/** Settings: the chosen category on the left and the Preferences list in the charcoal panel. */
 @Composable
 internal fun NewSettingsPage(shell: Shell) {
     val category = shell.settingsCategory
@@ -133,7 +132,6 @@ private fun ColumnScope.NewPreferences(shell: Shell) {
     Note("Settings apply immediately.")
 }
 
-/** A titled block of a settings page, with a rule above it. */
 @Composable
 private fun SettingBlock(title: String, subtitle: String = "", first: Boolean = false, trailing: (@Composable RowScope.() -> Unit)? = null, content: @Composable ColumnScope.() -> Unit = {}) {
     if (!first) { Divider(); Spacer(Modifier.height(18.dp)) }
@@ -151,7 +149,6 @@ private fun SettingBlock(title: String, subtitle: String = "", first: Boolean = 
     Spacer(Modifier.height(18.dp))
 }
 
-/** A radio card: a ring, a title and one line, lime-tinted when chosen. */
 @Composable
 private fun RowScope.RadioCard(title: String, detail: String, selected: Boolean, enabled: Boolean = true, trailing: (@Composable () -> Unit)? = null, onSelect: () -> Unit) {
     RadioCardBody(Modifier.weight(1f), title, detail, selected, enabled, trailing, onSelect)
@@ -303,6 +300,7 @@ private fun NewRoutingSettings(shell: Shell) {
         note = "Every live route is checked through its own port once a minute. A failing route retries with growing delays (2 to 32 s), is rebuilt in place, and is checked every two minutes after five failures.") { model.changeMonitoring(it) }
     ToggleBlock("Traffic gateway", "Enables per-app bandwidth limits and detailed traffic. It relays each app's connections on this computer and never reads their contents. Smart per-app only.",
         model.gateway, enabled = !shell.locked, note = if (shell.locked) "Disconnect to change. It sits in the data path." else "Change only while disconnected.") { model.changeGateway(it) }
+    ToggleBlock("Block QUIC", QuicDetail, model.quicBlocked, note = QuicNote) { model.changeQuic(it) }
 }
 
 @Composable
@@ -342,11 +340,12 @@ private fun NewUpdates(shell: Shell) {
         Text(model.statusLine, color = if (model.downloading) Cyan else Muted, fontSize = 12.5.sp, lineHeight = 17.sp)
         RollbackNote(shell)
     }
+    ToggleBlock("Update automatically", AutoUpdateDetail, model.auto) { model.changeAuto(it) }
     SettingBlock("Signed update feed") {
         Spacer(Modifier.height(10.dp))
-        TextInput(model.feed, { model.changeFeed(it) }, "Signed HTTPS manifest URL", height = 46.dp)
+        TextInput(model.feed, { model.changeFeed(it) }, "Official PerRoute releases", height = 46.dp)
         Spacer(Modifier.height(6.dp))
-        Text("Use a trusted HTTPS feed. Only manifests signed with PerRoute's offline Ed25519 release key are accepted.", color = Muted, fontSize = 12.5.sp)
+        Text(UpdateFeedNote, color = Muted, fontSize = 12.5.sp)
     }
     if (model.downloading || model.downloaded != null) SettingBlock(if (model.downloaded != null) "Downloaded" else "Downloading", trailing = {
         Text(if (model.downloaded != null) "100%" else "${model.progress}%", color = White, fontSize = 15.sp)
@@ -479,7 +478,6 @@ private fun NewActivityLog(shell: Shell) {
     }
 }
 
-/** The restore review as a page: what the backup holds, missing apps, Merge or Replace, and the plan in the panel. */
 @Composable
 private fun NewRestoreReview(shell: Shell, backup: BackupModel, session: RestoreSession) {
     val preview = session.preview

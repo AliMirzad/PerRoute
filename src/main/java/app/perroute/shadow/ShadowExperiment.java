@@ -5,20 +5,12 @@ import java.util.ArrayList;
 import java.util.List;
 import java.util.function.BooleanSupplier;
 
-/**
- * A side-by-side test of a live route and a candidate server, run without changing the live route. Both sides
- * open the same HTTPS destinations, alternating which goes first in every round so neither profits from a warm
- * cache. Synthetic requests show how the paths compare; they cannot promise how every connection of an app will
- * behave, and the result says so.
- */
 public final class ShadowExperiment {
     private ShadowExperiment() {}
 
-    /** Times one HTTPS request to {@code host} through a loopback SOCKS port, in milliseconds. */
     @FunctionalInterface
     public interface Timer { long time(int socksPort, String host) throws IOException; }
 
-    /** Results of one destination; -1 marks a request that failed. */
     public record Destination(String host, List<Long> live, List<Long> candidate) {
         public long liveMedian() { return median(live); }
         public long candidateMedian() { return median(candidate); }
@@ -43,9 +35,7 @@ public final class ShadowExperiment {
 
     public record Report(List<Destination> destinations, Verdict verdict, boolean cancelled) {}
 
-    /** Requests per destination and side. */
     public static final int ROUNDS = 3;
-    /** A difference smaller than both of these is noise. */
     public static final long MIN_DIFFERENCE_MILLIS = 20;
     public static final double MIN_DIFFERENCE_SHARE = .15;
 

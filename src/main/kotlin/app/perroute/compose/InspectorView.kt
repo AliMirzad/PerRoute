@@ -6,19 +6,14 @@ import app.perroute.service.RouteRuleEvaluator
 import app.perroute.service.RoutePlanner
 import app.perroute.service.XrayConfigGenerator
 
-/** Where a connection goes: through a server, directly, blocked, or not known. */
 enum class RouteKind { PROXY, DIRECT, BLOCK, UNKNOWN }
 
-/** What PerRoute is set up to do with a connection. A prediction from the saved rules, never a measurement. */
 data class ConfiguredFact(val routeLabel: String, val kind: RouteKind, val ruleLabel: String, val ruleSource: String, val certain: Boolean)
 
-/** What the running core actually did with this connection, read from its own log. Null fields were not observed. */
 data class ObservedFact(val routeLabel: String?, val kind: RouteKind, val outboundTag: String?, val ruleLabel: String?, val sniffedDomain: String?)
 
-/** The last external check of the route this connection uses. It describes the route, not this connection. */
 data class VerifiedFact(val routeLabel: String, val passed: Boolean, val publicIp: String?, val country: String?, val atMillis: Long, val detail: String)
 
-/** One row of the Connection Inspector. */
 data class InspectorRow(
     val id: Long,
     val applicationPath: String,
@@ -43,7 +38,6 @@ data class InspectorRow(
     val destination: String get() = if (destinationHost.isBlank()) "Unknown" else "$destinationHost:$destinationPort"
 }
 
-/** Everything needed to explain observations: the running routes, their outbound tags, rules and checks. */
 internal class InspectorContext(
     val applications: List<String>,
     val routes: List<ActiveRoute>,
@@ -91,7 +85,6 @@ internal object InspectorView {
         return applications.getOrNull(index)
     }
 
-    /** The route an outbound tag belongs to, as (label, kind, route). */
     fun describeOutbound(tag: String?, context: InspectorContext): Triple<String, RouteKind, ActiveRoute?>? {
         if (tag.isNullOrBlank()) return null
         if (tag == "direct" || tag.endsWith("perroute-direct") || tag.startsWith("perroute-direct")) return Triple("Direct", RouteKind.DIRECT, null)
@@ -102,7 +95,6 @@ internal object InspectorView {
                 return Triple(context.nameOf(route.node), RouteKind.PROXY, route)
             }
         }
-        // Outbounds of an embedded main profile keep their own tags, and custom profiles live under their route's namespace.
         val custom = Regex("^(?:~|zz\\.)?perroute-route-(\\d+)/").find(tag)?.groupValues?.get(1)?.toIntOrNull()
         if (custom != null) {
             val route = context.routes.filter { !it.main }.getOrNull(custom)

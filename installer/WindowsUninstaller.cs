@@ -9,8 +9,8 @@ using Microsoft.Win32;
 [assembly: AssemblyDescription("System uninstaller for PerRoute")]
 [assembly: AssemblyCompany("Ali Mirzad")]
 [assembly: AssemblyProduct("PerRoute")]
-[assembly: AssemblyVersion("3.5.0.0")]
-[assembly: AssemblyFileVersion("3.5.0.0")]
+[assembly: AssemblyVersion("3.5.1.0")]
+[assembly: AssemblyFileVersion("3.5.1.0")]
 
 namespace PerRouteSetup
 {
@@ -30,8 +30,6 @@ namespace PerRouteSetup
 
             string installDirectory = AppDomain.CurrentDomain.BaseDirectory.TrimEnd(Path.DirectorySeparatorChar);
             StopPerRoute(installDirectory);
-            // Puts back what PerRoute changed (Windows proxy, start-up entry, the per-app engine's app list) before its
-            // files go, so removing PerRoute never leaves the network pointing at it.
             string recovery = Path.Combine(installDirectory, "PerRouteRecovery.exe");
             if (File.Exists(recovery))
             {
@@ -67,7 +65,6 @@ namespace PerRouteSetup
             MessageBox.Show("PerRoute has been removed.", "Uninstall complete", MessageBoxButtons.OK, MessageBoxIcon.Information);
         }
 
-        /// <summary>PerRoute must not run while its files are removed; it restores its settings when it exits.</summary>
         private static void StopPerRoute(string installDirectory)
         {
             foreach (Process process in Process.GetProcessesByName("PerRoute"))

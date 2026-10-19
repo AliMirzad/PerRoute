@@ -12,7 +12,6 @@ import java.util.List;
 import java.util.Map;
 import java.util.UUID;
 
-/** The saved workspaces. They reference servers by key only; the profiles themselves live in their own folders. */
 public final class WorkspaceStore {
     private final Path file;
     private final List<Workspace> workspaces = new ArrayList<>();
@@ -30,7 +29,6 @@ public final class WorkspaceStore {
         return workspaces.stream().filter(workspace -> workspace.id().equals(id)).findFirst().orElse(null);
     }
 
-    /** Adds a workspace in the first free slot. */
     public synchronized Workspace create(String name, String browser, String nodeKey, long now) {
         load();
         if (workspaces.size() >= Workspace.SLOTS) throw new IllegalStateException("PerRoute supports up to " + Workspace.SLOTS + " workspaces.");

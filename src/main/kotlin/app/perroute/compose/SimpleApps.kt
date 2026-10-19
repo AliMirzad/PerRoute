@@ -37,7 +37,6 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import app.perroute.routing.AppRouteMode
 
-/** Apps: the application list with each app's route, and Save changes. An app's details open in a dialog. */
 @Composable
 internal fun SimpleAppsPage(shell: Shell) {
     val model = appsModel(shell)
@@ -114,7 +113,6 @@ internal fun SimpleAppsPage(shell: Shell) {
             }
         }
     }
-    // An app's details open as a dialog whenever an app is focused, from its row or from elsewhere (Settings > Connection).
     val focused = draft.focused
     LaunchedEffect(focused) {
         if (focused != null && shell.dialog == null) shell.showDialog(onDismiss = { draft.focused = null; shell.closeDialog() }) { SimpleAppDialog(shell) }
@@ -133,7 +131,7 @@ private fun SimpleAppRow(shell: Shell, model: AppsModel, app: AppChoice) {
                 .semantics { contentDescription = "Route ${app.title} through the proxy" }.padding(vertical = 8.dp),
             contentAlignment = Alignment.CenterStart
         ) { CheckMark(selected) }
-        Row(Modifier.weight(1.3f), verticalAlignment = Alignment.CenterVertically) {
+        Row(Modifier.weight(1.3f).padding(end = 12.dp), verticalAlignment = Alignment.CenterVertically) {
             AppAvatar(app.name, app.path, 42.dp)
             Spacer(Modifier.width(16.dp))
             Column(Modifier.weight(1f)) {
@@ -152,7 +150,6 @@ private fun SimpleAppRow(shell: Shell, model: AppsModel, app: AppChoice) {
     }
 }
 
-/** One app's routing and limits. Route changes stay in the draft until Save changes; limits save at once. */
 @Composable
 private fun SimpleAppDialog(shell: Shell) {
     val draft = shell.draft

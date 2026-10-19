@@ -41,10 +41,8 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import app.perroute.model.ConnectionMode
 
-/** Whether "Connection details" is open; a route that is recovering opens it on its own. */
 private class SimpleConnectView { var details by mutableStateOf(false) }
 
-/** Connection: status and the main action, the main server, the routed apps, live speed and per-route details. */
 @Composable
 internal fun SimpleConnectionPage(shell: Shell) {
     val view = ConnectionView(shell)
@@ -181,7 +179,6 @@ private fun RowScope.SimpleStat(icon: ImageVector, label: String, value: String)
     }
 }
 
-/** "Change server": the main-server choices in a menu, with a way to open the full list. */
 @Composable
 private fun ChangeMainButton(shell: Shell) {
     var open by remember { mutableStateOf(false) }
@@ -193,7 +190,6 @@ private fun ChangeMainButton(shell: Shell) {
     }
 }
 
-/** Every route with its apps and health; a recovering route shows what happens and what to do. */
 @Composable
 private fun SimpleRouteDetails(shell: Shell, view: ConnectionView, now: Long) {
     Column(Modifier.fillMaxWidth().padding(bottom = 10.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {

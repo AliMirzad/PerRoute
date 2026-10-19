@@ -6,7 +6,6 @@ import app.perroute.service.AppDirectories
 import java.nio.file.Files
 import java.nio.file.StandardOpenOption
 
-/** Optional start-up and frame timing marks, written only when PERROUTE_PERF=1. */
 internal object Perf {
     val enabled = System.getenv("PERROUTE_PERF") == "1"
     val bench = enabled && System.getenv("PERROUTE_BENCH") == "1"

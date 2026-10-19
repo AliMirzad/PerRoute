@@ -3,10 +3,6 @@ package app.perroute.netstate;
 import java.util.List;
 import java.util.Map;
 
-/**
- * Every reading a network snapshot can hold, how it is shown, and how to tell PerRoute's own values from values
- * set by Windows or another program. Only readings marked {@link Key#managed()} are ever changed by a restore.
- */
 public final class NetworkStateKeys {
     private NetworkStateKeys() {}
 
@@ -29,14 +25,10 @@ public final class NetworkStateKeys {
     public static final String GATEWAY = "context.gateways";
     public static final String ADAPTERS = "context.adapters";
 
-    /** Engine configuration values. */
     public static final String CONFIG_PERROUTE = "perroute", CONFIG_OTHER = "other", CONFIG_NONE = "none";
-    /** Service and process states. */
     public static final String RUNNING = "running", STOPPED = "stopped", MISSING = "not installed";
-    /** The value PerRoute writes to ProxyOverride. */
     public static final String PERROUTE_OVERRIDE = "<local>;localhost;127.*;[::1]";
 
-    /** Who a value belongs to. Only PERROUTE values are put back by a restore. */
     public enum Owner {
         PERROUTE("Set by PerRoute"),
         OTHER("Set by Windows or another program"),
@@ -48,9 +40,6 @@ public final class NetworkStateKeys {
         public String label() { return label; }
     }
 
-    /**
-     * @param managed whether PerRoute ever writes this reading (and may therefore put it back)
-     */
     public record Key(String id, String group, String label, String explanation, boolean managed) {}
 
     public static final List<Key> ALL = List.of(
@@ -79,18 +68,15 @@ public final class NetworkStateKeys {
         throw new IllegalArgumentException("Unknown network reading " + id);
     }
 
-    /** Whether the Windows proxy readings in {@code values} are the ones PerRoute writes. */
     public static boolean perRouteProxy(Map<String, String> values, String perRouteServer) {
         return enabled(values.getOrDefault(PROXY_ENABLE, "")) && perRouteServer.equals(values.getOrDefault(PROXY_SERVER, "").trim());
     }
 
-    /** ProxyEnable as reg.exe prints it: "0x1" when on. */
     public static boolean enabled(String value) {
         String text = value == null ? "" : value.trim().toLowerCase(java.util.Locale.ROOT);
         return text.equals("0x1") || text.equals("1");
     }
 
-    /** The server value PerRoute writes. Set once by the controller so this class needs no service dependency. */
     private static volatile String perRouteServer = "";
 
     public static void setPerRouteServer(String value) { perRouteServer = value == null ? "" : value; }
@@ -122,7 +108,6 @@ public final class NetworkStateKeys {
         return "yes".equalsIgnoreCase(value) || "true".equalsIgnoreCase(value) || "present".equalsIgnoreCase(value);
     }
 
-    /** A reading as people read it: "On", "Off", "Not set", "2 apps". */
     public static String display(String id, String value) {
         String text = value == null ? "" : value.trim();
         return switch (id) {

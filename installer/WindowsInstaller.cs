@@ -15,8 +15,8 @@ using Microsoft.Win32;
 [assembly: AssemblyDescription("Complete system installer for PerRoute")]
 [assembly: AssemblyCompany("Ali Mirzad")]
 [assembly: AssemblyProduct("PerRoute")]
-[assembly: AssemblyVersion("3.5.0.0")]
-[assembly: AssemblyFileVersion("3.5.0.0")]
+[assembly: AssemblyVersion("3.5.1.0")]
+[assembly: AssemblyFileVersion("3.5.1.0")]
 
 namespace PerRouteSetup
 {
@@ -39,7 +39,12 @@ namespace PerRouteSetup
                     "Administrator access required", MessageBoxButtons.OK, MessageBoxIcon.Error);
                 return;
             }
-            Application.Run(new InstallerForm());
+            string[] args = Environment.GetCommandLineArgs();
+            string updateDirectory = null;
+            for (int i = 1; i < args.Length; i++)
+                if (String.Equals(args[i], "/update", StringComparison.OrdinalIgnoreCase))
+                    updateDirectory = i + 1 < args.Length ? args[i + 1] : "";
+            Application.Run(new InstallerForm(updateDirectory));
         }
 
         private static bool IsAdministrator()
@@ -51,7 +56,7 @@ namespace PerRouteSetup
 
     internal sealed class InstallerForm : Form
     {
-        private const string Version = "3.5.0";
+        private const string Version = "3.5.1";
         private const string ResourceName = "PerRoute.Payload";
         private const string ProxiFyreResourceName = "PerRoute.ProxiFyreSetup";
         private const string VisualCppResourceName = "PerRoute.VisualCppRuntime";
@@ -74,9 +79,11 @@ namespace PerRouteSetup
         private readonly TextBox locationBox;
         private readonly CheckBox desktopShortcut;
         private readonly CheckBox launchAfterInstall;
+        private readonly bool updateMode;
 
-        internal InstallerForm()
+        internal InstallerForm(string updateDirectory = null)
         {
+            updateMode = updateDirectory != null;
             Text = "PerRoute Setup";
             ClientSize = new Size(590, 420);
             MinimumSize = MaximumSize = Size;
@@ -91,7 +98,6 @@ namespace PerRouteSetup
             Panel accent = new Panel { BackColor = violet, Location = new Point(0, 0), Size = new Size(590, 5) };
             Controls.Add(accent);
 
-            // PerRoute's logo, taken from this installer's own icon so it always matches the application.
             PictureBox logo = new PictureBox {
                 Location = new Point(34, 34), Size = new Size(54, 54), SizeMode = PictureBoxSizeMode.Zoom, BackColor = Color.Transparent
             };
@@ -167,6 +173,15 @@ namespace PerRouteSetup
 
             installButton = CreateButton("Install", violet, new Point(398, 339), new Size(100, 38));
             installButton.Click += InstallClicked;
+            if (updateMode)
+            {
+                if (updateDirectory.Length > 0) locationBox.Text = updateDirectory;
+                desktopShortcut.Checked = File.Exists(Path.Combine(
+                    Environment.GetFolderPath(Environment.SpecialFolder.CommonDesktopDirectory), "PerRoute.lnk"));
+                launchAfterInstall.Checked = true;
+                title.Text = "Updating PerRoute";
+                Shown += delegate { InstallClicked(this, EventArgs.Empty); };
+            }
             Controls.Add(installButton);
 
             cancelButton = CreateButton("Cancel", Color.FromArgb(55, 58, 76), new Point(505, 339), new Size(70, 38));
@@ -249,13 +264,12 @@ namespace PerRouteSetup
                 statusLabel.Text = "PerRoute was installed successfully.";
                 UseWaitCursor = false;
                 ResetStateKeyPermissions();
-                // Through Explorer, so PerRoute runs as the signed-in user instead of inheriting this installer's
-                // Administrator rights (which would also give its files Administrator-only permissions).
                 if (launchAfterInstall.Checked && !result.RestartRequired) Process.Start("explorer.exe", "\"" + result.Executable + "\"");
                 string completion = "PerRoute " + Version + " and its per-app engine are ready to use.";
                 if (result.RestartRequired) completion += "\r\n\r\nWindows must be restarted before Smart per-app mode can be used.";
-                MessageBox.Show(this, completion, "Installation complete",
-                    MessageBoxButtons.OK, MessageBoxIcon.Information);
+                if (!updateMode || result.RestartRequired)
+                    MessageBox.Show(this, completion, updateMode ? "Update complete" : "Installation complete",
+                        MessageBoxButtons.OK, MessageBoxIcon.Information);
                 Close();
             }
             catch (Exception error)
@@ -335,8 +349,6 @@ namespace PerRouteSetup
                     if (!Directory.Exists(target) && Directory.Exists(backup)) Directory.Move(backup, target);
                     throw;
                 }
-                // The version that was replaced is kept for a rollback (only the latest one), unless it is this
-                // same version being installed again.
                 if (backedUp && Directory.Exists(backup))
                 {
                     try
@@ -512,10 +524,6 @@ namespace PerRouteSetup
             }
         }
 
-        /// <summary>
-        /// The version installed in a folder: its version file, or for installations from before 3.5 the version
-        /// Windows lists for PerRoute. Empty when nothing is installed there.
-        /// </summary>
         private static string InstalledVersion(string folder)
         {
             if (!File.Exists(Path.Combine(folder, "PerRoute.exe"))) return "";

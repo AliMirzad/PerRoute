@@ -6,7 +6,7 @@ $GradleHome = Join-Path $ProjectRoot '.gradle-home'
 $BootstrapGradle = Join-Path $BuildRoot 'gradle-bootstrap\gradle-9.7.0\bin\gradle.bat'
 $Wrapper = Join-Path $ProjectRoot 'gradlew.bat'
 $Gradle = if (Test-Path -LiteralPath $BootstrapGradle) { $BootstrapGradle } else { $Wrapper }
-$Version = '3.5.0'
+$Version = '3.5.1'
 $VendorDir = Join-Path $BuildRoot 'vendor'
 
 function Get-VerifiedAsset {
@@ -114,7 +114,6 @@ $CommonReferences = @(
 & $Csc /nologo /target:winexe /platform:x64 /optimize+ "/win32icon:$ProjectRoot\src\main\resources\icons\perroute.ico" "/win32manifest:$ProjectRoot\installer\uninstaller.manifest" "/out:$PackagedApp\Uninstall.exe" $CommonReferences (Join-Path $ProjectRoot 'installer\WindowsUninstaller.cs')
 if ($LASTEXITCODE -ne 0) { throw 'Could not compile the PerRoute uninstaller.' }
 
-# The standalone recovery tool: puts the network back and rolls PerRoute back even when PerRoute does not open.
 & $Csc /nologo /target:winexe /platform:x64 /optimize+ "/win32icon:$ProjectRoot\src\main\resources\icons\perroute.ico" "/win32manifest:$ProjectRoot\installer\recovery.manifest" "/out:$PackagedApp\PerRouteRecovery.exe" $CommonReferences '/reference:System.Web.Extensions.dll' (Join-Path $ProjectRoot 'installer\WindowsRecovery.cs')
 if ($LASTEXITCODE -ne 0) { throw 'Could not compile the PerRoute recovery tool.' }
 Set-Content -LiteralPath (Join-Path $PackagedApp 'perroute-version.txt') -Value $Version -NoNewline -Encoding ascii

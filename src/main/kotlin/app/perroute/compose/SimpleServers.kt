@@ -53,7 +53,6 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import app.perroute.model.ProxyNode
 
-/** Servers: the library in a card with tabs, tests and expandable rows, and the main server at the bottom. */
 @Composable
 internal fun SimpleServersPage(shell: Shell) {
     val model = serversModel(shell)
@@ -175,7 +174,7 @@ private fun SimpleServerRow(shell: Shell, model: ServersModel, node: ProxyNode, 
     val custom = rows.any { it.node.key() == node.key() && !it.main }
     val compact = LocalCompact.current
     SimpleTableRow(model.highlightedKey == node.key(), onClick = { model.highlightedKey = node.key() }, label = "Choose ${serverName(node)}") {
-        Row(Modifier.weight(1.6f), verticalAlignment = Alignment.CenterVertically) {
+        Row(Modifier.weight(1.6f).padding(end = 16.dp), verticalAlignment = Alignment.CenterVertically) {
             ServerAvatar(node, 46.dp)
             Spacer(Modifier.width(16.dp))
             Column(Modifier.weight(1f)) {
@@ -230,7 +229,6 @@ private fun SimpleServerRow(shell: Shell, model: ServersModel, node: ProxyNode, 
     }
 }
 
-/** Add servers in a dialog: the source, then the review with every server and every skipped link. */
 @Composable
 private fun SimpleImportDialog(shell: Shell, model: ServersModel, session: ImportSession) {
     val preview = session.preview

@@ -8,20 +8,10 @@ import java.util.concurrent.atomic.AtomicLong
 import java.util.concurrent.locks.ReentrantLock
 import kotlin.concurrent.withLock
 
-/** A live route to watch: its id, display name, server and the loopback port that leads into it. */
 data class RouteTarget(val id: String, val name: String, val nodeKey: String, val checkPort: Int)
 
-/** The outcome of one check through a route's own port. */
 data class RouteProbe(val ok: Boolean, val latencyMillis: Long, val detail: String, val startedAt: Long = 0L)
 
-/**
- * Watches every live route on its own and drives its recovery. Each route has a [RouteHealthTracker]; a check
- * only ever goes through that route's own port, so a failing route cannot make a healthy one look failed, and
- * recovery of one route never restarts the core or touches another route.
- *
- * With [continuous] off (the version 2 behavior, kept for migrated installations until the user turns
- * monitoring on) every route is checked once after connecting and again only when the user asks.
- */
 class RouteRecoveryManager(
     private val probe: (RouteTarget) -> RouteProbe,
     private val onResult: (RouteTarget, RouteProbe, RouteHealthTracker.Action, RouteHealthTracker.Snapshot) -> Unit,
@@ -44,7 +34,6 @@ class RouteRecoveryManager(
     @Volatile private var running = false
     private var loop: Thread? = null
 
-    /** Replaces the watched routes, for example after connecting. */
     fun start(targets: List<RouteTarget>, continuous: Boolean) {
         val now = clock()
         lock.withLock {
@@ -60,7 +49,6 @@ class RouteRecoveryManager(
         }
     }
 
-    /** A route moved to another server: it starts over with a fresh history, the others are untouched. */
     fun replace(target: RouteTarget) {
         lock.withLock {
             routes[target.id] = Watched(target, RouteHealthTracker(target.id, target.name, policy, clock()))

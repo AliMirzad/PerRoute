@@ -8,7 +8,6 @@ import java.util.Map;
 public final class AppRoutes {
     private AppRoutes() {}
 
-    /** Windows paths are case-insensitive, so assignments are keyed by the lower-cased absolute path. */
     public static String normalize(String applicationPath) {
         if (applicationPath == null || applicationPath.isBlank()) return "";
         String text = applicationPath.trim();

@@ -5,14 +5,6 @@ import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 
-/**
- * What PerRoute has learned about one subscription across its updates. It is stored by a hash of the URL, so the
- * file never contains the subscription link itself (the link is a credential).
- *
- * @param duplicatesWithin   servers the provider listed more than once in the last update
- * @param duplicatesElsewhere servers of the last update that another source already provides; they are kept once
- * @param sharedEndpoints    servers of this subscription that share an address and port with another saved server
- */
 public record SubscriptionInsight(
         String title,
         SubscriptionUserInfo userInfo,
@@ -43,7 +35,6 @@ public record SubscriptionInsight(
 
     public SubscriptionChange lastChange() { return history.isEmpty() ? null : history.get(history.size() - 1); }
 
-    /** A successful update with what it found. Usage and title are kept when this response does not carry them. */
     public SubscriptionInsight succeeded(long at, String title, SubscriptionUserInfo info, int intervalHours, int servers,
                                          int within, int elsewhere, int shared, SubscriptionChange change) {
         List<SubscriptionChange> next = new ArrayList<>(history);

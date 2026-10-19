@@ -29,16 +29,6 @@ import java.util.Set;
 import java.util.UUID;
 import java.util.function.Predicate;
 
-/**
- * Builds portable backups and restores them. Building and planning a restore are pure: they read a state and
- * return new data without changing anything. Committing the result is the caller's job, which lets it be done
- * atomically with a rollback snapshot (see {@code PerRouteController.restoreBackup}).
- *
- * <p>Payload schema 1 (JSON): {@code schema}, {@code sections}, {@code subscriptions}, {@code servers} (with
- * source, favorite, hidden and tag), {@code selectedServer}, {@code apps} (paths, advanced, routes, labels,
- * auto, pools, bandwidth), {@code rules}, {@code profiles}, {@code activeProfile} and {@code preferences}.
- * Older schemas are migrated in {@link #migrate}; newer ones are refused.
- */
 public final class BackupService {
     public static final int SCHEMA = 1;
     public static final String MANUAL_SOURCE = "__manual__";
@@ -63,21 +53,17 @@ public final class BackupService {
 
     public enum Compatibility { COMPATIBLE, MIGRATED }
 
-    /** An executable named in the backup that does not exist on this computer. */
     public record PathIssue(String originalPath, String suggestion) {}
 
     public record Counts(int subscriptions, int servers, int applications, int rules, int profiles, int preferences) {}
 
-    /** Everything a restore would do, computed before anything changes. */
     public record RestorePreview(BackupCodec.Header header, Compatibility compatibility, Set<Section> sections, Counts counts,
                                  List<PathIssue> missingPaths, int serversAlreadyPresent, int profilesWithSameName,
                                  List<String> warnings, Payload payload) {}
 
-    /** The new state and preferences a restore produces, and a description of the changes. */
     public record Plan(AppState state, Map<String, String> preferences, ConnectionMode connectionMode,
                        RoutingMode routingMode, List<String> summary, int skippedApplications) {}
 
-    /** A validated, migrated backup payload. */
     public static final class Payload {
         final Set<Section> sections = EnumSet.noneOf(Section.class);
         final List<String> subscriptions = new ArrayList<>();
@@ -104,9 +90,6 @@ public final class BackupService {
 
     private BackupService() {}
 
-    // ------------------------------------------------------------------ export
-
-    /** Serializes the chosen sections of {@code state}. Preferences are the caller's whitelisted values. */
     public static byte[] payload(AppState state, Map<String, String> preferences, Set<Section> sections) {
         Map<String, Object> root = new LinkedHashMap<>();
         root.put("schema", SCHEMA);
@@ -165,12 +148,6 @@ public final class BackupService {
         return BackupCodec.encode(payload(state, preferences, sections), SCHEMA, application, now, password);
     }
 
-    // ------------------------------------------------------------------ preview
-
-    /**
-     * Opens and validates a backup and describes what restoring it would do. {@code exists} decides whether an
-     * executable is present on this computer; {@code knownExecutables} are used to suggest replacements.
-     */
     public static RestorePreview preview(byte[] file, char[] password, AppState current,
                                          Predicate<String> exists, Collection<String> knownExecutables)
             throws BackupCodec.BackupException {
@@ -209,7 +186,6 @@ public final class BackupService {
                 List.copyOf(missing), present, sameName, List.copyOf(warnings), payload);
     }
 
-    /** Every executable the backup refers to, by its original spelling, without duplicates. */
     static List<String> referencedApplications(Payload payload) {
         Map<String, String> seen = new LinkedHashMap<>();
         payload.applications.forEach(path -> seen.putIfAbsent(AppRoutes.normalize(path), path));
@@ -222,13 +198,6 @@ public final class BackupService {
         return List.copyOf(seen.values());
     }
 
-    // ------------------------------------------------------------------ plan
-
-    /**
-     * Computes the restored state from a copy of the current one. {@code remap} maps an original executable path
-     * (any spelling) to its replacement; an empty replacement skips that application. Executables that are still
-     * missing after remapping are skipped too, so nothing points at a file that does not exist.
-     */
     public static Plan plan(RestorePreview preview, AppState copyOfCurrent, Map<String, String> currentPreferences,
                             Mode mode, Map<String, String> remap, Predicate<String> exists) {
         Payload payload = preview.payload();
@@ -245,7 +214,6 @@ public final class BackupService {
             return Path.of(target).toAbsolutePath().normalize().toString();
         };
 
-        // Servers: keys from the backup are mapped to the key an identical saved server already has.
         Map<String, String> keyMap = new HashMap<>();
         boolean replace = mode == Mode.REPLACE;
         boolean subscriptions = payload.sections.contains(Section.SUBSCRIPTIONS);
@@ -308,7 +276,6 @@ public final class BackupService {
                 state.bandwidthPolicies().clear();
                 state.setAdvancedRouting(payload.advanced);
             }
-            // Merge keeps every routing choice the user already made; only apps without one take the backup's.
             Set<String> alreadyRouted = new HashSet<>(state.appRoutes().keySet());
             alreadyRouted.addAll(state.autoApps());
             int apps = 0;
@@ -411,8 +378,6 @@ public final class BackupService {
                 summary.add("Kept your current preferences (Merge never overwrites settings).");
             }
         }
-        // Server keys that no longer exist cannot be honoured; they stay visible as needing a replacement,
-        // exactly like an assignment whose server left a subscription.
         if (!skipped.isEmpty()) summary.add("Skipped " + skipped.size() + " apps that are not on this computer.");
         return new Plan(state, preferences, connectionMode, routingMode, List.copyOf(summary), skipped.size());
     }
@@ -421,8 +386,6 @@ public final class BackupService {
         return String.join("\u0000", rule.name(), AppRoutes.normalize(rule.applicationPath()), rule.matchType().name(),
                 rule.value(), rule.action().name());
     }
-
-    // ------------------------------------------------------------------ reading
 
     static Payload read(byte[] plain, int schema, List<String> warnings) throws BackupCodec.BackupException {
         Map<String, Object> root;
@@ -502,10 +465,8 @@ public final class BackupService {
         return payload;
     }
 
-    /** Brings an older payload up to the current schema. Schema 1 is the first; future versions add steps here. */
     static Map<String, Object> migrate(Map<String, Object> root, int schema) {
         Map<String, Object> current = root;
-        // if (schema < 2) current = migrateOneToTwo(current);
         return current;
     }
 
@@ -536,7 +497,6 @@ public final class BackupService {
         catch (RuntimeException invalid) { return ""; }
     }
 
-    /** True when the path names an existing file. */
     public static boolean executableExists(String path) {
         try { return path != null && !path.isBlank() && Files.isRegularFile(Path.of(path)); }
         catch (RuntimeException invalid) { return false; }

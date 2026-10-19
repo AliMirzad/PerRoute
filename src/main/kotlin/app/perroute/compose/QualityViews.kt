@@ -28,7 +28,6 @@ import androidx.compose.ui.unit.sp
 import app.perroute.quality.QualityLabel
 import app.perroute.quality.QualityScore
 
-/** The colour of a quality label. Every use also shows the label as text, never colour alone. */
 @Composable
 internal fun qualityColor(score: QualityScore?): Color = when (score?.label()) {
     QualityLabel.EXCELLENT, QualityLabel.GOOD -> Cyan
@@ -37,10 +36,6 @@ internal fun qualityColor(score: QualityScore?): Color = when (score?.label()) {
     else -> Muted
 }
 
-/**
- * "92 Excellent", "Unknown" or "0 Unavailable", with freshness and confidence in the tooltip. New draws signal bars
- * before the number, Simple a dot. An unmeasured server has no number: it is never given a score.
- */
 @Composable
 internal fun QualityPill(score: QualityScore?, modifier: Modifier = Modifier, compact: Boolean = false, fontSize: TextUnit = if (compact) 11.sp else 12.sp) {
     val color = qualityColor(score)
@@ -77,7 +72,6 @@ internal fun QualityPill(score: QualityScore?, modifier: Modifier = Modifier, co
     }
 }
 
-/** The confidence of a score as a percentage. */
 @Composable
 internal fun ConfidenceBadge(score: QualityScore?) {
     val percent = score?.takeIf { it.label() != QualityLabel.UNKNOWN }?.confidencePercent()
@@ -94,7 +88,6 @@ internal fun ConfidenceBadge(score: QualityScore?) {
     }
 }
 
-/** The measured parts of one server's score, each a label and a value; missing parts say so instead of guessing. */
 internal fun qualityMetrics(score: QualityScore?, speed: String?): List<Pair<String, String>> {
     val parts = score?.components()
     val measured = score != null && score.label() != QualityLabel.UNKNOWN
@@ -111,7 +104,6 @@ internal fun qualityMetrics(score: QualityScore?, speed: String?): List<Pair<Str
     )
 }
 
-/** The metrics of a score as label/value lines, in one or two columns. */
 @Composable
 internal fun QualityMetricList(score: QualityScore?, speed: String?, columns: Int = 1, labelWidth: Dp = 120.dp) {
     val metrics = qualityMetrics(score, speed)
@@ -124,7 +116,6 @@ internal fun QualityMetricList(score: QualityScore?, speed: String?, columns: In
     }
 }
 
-/** The headline and explanation of a score: what it is based on and how sure it is. */
 @Composable
 internal fun QualityExplanation(score: QualityScore?) {
     if (score == null || score.label() == QualityLabel.UNKNOWN) {
@@ -139,7 +130,6 @@ internal fun QualityExplanation(score: QualityScore?) {
     }
 }
 
-/** A short line naming what quality data a decision used. */
 internal fun qualitySummary(score: QualityScore?): String = when {
     score == null || score.label() == QualityLabel.UNKNOWN -> "Not measured yet"
     score.label() == QualityLabel.UNAVAILABLE -> "Unavailable"

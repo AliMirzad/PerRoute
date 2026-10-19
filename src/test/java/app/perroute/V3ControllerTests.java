@@ -36,14 +36,12 @@ import java.util.Set;
 import java.util.concurrent.CopyOnWriteArrayList;
 import java.util.prefs.Preferences;
 
-/** Version 3 behavior of the controller, against the fake machine: no core, driver or proxy setting is touched. */
 final class V3ControllerTests {
     private static int assertions;
     private V3ControllerTests() {}
 
     static int assertions() { return assertions; }
 
-    /** Fast recovery for tests: retries after 100 and 200 ms, three attempts, a rebuild on the second. */
     static final RouteHealthTracker.Policy FAST = new RouteHealthTracker.Policy(60_000L, 100L, 200L, 3, 2, 1_000L);
 
     static void runAll() throws Exception {
@@ -63,6 +61,7 @@ final class V3ControllerTests {
         run("V3: rule precedence with Auto routes", false, V3ControllerTests::testRulePrecedence);
         run("V3: removed Auto server is re-decided", false, V3ControllerTests::testRemovedAutoServer);
         run("UI: the interface style is its own preference", false, V3ControllerTests::testUiStylePreference);
+        run("V3: an updated Store app keeps its route", false, V3ControllerTests::testUpdatedStoreApp);
     }
 
     @FunctionalInterface private interface CheckedTest { void run(Fixture fixture) throws Exception; }
@@ -128,7 +127,6 @@ final class V3ControllerTests {
                     .findFirst().orElse(null);
         }
 
-        /** The Auto server saved on disk; saving is asynchronous, so callers wait for it. */
         String savedSelection(String path) {
             try {
                 var selection = store.load().autoSelections().get(AppRoutes.normalize(path));
@@ -159,8 +157,6 @@ final class V3ControllerTests {
         return new ProxyNode(key, host, Protocol.VLESS, "127.0.0.1", 9, host, Map.of(), "");
     }
 
-    // ------------------------------------------------------------------ Auto
-
     private static void testAutoRoute(Fixture f) throws Exception {
         f.good(f.second, 15);
         f.good(f.third, 120);
@@ -182,7 +178,6 @@ final class V3ControllerTests {
         waitFor(() -> "second".equals(f.savedSelection(f.telegram)));
         f.controller.disconnect();
 
-        // A slightly better server is not worth leaving a working route for.
         f.good(f.third, 14);
         check(f.controller.connect().getOk(), "Reconnect");
         equal("second", f.autoRoute(f.telegram).getNode().key());
@@ -279,7 +274,6 @@ final class V3ControllerTests {
         check(f.controller.switchNode("main").getOk(), "Switch back");
         equal("proxy", f.backend.runtimeChanges.get(1)[0]);
         equal("proxy~1", f.backend.runtimeChanges.get(1)[1]);
-        // The custom server becoming main changes which apps share which route: that needs a restart.
         check(f.controller.switchNode("second").getOk(), "Switch to the custom server");
         equal(starts + 1, f.backend.startCount);
         equal(2, f.backend.runtimeChanges.size());
@@ -309,7 +303,6 @@ final class V3ControllerTests {
         waitFor(() -> f.health("second") != null && f.health("second").state() == RouteHealthTracker.State.FAILED);
         f.backend.failingPorts.clear();
 
-        // The failed custom route moves to another server in place; the Apps screen is locked while connected.
         int changes = f.backend.runtimeChanges.size();
         check(f.controller.changeRouteServer("second", "third").getOk(), "Change the failed route's server");
         check(f.controller.isConnected(), "Still connected");
@@ -323,13 +316,11 @@ final class V3ControllerTests {
         equal("main", f.controller.activeRoutes().get(0).getNode().key());
         waitFor(() -> "third".equals(savedRoute(f, f.chrome)));
 
-        // Moving it onto the main server merges two routes, which needs a restart.
         check(f.controller.changeRouteServer("third", "main").getOk(), "Move onto the main server");
         equal(starts + 1, f.backend.startCount);
         check(f.controller.isConnected(), "Still connected after the restart");
         equal(Map.of(AppRoutes.normalize(f.chrome), "main"), f.controller.appRoutes());
 
-        // An Auto route is pinned to the chosen server in place.
         String autoId = f.autoRoute(f.telegram).getId();
         check(f.controller.changeRouteServer(autoId, "second").getOk(), "Change the Auto route's server");
         equal("second", f.autoRoute(f.telegram).getNode().key());
@@ -346,8 +337,6 @@ final class V3ControllerTests {
         try { return f.store.load().appRoutes().get(AppRoutes.normalize(path)); }
         catch (IOException e) { return null; }
     }
-
-    // ------------------------------------------------------------------ gateway and bandwidth
 
     private static void testGatewayAndLimits(Fixture f) throws Exception {
         check(f.controller.trafficGateway(), "A fresh installation starts with the gateway on");
@@ -371,7 +360,6 @@ final class V3ControllerTests {
         equal(250_000L, limit[1]);
         equal(BandwidthState.ENFORCED, f.controller.bandwidthStatus(f.telegram).getState());
 
-        // The app pushes past its limit: the status says so, from the gateway's own counters.
         Thread pump = Thread.ofVirtual().start(() -> {
             long down = 0;
             while (!Thread.currentThread().isInterrupted()) {
@@ -457,8 +445,6 @@ final class V3ControllerTests {
         check(!f.controller.isConnected(), "The crash is noticed");
     }
 
-    // ------------------------------------------------------------------ inspector
-
     private static void testInspector(Fixture f) throws Exception {
         f.controller.setTrafficGateway(false);
         f.controller.addRule("News direct", "", RouteRule.MatchType.DOMAIN, "news.example", RouteRule.Action.DIRECT);
@@ -497,8 +483,6 @@ final class V3ControllerTests {
         equal(0, f.controller.inspectorRows().size());
     }
 
-    // ------------------------------------------------------------------ backup
-
     private static void testBackupRestore(Fixture f) throws Exception {
         f.controller.addRule("Keep", "", RouteRule.MatchType.DOMAIN, "keep.example", RouteRule.Action.PROXY);
         f.setup(Map.of(f.chrome, "second"), Set.of(f.telegram));
@@ -535,7 +519,6 @@ final class V3ControllerTests {
         equal(0, f.controller.rules().size());
         check(!f.controller.hasRestoreSnapshot(), "The snapshot is used up");
 
-        // A failure while writing puts everything back.
         Path blocker = f.directory.resolve("data").resolve("state.bin.tmp");
         Files.createDirectories(blocker);
         Files.writeString(blocker.resolve("keep"), "x");
@@ -545,8 +528,6 @@ final class V3ControllerTests {
         equal(0, f.controller.rules().size());
         V3DomainTests.deleteTree(blocker);
     }
-
-    // ------------------------------------------------------------------ routing rules and subscriptions
 
     @SuppressWarnings("unchecked")
     private static void testRulePrecedence(Fixture f) {
@@ -576,8 +557,6 @@ final class V3ControllerTests {
         f.setup(Map.of(), Set.of(f.telegram));
         check(f.controller.connect().getOk(), "Connect");
         equal("second", f.autoRoute(f.telegram).getNode().key());
-        // The first check of every route is what gives the main server its quality evidence; it runs in the
-        // background, so the test waits for it instead of depending on how fast this machine is.
         waitFor(() -> f.controller.routeHealth().stream().allMatch(view -> view.getHealth() != null
                 && view.getHealth().state() == app.perroute.routing.RouteHealthTracker.State.HEALTHY));
         f.controller.disconnect();
@@ -588,15 +567,28 @@ final class V3ControllerTests {
         check(f.controller.autoDecision(f.telegram).getDecision().explanation().contains("no longer available"), f.controller.autoDecision(f.telegram).getDecision().explanation());
     }
 
-    // ------------------------------------------------------------------ helpers
-
     private static void waitFor(java.util.function.BooleanSupplier condition) throws InterruptedException {
         long deadline = System.currentTimeMillis() + 10_000;
         while (!condition.getAsBoolean() && System.currentTimeMillis() < deadline) Thread.sleep(20);
         check(condition.getAsBoolean(), "Timed out waiting for a condition");
     }
 
-    /** The interface design is its own preference: New when unset, kept across restarts, independent of everything else. */
+    private static void testUpdatedStoreApp(Fixture f) throws Exception {
+        Path installed = f.directory.resolve("WindowsApps").resolve("Example.Chat_2.0.0.0_x64__pub0example01").resolve("app").resolve("Chat.exe");
+        Files.createDirectories(installed.getParent());
+        Files.writeString(installed, "test");
+        String saved = f.directory.resolve("WindowsApps").resolve("Example.Chat_1.0.0.0_x64__pub0example01").resolve("app").resolve("Chat.exe").toString();
+        check(f.controller.saveApplicationSetup(List.of(f.chrome, saved), Map.of(), false).getOk(), "Save the selection");
+        f.backend.installed = List.of(new app.perroute.service.InstalledApplicationDiscovery.InstalledApplication("Chat", installed.toString()));
+        check(f.controller.connect().getOk(), "Connect");
+        check(f.backend.perAppApplications.contains(installed.toString()), "The engine routes the installed version: " + f.backend.perAppApplications);
+        check(!f.backend.perAppApplications.contains(saved), "The old folder is not given to the engine");
+        check(f.backend.perAppApplications.contains(f.chrome), "Other apps are untouched");
+        check(f.controller.applications().contains(saved), "The saved selection keeps its path");
+        check(f.logs.stream().anyMatch(line -> line.contains("updated by the Microsoft Store")), "The change is logged");
+        f.controller.disconnect();
+    }
+
     private static void testUiStylePreference(Fixture f) throws Exception {
         equal("new", f.controller.uiStyle());
         f.controller.setDarkTheme(false);
@@ -611,7 +603,6 @@ final class V3ControllerTests {
         f.controller.setDarkTheme(true);
         equal("simple", f.controller.uiStyle());
 
-        // A restart reads the saved choice from the same preferences.
         try (PerRouteController restarted = new PerRouteController(f.state, f.store, f.backend, f.preferences, FAST, 60_000L)) {
             equal("simple", restarted.uiStyle());
         }
@@ -621,7 +612,6 @@ final class V3ControllerTests {
         f.controller.setUiStyle("unknown");
         equal("new", f.preferences.get(PerRouteController.PREF_UI_STYLE, ""));
 
-        // Backups carry the theme but not the design, so restoring one never changes how the window looks.
         f.controller.setUiStyle("simple");
         Path file = f.directory.resolve("style.prb");
         check(f.controller.exportBackup(file, EnumSet.allOf(BackupService.Section.class), null).getOk(), "Export");

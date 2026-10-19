@@ -10,40 +10,28 @@ import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 
-/** Resolves which server every selected application actually uses. */
 public final class RoutePlanner {
     private RoutePlanner() {}
 
-    /** Why an assignment cannot be honoured: its server was removed, or Auto has no server to offer. */
     public enum Problem { REMOVED, NO_SERVER }
 
-    /** Prefix of the route id of an application in Auto mode; the rest is its normalized path. */
     public static final String AUTO_ROUTE_PREFIX = "auto:";
-    /** Prefix of the route id of an application on a temporary server; the rest is its normalized path. */
     public static final String TEMPORARY_ROUTE_PREFIX = "temp:";
 
-    /**
-     * One route in use, with the applications that follow it. Main and Manual routes are shared by every
-     * application on the same server and identified by the server key. Every application in Auto mode has a
-     * route of its own, so its server can change without touching anyone else's.
-     */
     public record Route(ProxyNode node, boolean main, List<String> applications, boolean auto, String id) {
         public Route(ProxyNode node, boolean main, List<String> applications) {
             this(node, main, applications, false, node.key());
         }
 
-        /** A temporary route: one application on a server for a limited time, on a route of its own. */
         public boolean temporary() { return id.startsWith(TEMPORARY_ROUTE_PREFIX); }
     }
 
-    /** An assignment that is in effect but cannot be honoured. */
     public record MissingRoute(String applicationPath, String nodeKey, String label, Problem problem) {}
 
     public record Plan(ProxyNode main, List<String> applications, boolean advancedEffective,
                        List<ProxyNode> applicationNodes, List<Route> routes, List<MissingRoute> missing) {
         public boolean ready() { return missing.isEmpty(); }
 
-        /** The effective server of an application, or null when it is unselected or unresolved. */
         public ProxyNode nodeFor(String applicationPath) {
             String wanted = AppRoutes.normalize(applicationPath);
             for (int index = 0; index < applications.size(); index++) {
@@ -52,7 +40,6 @@ public final class RoutePlanner {
             return null;
         }
 
-        /** The route an application follows, or null. */
         public Route routeFor(String applicationPath) {
             String wanted = AppRoutes.normalize(applicationPath);
             for (Route route : routes) {
@@ -70,26 +57,12 @@ public final class RoutePlanner {
         return plan(nodes, mainKey, applications, advancedRouting, appRoutes, labels, mode, Map.of());
     }
 
-    /**
-     * Assignments only take effect when Advanced routing is on and the mode is Smart per-app. In every other
-     * case they are kept but ignored, so an unresolved one cannot block a standard connection.
-     *
-     * @param autoChoices the server Auto chose for each application in Auto mode, by normalized path; an empty
-     *                    value means Auto found no server, which blocks the connection rather than letting the
-     *                    application fall back to the direct route
-     */
     public static Plan plan(List<ProxyNode> nodes, String mainKey, List<String> applications,
                             boolean advancedRouting, Map<String, String> appRoutes,
                             Map<String, String> labels, ConnectionMode mode, Map<String, String> autoChoices) {
         return plan(nodes, mainKey, applications, advancedRouting, appRoutes, labels, mode, autoChoices, Map.of());
     }
 
-    /**
-     * @param temporary a server chosen for a limited time, by normalized path. It applies in Smart per-app mode
-     *                  whether or not Advanced routing is on, takes precedence over the app's own mode and gives
-     *                  the app a route of its own. A temporary server that no longer exists is ignored: the app
-     *                  simply keeps its usual route, and nothing is blocked.
-     */
     public static Plan plan(List<ProxyNode> nodes, String mainKey, List<String> applications,
                             boolean advancedRouting, Map<String, String> appRoutes,
                             Map<String, String> labels, ConnectionMode mode, Map<String, String> autoChoices,
@@ -159,7 +132,6 @@ public final class RoutePlanner {
                 List.copyOf(routes), List.copyOf(missing));
     }
 
-    /** Every saved server can be a per-app choice, embedded Xray profiles included. */
     public static boolean selectableAsCustom(ProxyNode node) {
         return node != null;
     }

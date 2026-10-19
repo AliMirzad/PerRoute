@@ -1,12 +1,7 @@
 package app.perroute.model;
 
-/**
- * Download and upload limits of one application, in bits per second. Zero means unlimited. The limit is
- * the application's total across all of its connections.
- */
 public record BandwidthPolicy(long downloadBitsPerSecond, long uploadBitsPerSecond) {
     public static final BandwidthPolicy UNLIMITED = new BandwidthPolicy(0L, 0L);
-    /** Below this a limit would make most applications unusable, so it is not accepted. */
     public static final long MIN_BITS_PER_SECOND = 64_000L;
     public static final long MAX_BITS_PER_SECOND = 100_000_000_000L;
 

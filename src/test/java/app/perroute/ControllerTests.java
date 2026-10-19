@@ -33,7 +33,6 @@ import java.util.function.Consumer;
 import java.util.prefs.AbstractPreferences;
 import java.util.prefs.Preferences;
 
-/** Connection logic of the controller, run against a fake machine: no Xray, driver or proxy setting is touched. */
 final class ControllerTests {
     private static int assertions;
     private ControllerTests() {}
@@ -63,7 +62,12 @@ final class ControllerTests {
         f.controller.setNodeTag("third", "gaming");
         f.controller.setDarkTheme(false);
         f.controller.setKillSwitch(true);
+        equal(app.perroute.service.SecureUpdateService.OFFICIAL_FEED, f.controller.effectiveUpdateFeed());
+        check(f.controller.autoUpdate(), "Updates are automatic by default");
+        check(f.controller.setAutoUpdate(false).getOk() && !f.controller.autoUpdate(), "Automatic updates can be turned off");
+        equal(null, f.controller.updateReadyVersion());
         f.controller.setUpdateFeedUrl("https://updates.example/update.json");
+        equal("https://updates.example/update.json", f.controller.effectiveUpdateFeed());
 
         check(f.controller.connect().getOk(), "Connect");
         check(!f.controller.resetAll().getOk(), "A reset must be refused while connected");
@@ -87,6 +91,8 @@ final class ControllerTests {
         check(f.controller.isDarkTheme() && !f.controller.killSwitch() && f.controller.autoReconnect() && f.controller.autoFailover()
                 && !f.controller.fastestOnConnect() && f.controller.autoSpeedTest(), "Every preference must return to its default");
         equal("", f.controller.updateFeedUrl());
+        check(f.controller.autoUpdate(), "A reset turns automatic updates back on");
+        equal(app.perroute.service.SecureUpdateService.OFFICIAL_FEED, f.controller.effectiveUpdateFeed());
         equal(0L, f.controller.trafficReport("").monthDownloadBytes());
         check(!f.controller.connect().getOk(), "Nothing is left to connect to");
 
@@ -148,7 +154,6 @@ final class ControllerTests {
         finally { fixture.close(); }
     }
 
-    /** A controller with three servers and three applications in Smart per-app mode. */
     private static final class Fixture {
         final Path directory;
         final FakeBackend backend = new FakeBackend();
@@ -191,8 +196,6 @@ final class ControllerTests {
             backend.release();
             controller.close();
             System.clearProperty("perroute.data");
-            // Background writers (the state saver, the history store) can still create a file while the
-            // folder is being removed, so a few attempts are made before giving up.
             for (int attempt = 1; ; attempt++) {
                 try (var files = Files.walk(directory)) {
                     for (Path file : files.sorted(Comparator.reverseOrder()).toList()) Files.deleteIfExists(file);
@@ -206,7 +209,6 @@ final class ControllerTests {
     }
 
     private static ProxyNode server(String key, String host) {
-        // The host doubles as the credential so a generated config can be recognised by the server it carries.
         return new ProxyNode(key, host, Protocol.VLESS, "127.0.0.1", 9, host, Map.of(), "");
     }
 
@@ -334,7 +336,6 @@ final class ControllerTests {
         check(!f.backend.lastConfig.contains("perroute-route-0"), "Standard routing must use Main only");
         f.controller.disconnect();
 
-        // A server Xray rejects must be named, together with the app that uses it.
         f.controller.setAdvancedRouting(true);
         check(f.assign(Map.of(f.chrome, "third"), true).getOk(), "A replacement can be saved");
         f.backend.rejectValidation = "third.example";
@@ -414,7 +415,6 @@ final class ControllerTests {
         check(!f.controller.advancedRouting(), "A standard profile must turn Advanced off");
         equal(Map.of(AppRoutes.normalize(f.telegram), "third"), f.controller.appRoutes());
 
-        // A profile from before Advanced routing: it turns the feature off but must not erase assignments.
         f.state.profiles().add(new app.perroute.model.ConnectionProfile("legacy", "Legacy",
                 List.of(f.chrome), "main", ConnectionMode.NATIVE_PER_APP, List.of()));
         f.assign(Map.of(f.chrome, "second"), true);
@@ -438,7 +438,6 @@ final class ControllerTests {
         f.assign(Map.of(f.chrome, "sub-2"), true);
         f.controller.toggleFavorite("sub-2");
 
-        // A refresh hands out new raw keys and names for the same servers.
         ProxyNode oneAgain = new ProxyNode("fresh-1", "Sub One (renamed)", Protocol.VLESS, "127.0.0.1", 9, "sub-id-1", Map.of(), "");
         ProxyNode twoAgain = new ProxyNode("fresh-2", "Sub Two (renamed)", Protocol.VLESS, "127.0.0.1", 9, "sub-id-2", Map.of(), "");
         check(f.controller.commitImport(new ImportPreview(url, true, new ParseResult(List.of(oneAgain, twoAgain), List.of()), List.of(), 0)).getOk(),
@@ -449,7 +448,6 @@ final class ControllerTests {
         equal("sub-2", f.controller.routePlan(false).nodeFor(f.chrome).key());
         check(f.controller.isFavorite("sub-2"), "Favorites must follow the same mapping");
 
-        // The provider dropped the assigned server.
         check(f.controller.commitImport(new ImportPreview(url, true, new ParseResult(List.of(oneAgain), List.of()), List.of(), 0)).getOk(),
                 "Subscription without the assigned server");
         equal(Map.of(AppRoutes.normalize(f.chrome), "sub-2"), f.controller.appRoutes());
@@ -587,13 +585,10 @@ final class ControllerTests {
         final List<Consumer<String>> logListeners = new java.util.concurrent.CopyOnWriteArrayList<>();
         volatile int applyPerAppCount, restorePerAppCount;
 
-        /** Feeds a line as if the core had written it. */
         void emit(String line) { logListeners.forEach(listener -> listener.accept(line)); }
 
-        /** The core exits on its own. */
         void crash() { running = false; runningListeners.forEach(listener -> listener.accept(false)); }
 
-        // Runtime changes: off by default, so version 2 tests see the restart path exactly as before.
         volatile boolean supportsRuntimeChange;
         volatile String failRuntimeChange;
         final List<String[]> runtimeChanges = new java.util.concurrent.CopyOnWriteArrayList<>();
@@ -626,7 +621,6 @@ final class ControllerTests {
         @Override public void applySystemProxy() { machineCalls.add("applySystemProxy"); }
         @Override public void restoreSystemProxy() { machineCalls.add("restoreSystemProxy"); }
 
-        // 3.5: what the newer features ask of the machine, recorded so tests can see exactly what was done.
         final List<String> machineCalls = new java.util.concurrent.CopyOnWriteArrayList<>();
         final Map<String, String> networkValues = new java.util.concurrent.ConcurrentHashMap<>();
         volatile boolean supportsRuntimePlan;
@@ -663,17 +657,16 @@ final class ControllerTests {
             if (socksPort != null && failingPorts.contains(socksPort)) {
                 return new app.perroute.compose.RouteReport(null, null, "The proxy could not reach www.cloudflare.com");
             }
-            // Documentation addresses, one per route, so a mixed-up result would be visible.
             return new app.perroute.compose.RouteReport(socksPort == null ? "198.51.100.24" : "203.0.113." + (socksPort % 250), "ZZ", null);
         }
         @Override public List<String> systemDnsServers() { return List.of("192.0.2.53"); }
         @Override public String publicResolver() { return "192.0.2.54"; }
-        @Override public List<app.perroute.service.InstalledApplicationDiscovery.InstalledApplication> installedApplications() { return List.of(); }
+        volatile List<app.perroute.service.InstalledApplicationDiscovery.InstalledApplication> installed = List.of();
+        @Override public List<app.perroute.service.InstalledApplicationDiscovery.InstalledApplication> installedApplications() { return installed; }
         @Override public List<app.perroute.service.ProcessDiscovery.RunningApplication> runningApplications() { return List.of(); }
         final List<Integer> lookups = new java.util.concurrent.CopyOnWriteArrayList<>();
     }
 
-    /** Keeps settings in memory so tests never read or write the user's real preferences. */
     static final class MemoryPreferences extends AbstractPreferences {
         private final Map<String, String> values = new LinkedHashMap<>();
         MemoryPreferences() { super(null, ""); }

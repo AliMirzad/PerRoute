@@ -18,25 +18,17 @@ public final class XrayConfigGenerator {
     public static final int STATS_API_PORT = 17900 + PortOffset.VALUE;
     public static final int PER_APP_PORT_BASE = 18100 + PortOffset.VALUE;
     public static final int ROUTE_CHECK_PORT_BASE = 18600 + PortOffset.VALUE;
-    /**
-     * With the traffic gateway, the per-app driver still uses {@link #PER_APP_PORT_BASE} (the gateway listens
-     * there) and Xray's per-app inbounds move to this base.
-     */
     public static final int GATEWAY_UPSTREAM_PORT_BASE = 19100 + PortOffset.VALUE;
-    /** Tag of the main server's outbound for plain (non-profile) main servers. */
     public static final String MAIN_OUTBOUND_TAG = "proxy";
+    public static final String QUIC_BLOCK_RULE = "perroute-block-quic";
 
     private final int appPortBase;
     private final boolean runtimeControl;
-    /** Local network handling (see {@link #withLocalNetwork}); off unless the controller asks for it. */
     private boolean localNamesDirect;
     private List<String> localAllowed = List.of();
     private List<String> localBlocked = List.of();
+    private boolean quicBlocked;
 
-    /**
-     * Sends local names straight to the local network, and blocks the ranges of networks that are not trusted
-     * except {@code allowed} (their router and DNS servers). Returns this generator.
-     */
     public XrayConfigGenerator withLocalNetwork(boolean namesDirect, List<String> allowed, List<String> blocked) {
         this.localNamesDirect = namesDirect;
         this.localAllowed = allowed == null ? List.of() : List.copyOf(allowed);
@@ -44,10 +36,11 @@ public final class XrayConfigGenerator {
         return this;
     }
 
-    /**
-     * The rules that come before everything else: the router and DNS servers of an untrusted network stay
-     * reachable, the rest of that network is blocked, private addresses stay direct, and so do local names.
-     */
+    public XrayConfigGenerator withQuicBlocked(boolean blocked) {
+        this.quicBlocked = blocked;
+        return this;
+    }
+
     private List<Object> localRules(String directTag, String blockTag) {
         List<Object> rules = new ArrayList<>();
         if (!localBlocked.isEmpty()) {
@@ -57,6 +50,7 @@ public final class XrayConfigGenerator {
         rules.add(Map.of("type", "field", "ip", List.of("geoip:private"), "outboundTag", directTag, "ruleTag", "perroute-private-direct"));
         if (localNamesDirect) rules.add(Map.of("type", "field", "domain", app.perroute.localnet.LocalNetworkPolicy.LOCAL_NAME_RULES,
                 "outboundTag", directTag, "ruleTag", "perroute-local-names"));
+        if (quicBlocked) rules.add(Map.of("type", "field", "network", "udp", "port", "443", "outboundTag", blockTag, "ruleTag", QUIC_BLOCK_RULE));
         return rules;
     }
 
@@ -64,10 +58,6 @@ public final class XrayConfigGenerator {
 
     public XrayConfigGenerator(int appPortBase) { this(appPortBase, false); }
 
-    /**
-     * @param appPortBase    first loopback port of the per-app inbounds: {@link #PER_APP_PORT_BASE} or {@link #GATEWAY_UPSTREAM_PORT_BASE}
-     * @param runtimeControl also enable the core's handler and routing API, which in-place route changes need
-     */
     public XrayConfigGenerator(int appPortBase, boolean runtimeControl) {
         if (appPortBase != PER_APP_PORT_BASE && appPortBase != GATEWAY_UPSTREAM_PORT_BASE) {
             throw new IllegalArgumentException("Unsupported per-app port base " + appPortBase);
@@ -94,10 +84,6 @@ public final class XrayConfigGenerator {
         return generateApplicationProxy(node, applicationPaths, routeRules, List.of());
     }
 
-    /**
-     * @param applicationNodes the effective server of every application, parallel to {@code applicationPaths}.
-     *                         Empty, or a null entry, means the application follows the main server.
-     */
     public String generateApplicationProxy(ProxyNode node, List<String> applicationPaths,
                                            List<app.perroute.model.RouteRule> routeRules,
                                            List<ProxyNode> applicationNodes) {
@@ -129,20 +115,13 @@ public final class XrayConfigGenerator {
         return Json.stringify(root) + System.lineSeparator();
     }
 
-    /** Keys of the distinct custom servers, in the order used for outbound tags and check ports. */
     public static List<String> customRouteKeys(ProxyNode main, List<String> applicationPaths, List<ProxyNode> applicationNodes) {
         List<String> apps = applicationPaths == null ? List.of() : applicationPaths;
         return RouteLayout.of(main, apps, applicationNodes).customs().stream().map(ProxyNode::key).toList();
     }
 
-    /** The rule tag that sends the applications of custom route {@code index} to their server. */
     public static String applicationRouteRuleTag(int index) { return index < 0 ? "perroute-app-proxy" : "perroute-app-route-" + index; }
 
-    /**
-     * The outbound each route's application rule points to in a generated config, by rule tag
-     * ({@link #applicationRouteRuleTag}). Routes that point to a balancer (embedded profiles) are left out:
-     * only a single plain outbound can be replaced while the core runs.
-     */
     @SuppressWarnings("unchecked")
     public static Map<String, String> applicationRouteTargets(String config) {
         Map<String, String> targets = new LinkedHashMap<>();
@@ -157,33 +136,11 @@ public final class XrayConfigGenerator {
         return targets;
     }
 
-    /**
-     * What a running core needs to move one route to another outbound without a restart: the new outbound
-     * (for {@code xray api ado}) and the complete new rule list (for {@code xray api adrules}, which swaps all
-     * rules in one step). Both are taken from {@code config}, a complete generated config for the new
-     * assignment in which the route's outbound has been renamed with {@link #renameOutbound}.
-     */
     public record RuntimeChange(String outbounds, String routing) {}
 
-    /**
-     * A layout change for a running core: routes that appear get their inbound and outbound added, the complete
-     * rule list is swapped in one step, and only then are the inbounds and outbounds of routes that went away
-     * removed. Routes that exist before and after keep their outbound and their open connections.
-     *
-     * @param inbounds  {"inbounds":[…]} to add, or null
-     * @param outbounds {"outbounds":[…]} to add, or null
-     * @param routing   {"routing":{"rules":[…]}}, the complete new rule list
-     * @param config    the complete config the core corresponds to afterwards
-     */
     public record RuntimePlan(String inbounds, String outbounds, String routing, List<String> removeOutbounds,
                               List<String> removeInbounds, List<String> addedInboundTags, List<String> addedOutboundTags, String config) {}
 
-    /**
-     * Works out how a running core with config {@code running} becomes {@code next} without a restart, or returns
-     * null when it cannot: balancers or embedded profiles on either side, outbounds that are neither a route nor
-     * identical, or an inbound that would have to change in place. {@code keep} maps the planned outbound tag of
-     * every route that exists on both sides to its tag in the running core.
-     */
     @SuppressWarnings("unchecked")
     public static RuntimePlan runtimePlan(String running, String next, Map<String, String> keep) {
         Map<String, Object> live = Json.object(running);
@@ -195,8 +152,6 @@ public final class XrayConfigGenerator {
         Map<String, Map<String, Object>> liveOutbounds = byTag(live.get("outbounds"));
         Map<String, Map<String, Object>> liveInbounds = byTag(live.get("inbounds"));
         if (liveOutbounds == null || liveInbounds == null) return null;
-        // Planned route outbounds are first moved out of the way, then given their live tag or a fresh one, so a
-        // route that changed index cannot collide with another route's tag.
         String candidate = next;
         Map<String, Map<String, Object>> plannedOutbounds = byTag(planned.get("outbounds"));
         if (plannedOutbounds == null) return null;
@@ -264,7 +219,6 @@ public final class XrayConfigGenerator {
             if (!tag.startsWith("perroute-check-")) return null;
             removeInbounds.add(tag);
         }
-        // Everything outside inbounds, outbounds and the rule list must already match, or a restart is needed.
         for (String section : List.of("api", "stats", "policy", "dns", "log", "fakedns")) {
             if (!Json.stringify(live.get(section)).equals(Json.stringify(result.get(section)))) return null;
         }
@@ -279,7 +233,6 @@ public final class XrayConfigGenerator {
                 Json.stringify(result) + System.lineSeparator());
     }
 
-    /** The main route's outbound and every custom route's outbound, including tags a runtime change renamed. */
     private static boolean isRouteOutbound(String tag) {
         return tag.equals(MAIN_OUTBOUND_TAG) || tag.startsWith(MAIN_OUTBOUND_TAG + "~") || tag.startsWith("perroute-route-");
     }
@@ -297,11 +250,6 @@ public final class XrayConfigGenerator {
         return result;
     }
 
-    /**
-     * Builds the runtime change for outbound {@code tag} of {@code config}, or returns null when the change
-     * cannot be applied to a running core: the outbound is missing, is not a plain proxy outbound, or the
-     * config uses balancers (which the rule swap would have to rebuild as well).
-     */
     @SuppressWarnings("unchecked")
     public static RuntimeChange runtimeChange(String config, String tag) {
         Map<String, Object> root = Json.object(config);
@@ -319,7 +267,6 @@ public final class XrayConfigGenerator {
                 Json.stringify(Map.of("routing", Map.of("rules", rules))) + System.lineSeparator());
     }
 
-    /** Renames one outbound and every rule that sends traffic to it. */
     @SuppressWarnings("unchecked")
     public static String renameOutbound(String config, String from, String to) {
         Map<String, Object> root = Json.object(config);
@@ -340,11 +287,6 @@ public final class XrayConfigGenerator {
         return generateIsolated(node, socksPort, apiPort, List.of());
     }
 
-    /**
-     * A config for a core of its own (a test, a comparison or a browser workspace): one SOCKS port that leads to
-     * {@code node}, with the user's rules that apply to every app, and nothing else. It shares no port with the
-     * running connection.
-     */
     @SuppressWarnings("unchecked")
     public String generateIsolated(ProxyNode node, int socksPort, int apiPort, List<app.perroute.model.RouteRule> globalRules) {
         List<app.perroute.model.RouteRule> rules = globalRules == null ? List.of()
@@ -412,8 +354,6 @@ public final class XrayConfigGenerator {
             app.put("sniffing", sniffing);
             inbounds.add(app);
         }
-        // The shared SOCKS endpoint always leads to the main server, so every custom server gets a
-        // loopback inbound of its own. Route checks use it without touching an application's counters.
         for (int index = 0; index < customRoutes; index++) {
             Map<String, Object> check = map();
             check.put("listen", "127.0.0.1");
@@ -440,7 +380,6 @@ public final class XrayConfigGenerator {
 
     public static String routeCheckTag(int index) { return "perroute-check-" + index; }
     public static String routeOutboundTag(int index) { return "perroute-route-" + index; }
-    /** A global PROXY rule is split per server; every part after the first carries this suffix. */
     public static String routeRuleSuffix(int index) { return "#route" + index; }
 
     private static List<String> proxyInboundTags(List<String> applications) {
@@ -449,7 +388,6 @@ public final class XrayConfigGenerator {
         return tags;
     }
 
-    /** Inbounds that share one destination: the main server, or a single custom server. */
     private record RouteGroup(Target target, List<String> inboundTags, String ruleSuffix, int customIndex) {}
 
     private record RouteLayout(List<ProxyNode> customs, int[] applicationGroup) {
@@ -474,7 +412,6 @@ public final class XrayConfigGenerator {
             return new RouteLayout(customs, groups);
         }
 
-        /** Main group first (shared endpoints plus the applications that follow Main), then one per custom server. */
         List<RouteGroup> groups(List<String> applications, Target mainTarget, List<Target> customTargets) {
             List<String> mainTags = new ArrayList<>(List.of("perroute-socks", "perroute-http"));
             List<List<String>> customInbounds = new ArrayList<>();
@@ -492,11 +429,6 @@ public final class XrayConfigGenerator {
         }
     }
 
-    /**
-     * What one custom server adds to the shared config. A plain server is a single outbound. An embedded
-     * Xray profile brings its own outbounds, balancers, observatory and rules; all of its tags are moved
-     * into a namespace of their own so that nothing in it can refer to, or be selected by, another server.
-     */
     private record CustomRoute(List<Object> outbounds, Target target, List<Map<String, Object>> rules,
                                List<Object> balancers, Map<String, Object> observatory,
                                Map<String, Object> burstObservatory) {}
@@ -512,10 +444,6 @@ public final class XrayConfigGenerator {
         return routes;
     }
 
-    /**
-     * Balancers and observatories pick outbounds by tag prefix. A custom server's tags must therefore not
-     * start with anything the main profile selects, or the main profile would balance over them too.
-     */
     private static String routeBase(int index, List<String> mainSelectors) {
         for (String candidate : List.of(routeOutboundTag(index), "~" + routeOutboundTag(index), "zz." + routeOutboundTag(index))) {
             if (mainSelectors.stream().noneMatch(candidate::startsWith)) return candidate;
@@ -539,7 +467,6 @@ public final class XrayConfigGenerator {
         List<Object> own = new ArrayList<>(source);
         Map<String, Object> routing = profile.get("routing") instanceof Map<?, ?> map ? (Map<String, Object>)map : Map.of();
         List<Object> ownRules = routing.get("rules") instanceof List<?> list ? new ArrayList<>(list) : List.of();
-        // Found on the profile as written, so its own "direct" and "block" outbounds are still recognisable.
         Target ownTarget = findProfileTarget(own, ownRules);
         String namespace = base + "/";
 
@@ -607,7 +534,6 @@ public final class XrayConfigGenerator {
         return copy;
     }
 
-    /** A custom profile's own rules, applied only to the applications that use that profile. */
     private static List<Object> customProfileRules(List<CustomRoute> customs, List<RouteGroup> groups) {
         List<Object> rules = new ArrayList<>();
         for (int index = 0; index < customs.size(); index++) {
@@ -620,11 +546,6 @@ public final class XrayConfigGenerator {
         return rules;
     }
 
-    /**
-     * Xray has one balancer list and one observatory for the whole process. Custom profiles append their
-     * balancers and their probe subjects; probe settings stay those of the main profile when it has any.
-     * Sections that cannot be scoped to a route (dns, policy, fakedns) are not taken from a custom profile.
-     */
     @SuppressWarnings("unchecked")
     private static void mergeCustomSections(Map<String, Object> root, Map<String, Object> routing, List<CustomRoute> customs) {
         List<Object> balancers = routing.get("balancers") instanceof List<?> list ? new ArrayList<>(list) : new ArrayList<>();
@@ -649,7 +570,6 @@ public final class XrayConfigGenerator {
         }
     }
 
-    /** Every tag prefix the main profile selects outbounds by. */
     private static List<String> profileSelectors(Map<String, Object> profile) {
         List<String> selectors = new ArrayList<>();
         if (profile.get("routing") instanceof Map<?, ?> routing && routing.get("balancers") instanceof List<?> balancers) {
@@ -693,9 +613,6 @@ public final class XrayConfigGenerator {
         inbounds.add(apiInbound);
         rules.add(0, Map.of("type", "field", "inboundTag", List.of("perroute-api"),
                 "outboundTag", "api", "ruleTag", "perroute-api-route"));
-        // HandlerService and RoutingService let one route's outbound be replaced while the core keeps running,
-        // so a change to one route does not restart, and interrupt, every other route. They can change routing,
-        // and Xray's API has no authentication, so they are only enabled when a feature needs them.
         root.put("api", Map.of("tag", "api", "services", runtimeControl
                 ? List.of("StatsService", "HandlerService", "RoutingService") : List.of("StatsService")));
         root.put("stats", Map.of());
@@ -848,8 +765,6 @@ public final class XrayConfigGenerator {
             Map<String, Object> rule = new LinkedHashMap<>();
             rawRule.forEach((key, item) -> rule.put(String.valueOf(key), item));
             if (rule.containsKey("inboundTag")) continue;
-            // The profile's own rules describe its own outbounds. With custom servers present they are
-            // confined to the inbounds that follow the profile, so they cannot capture another server's apps.
             if (!layout.customs().isEmpty()) rule.put("inboundTag", groups.get(0).inboundTags());
             rules.add(rule);
         }
@@ -864,11 +779,6 @@ public final class XrayConfigGenerator {
         return Json.stringify(root) + System.lineSeparator();
     }
 
-    /**
-     * DIRECT and BLOCK mean the same for every application and stay one Xray rule. PROXY means "this
-     * application's own server", so it becomes one rule per server at the same position: the parts match
-     * disjoint inbounds, which leaves first-match order untouched.
-     */
     private static List<Object> customRules(List<String> applications,
                                             List<app.perroute.model.RouteRule> source,
                                             String directTag, List<RouteGroup> groups, String blockTag) {
@@ -920,7 +830,6 @@ public final class XrayConfigGenerator {
         return item;
     }
 
-    /** The saved rule a loaded Xray rule tag belongs to, or null for PerRoute's own rules. */
     public static String customRuleId(String ruleTag) {
         if (ruleTag == null || !ruleTag.startsWith("perroute-custom-")) return null;
         return ruleTag.substring("perroute-custom-".length()).replaceFirst("#route\\d+$", "");

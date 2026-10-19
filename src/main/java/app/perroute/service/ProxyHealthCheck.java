@@ -9,12 +9,6 @@ import java.net.InetSocketAddress;
 import java.net.Socket;
 import java.nio.charset.StandardCharsets;
 
-/**
- * Checks that a route really reaches the internet. Xray's SOCKS inbound answers a CONNECT with "success" before
- * it has even dialled the server, so a successful SOCKS reply proves nothing about the server behind it. The
- * check therefore sends a small plain HTTP request through the tunnel and only passes when an HTTP status line
- * comes back from the far side.
- */
 public final class ProxyHealthCheck {
     private static final String[][] TARGETS = {
             {"cp.cloudflare.com", "/generate_204"},
@@ -93,7 +87,6 @@ public final class ProxyHealthCheck {
         return "The tunnel closed without an answer from " + host + "; the server may be unreachable.";
     }
 
-    /** Reads the HTTP status line. Any status means the request crossed the tunnel and came back. */
     private static int statusCode(InputStream input, String host) throws IOException {
         ByteArrayOutputStream line = new ByteArrayOutputStream();
         int value;

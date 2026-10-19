@@ -16,11 +16,6 @@ import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 
-/**
- * Recent quality samples per server key, at most {@link #MAX_SAMPLES_PER_SERVER} each and none older than a
- * week. Saved to a small local file at most once every {@link #SAVE_INTERVAL_MILLIS}, so background
- * measurements do not turn into a stream of disk writes. The file holds server keys, times and latencies only.
- */
 public final class QualityHistoryStore implements AutoCloseable {
     public static final int MAX_SAMPLES_PER_SERVER = 64;
     static final long KEEP_MILLIS = 7L * 24 * 60 * 60_000L;
@@ -53,7 +48,6 @@ public final class QualityHistoryStore implements AutoCloseable {
         return list == null ? List.of() : List.copyOf(list);
     }
 
-    /** Scores are cached per server for the current minute; a new sample invalidates that server's entry. */
     public synchronized QualityScore score(String serverKey, long now) {
         long minute = now / 60_000L;
         if (minute != cacheMinute) { cache.clear(); cacheMinute = minute; }
@@ -66,13 +60,11 @@ public final class QualityHistoryStore implements AutoCloseable {
         return result;
     }
 
-    /** The time of the newest sample of a server, or 0. */
     public synchronized long lastMeasured(String serverKey) {
         ArrayDeque<QualitySample> list = samples.get(serverKey);
         return list == null || list.isEmpty() ? 0L : list.getLast().atMillis();
     }
 
-    /** Forgets servers that no longer exist. */
     public synchronized void retain(Collection<String> liveKeys) {
         if (samples.keySet().retainAll(new java.util.HashSet<>(liveKeys))) {
             cache.keySet().retainAll(samples.keySet());
@@ -111,7 +103,6 @@ public final class QualityHistoryStore implements AutoCloseable {
                 if (!restored.isEmpty()) samples.put(String.valueOf(entry.getKey()), restored);
             }
         } catch (IOException | RuntimeException ignored) {
-            // A damaged history only costs the scores their evidence; it never blocks startup.
         }
     }
 

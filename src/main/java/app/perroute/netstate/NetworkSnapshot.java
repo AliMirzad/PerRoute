@@ -5,14 +5,6 @@ import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 
-/**
- * The parts of Windows networking that PerRoute changes or depends on, as they were at one moment. Values are
- * the raw readings (registry data, service state, process counts); nothing here holds a credential.
- *
- * @param id       unique and increasing, so snapshots sort by when they were taken
- * @param reason   why it was taken: before connecting, while connected, after disconnecting, at start or on request
- * @param values   reading key ({@link NetworkStateKeys}) to value; a missing key means it could not be read
- */
 public record NetworkSnapshot(long id, long takenAt, Reason reason, String version, Map<String, String> values) {
     public enum Reason {
         STARTUP("When PerRoute started"),
@@ -62,7 +54,6 @@ public record NetworkSnapshot(long id, long takenAt, Reason reason, String versi
         try { return Long.parseLong(String.valueOf(value)); } catch (RuntimeException invalid) { return 0L; }
     }
 
-    /** The readings as display items, grouped and labelled, with who owns each value. */
     public List<NetworkStateItem> items() {
         List<NetworkStateItem> items = new ArrayList<>();
         for (NetworkStateKeys.Key key : NetworkStateKeys.ALL) {

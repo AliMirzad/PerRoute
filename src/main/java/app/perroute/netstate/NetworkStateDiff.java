@@ -4,7 +4,6 @@ import java.util.ArrayList;
 import java.util.List;
 import java.util.Objects;
 
-/** What changed between two snapshots, reading by reading, and who made each change. */
 public final class NetworkStateDiff {
     private NetworkStateDiff() {}
 
@@ -24,7 +23,6 @@ public final class NetworkStateDiff {
         public String afterDisplay() { return NetworkStateKeys.display(key.id(), after); }
     }
 
-    /** Every reading present in either snapshot, in display order; unchanged ones are included when asked for. */
     public static List<Change> compare(NetworkSnapshot before, NetworkSnapshot after, boolean includeUnchanged) {
         List<Change> changes = new ArrayList<>();
         for (NetworkStateKeys.Key key : NetworkStateKeys.ALL) {
@@ -37,7 +35,6 @@ public final class NetworkStateDiff {
                 NetworkStateKeys.Owner ownerAfter = NetworkStateKeys.owner(key, now, after.values());
                 NetworkStateKeys.Owner ownerBefore = NetworkStateKeys.owner(key, was, before.values());
                 if (ownerAfter == NetworkStateKeys.Owner.PERROUTE) kind = Kind.BY_PERROUTE;
-                // A value another program wrote over PerRoute's is that program's change, not an undo.
                 else if (ownerAfter == NetworkStateKeys.Owner.OTHER) kind = Kind.ELSEWHERE;
                 else if (ownerBefore == NetworkStateKeys.Owner.PERROUTE) kind = Kind.PUT_BACK;
                 else kind = Kind.ELSEWHERE;
@@ -47,7 +44,6 @@ public final class NetworkStateDiff {
         return changes;
     }
 
-    /** Values that mean the same thing compare equal: "0x0" and a missing ProxyEnable are both off. */
     private static String normalize(String id, String value) {
         String text = value == null ? "" : value.trim();
         if (id.equals(NetworkStateKeys.PROXY_ENABLE)) return NetworkStateKeys.enabled(text) ? "on" : "off";

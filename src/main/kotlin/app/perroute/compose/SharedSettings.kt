@@ -36,7 +36,6 @@ import java.time.LocalDate
 import java.time.ZoneId
 import java.time.format.DateTimeFormatter
 
-/** The groups of the Settings screen. Each option lives in exactly one group. */
 internal enum class SettingsCategory(val label: String, val icon: ImageVector, val subtitle: String) {
     General("General", Icons.Rounded.Tune, "Appearance and app information."),
     Connection("Connection", Icons.Rounded.Wifi, "Mode and routing for this device."),
@@ -50,11 +49,9 @@ internal enum class SettingsCategory(val label: String, val icon: ImageVector, v
     ActivityLog("Activity log", Icons.AutoMirrored.Rounded.Article, "Recent events from your setup.")
 }
 
-/** The state kept for one category while it is open, so both designs edit the same values. */
 internal inline fun <reified T : Any> settingsModel(shell: Shell, category: SettingsCategory, noinline create: () -> T): T =
     shell.screen("${Tab.Settings.name}:${category.name}") { create() }
 
-/** The modes offered in Settings, with their name and what each does. TUN is not offered. */
 internal val OfferedModes = ConnectionMode.values().filter { it != ConnectionMode.TUN_COMPATIBILITY }
 
 internal fun modeTitle(mode: ConnectionMode): String = modeLabel(mode)
@@ -65,7 +62,6 @@ internal fun modeChoiceDetail(mode: ConnectionMode): String = when (mode) {
     ConnectionMode.TUN_COMPATIBILITY -> "Broad compatibility; requires Administrator."
 }
 
-/** Connection mode and Advanced routing. Locked while connected. */
 internal class ConnectionSettingsModel(private val shell: Shell) {
     var environment by mutableStateOf<EnvironmentState?>(null)
     suspend fun load() {
@@ -80,7 +76,6 @@ internal class ConnectionSettingsModel(private val shell: Shell) {
         shell.draft.load(shell)
         shell.notify(result)
     }
-    /** Every saved app with its route: "Netherlands NL-01 (Auto)", "Germany DE-01 (Main)". */
     fun assignments(): List<Pair<String, String>> {
         val auto = shell.controller.autoApps()
         val main = shell.mainNode?.let(::serverName) ?: "No main server"
@@ -111,12 +106,15 @@ internal class ConnectionSettingsModel(private val shell: Shell) {
     fun openApp(path: String) { shell.navigate(Tab.Apps); if (shell.tab == Tab.Apps) shell.draft.focused = path }
 }
 
-/** Background quality checks, Auto switching, route monitoring and the traffic gateway. */
+internal const val QuicDetail = "Routed apps use HTTPS over TCP instead of QUIC. Downloads and YouTube are usually faster this way, because QUIC sent through a server's TCP connection slows down."
+internal const val QuicNote = "Recommended. Applies from the next connection; apps switch to TCP by themselves."
+
 internal class RoutingSettingsModel(private val shell: Shell) {
     private val controller = shell.controller
     var background by mutableStateOf(controller.qualityBackground())
     var monitoring by mutableStateOf(controller.routeMonitoring())
     var gateway by mutableStateOf(controller.trafficGateway())
+    var quicBlocked by mutableStateOf(controller.quicBlocked())
     var margin by mutableStateOf(controller.autoSwitchMargin())
     var cooldown by mutableStateOf(controller.autoCooldownMinutes())
     val margins = listOf(5, 10, 15, 20)
@@ -124,6 +122,7 @@ internal class RoutingSettingsModel(private val shell: Shell) {
 
     fun changeBackground(on: Boolean) { background = on; controller.setQualityBackground(on) }
     fun changeMonitoring(on: Boolean) { monitoring = on; controller.setRouteMonitoring(on) }
+    fun changeQuic(on: Boolean) { quicBlocked = on; shell.notify(controller.setQuicBlocked(on)) }
     fun changeMargin(value: Int) { margin = value; controller.setAutoSwitchMargin(value) }
     fun changeCooldown(value: Int) { cooldown = value; controller.setAutoCooldownMinutes(value) }
     fun changeGateway(on: Boolean) {
@@ -136,7 +135,6 @@ internal class RoutingSettingsModel(private val shell: Shell) {
     fun lastPass(): String = controller.qualityLastPass().takeIf { it > 0 }?.let { "Last pass ${formatAgo(it)}." } ?: "No pass yet."
 }
 
-/** Reconnect, failover, kill switch, fastest-on-connect and automatic speed tests. */
 internal class AutomationSettingsModel(private val shell: Shell) {
     private val controller = shell.controller
     var autoReconnect by mutableStateOf(controller.autoReconnect())
@@ -156,7 +154,10 @@ internal class AutomationSettingsModel(private val shell: Shell) {
     )
 }
 
-/** The signed update feed, checking, downloading and installing an update. */
+internal const val AutoUpdateDetail = "New versions are downloaded and verified in the background. PerRoute asks before it restarts to install them."
+
+internal const val UpdateFeedNote = "Leave empty to get updates from the official PerRoute releases, or enter a feed of your own. Only manifests signed with PerRoute's offline Ed25519 release key are accepted, and every download is checked by size and SHA-256 before it can be installed."
+
 internal class UpdateSettingsModel(private val shell: Shell) {
     private val controller = shell.controller
     var feed by mutableStateOf(controller.updateFeedUrl())
@@ -165,6 +166,7 @@ internal class UpdateSettingsModel(private val shell: Shell) {
     var progress by mutableStateOf(controller.updateDownloadProgress())
     var message by mutableStateOf(controller.updateDownloadMessage())
     var downloaded by mutableStateOf(controller.downloadedUpdatePath())
+    var auto by mutableStateOf(controller.autoUpdate())
 
     fun poll() {
         available = controller.availableUpdateVersion()
@@ -174,6 +176,7 @@ internal class UpdateSettingsModel(private val shell: Shell) {
         downloaded = controller.downloadedUpdatePath()
     }
 
+    fun changeAuto(on: Boolean) { auto = on; shell.notify(controller.setAutoUpdate(on)) }
     fun changeFeed(value: String) { feed = value; controller.setUpdateFeedUrl(value) }
     fun check() = shell.run { controller.checkForUpdate() }
     fun download() = shell.notify(controller.downloadAvailableUpdateInBackground())
@@ -194,7 +197,6 @@ internal class UpdateSettingsModel(private val shell: Shell) {
         downloading -> "Downloading in the background. You can leave this page or minimize PerRoute."
         message.isNotBlank() -> message
         available != null -> "PerRoute $available is available."
-        feed.isBlank() -> "Enter a signed update feed to check for updates."
         else -> "You are running PerRoute ${app.perroute.service.SecureUpdateService.CURRENT_VERSION}."
     }
 }
@@ -204,7 +206,6 @@ internal fun UpdateEffects(model: UpdateSettingsModel) {
     LaunchedEffect(Unit) { while (isActive) { model.poll(); delay(750) } }
 }
 
-/** Whether the Xray core and the per-app driver are installed. */
 internal class ComponentSettingsModel(private val shell: Shell) {
     var environment by mutableStateOf<EnvironmentState?>(null)
     var progress by mutableStateOf("")
@@ -228,7 +229,6 @@ internal class ComponentSettingsModel(private val shell: Shell) {
     val canInstall: Boolean get() = !shell.busy && !shell.locked
 }
 
-/** Resets everything after asking, then reloads the window from the fresh state. */
 internal fun confirmReset(shell: Shell) {
     shell.showDialog {
         ConfirmDialog(
@@ -250,9 +250,7 @@ internal fun confirmReset(shell: Shell) {
     }
 }
 
-/** One activity log line split into its time and its event; lines without a time keep an empty one. */
 internal class LogLine(val time: String, val text: String) {
-    /** Lines that report a problem get a warning mark; the words are the ones PerRoute itself writes for failures. */
     val warning: Boolean get() = Regex("(?i)\\b(fail|failed|failure|error|could not|cannot|timed out|timeout|unavailable|not enforced)\\b").containsMatchIn(text)
 }
 
@@ -261,7 +259,6 @@ internal fun parseLog(line: String): LogLine {
     return if (match != null) LogLine(match.groupValues[1], match.groupValues[2]) else LogLine("", line)
 }
 
-/** The backup form and the restore in progress. */
 internal class BackupModel(private val shell: Shell) {
     private val controller = shell.controller
     val sections = mutableStateMapOf<BackupService.Section, Boolean>().apply { BackupService.Section.entries.forEach { put(it, true) } }
@@ -269,7 +266,6 @@ internal class BackupModel(private val shell: Shell) {
     var password by mutableStateOf("")
     var confirm by mutableStateOf("")
     var hasSnapshot by mutableStateOf(controller.hasRestoreSnapshot())
-    /** A backup that has been read and checked, waiting for the user's decision. New shows a page, Simple a dialog. */
     var restore by mutableStateOf<RestoreSession?>(null)
 
     val chosen: Set<BackupService.Section> get() = sections.filterValues { it }.keys
@@ -305,7 +301,6 @@ internal class BackupModel(private val shell: Shell) {
         open(Path.of(dialog.directory, name))
     }
 
-    /** Asks for the password when needed, reads the backup off the UI thread and starts the review. */
     fun open(file: Path) {
         val header = runCatching { BackupCodec.header(Files.readAllBytes(file)) }
         if (header.isFailure) { shell.notify(ActionResult(false, header.exceptionOrNull()?.message ?: "This is not a PerRoute backup.")); return }
@@ -342,7 +337,6 @@ internal class BackupModel(private val shell: Shell) {
     fun finishRestore() { restore = null; hasSnapshot = controller.hasRestoreSnapshot() }
 }
 
-/** The decisions of one restore: Merge or Replace, and where each missing application now lives. */
 internal class RestoreSession(private val shell: Shell, val request: RestoreRequest) {
     val preview: BackupService.RestorePreview = request.preview
     var mode by mutableStateOf(BackupService.Mode.MERGE)

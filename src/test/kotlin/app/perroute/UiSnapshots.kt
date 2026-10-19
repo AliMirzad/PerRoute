@@ -54,11 +54,6 @@ import java.util.function.Consumer
 import java.util.prefs.AbstractPreferences
 import kotlin.coroutines.CoroutineContext
 
-/**
- * Renders the real screens off-screen with demonstration data and a fake machine, so layouts can be
- * reviewed at the baseline size, a narrow size, 150% scaling and in both themes. Nothing here touches
- * Xray, the per-app driver, Windows proxy settings, the network or the user's saved preferences.
- */
 private const val SUBSCRIPTION = "https://subscription.example/api/v1/client/subscribe?token=demo"
 private const val CHROME = "C:\\Program Files\\Google\\Chrome\\Application\\chrome.exe"
 private const val TELEGRAM = "C:\\Users\\demo\\AppData\\Roaming\\Telegram Desktop\\Telegram.exe"
@@ -151,7 +146,6 @@ private class DemoBackend(private val perAppDriver: Boolean = true) : Connection
             app.perroute.localnet.LocalNetwork.Device("192.168.1.1", "aa-bb-cc-dd-ee-ff", "router.home", true),
             app.perroute.localnet.LocalNetwork.Device("192.168.1.40", "11-22-33-44-55-66", "nas.home", false),
             app.perroute.localnet.LocalNetwork.Device("192.168.1.77", "22-33-44-55-66-77", "", false))))
-    /** A computer where PerRoute stopped while connected: its proxy, a start-up entry and the engine's list are left. */
     override fun networkState(): Map<String, String> = mapOf(
         "wininet.ProxyEnable" to "0x1", "wininet.ProxyServer" to app.perroute.service.WindowsSystemProxyManager.perRouteProxyServer(),
         "wininet.ProxyOverride" to "<local>;localhost;127.*;[::1]", "wininet.backupPending" to "yes", "startup.recoveryEntry" to "yes",
@@ -172,7 +166,6 @@ private class Demo(
     val style: UiStyle = UiStyle.NEW
 )
 
-/** Quality history for the demonstration servers: excellent, good, fair, unavailable, stale and unmeasured. */
 private fun seedQuality(controller: PerRouteController) {
     val now = System.currentTimeMillis()
     fun samples(key: String, reach: Long, tunnel: Long, count: Int = 6, ageMinutes: Long = 0, failures: Int = 0) {
@@ -189,7 +182,6 @@ private fun seedQuality(controller: PerRouteController) {
     (1..3).forEach { controller.recordQualitySample("uk-1", app.perroute.quality.QualitySample.tunnel(now - it * 60_000L, false, -1, "timeout")) }
 }
 
-/** Lines the core would log for a few connections, so the inspector has something to show. */
 private fun emitDemoConnections(backend: DemoBackend) {
     val lines = listOf(
         "[Info] [11] proxy/socks: TCP Connect request to tcp:142.250.185.78:443", "[Info] [11] app/dispatcher: sniffed domain: www.youtube.com",
@@ -282,7 +274,6 @@ private class Scene(
     val tabs: Int = 0,
     val prepare: (Shell) -> Unit = {},
     val quick: Boolean = false,
-    /** Runs on the controller before anything is drawn, for scenes without a main window. */
     val setup: (PerRouteController) -> Unit = {}
 )
 
@@ -341,7 +332,6 @@ private fun render(scene: Scene, output: Path) {
             settle(500)
         }
         if (scene.tabs > 0) {
-            // Keyboard traversal: the focus outline must be visible and stay inside an open dialog.
             KeyboardNavigation.value = true
             repeat(scene.tabs) {
                 compose.sendKeyEvent(KeyEvent(Key.Tab, KeyEventType.KeyDown))
@@ -381,7 +371,6 @@ fun main(args: Array<String>) {
     }
     val ruleEditor: (Shell) -> Unit = { shell -> rulesModel(shell).let { it.editor = RuleEditor(it.rules.first()) } }
 
-    /** The scenes of one design; every scene is rendered in both designs so they can be compared page by page. */
     fun scenes(style: UiStyle): List<Scene> {
         val p = if (style == UiStyle.NEW) "new" else "simple"
         fun d(advanced: Boolean = false, connected: Boolean = false, missing: Boolean = false, empty: Boolean = false,
@@ -402,6 +391,8 @@ fun main(args: Array<String>) {
             Scene("$p-13-apps-unsaved", advanced, tab = Tab.Apps, settleMillis = 3_000, prepare = { it.draft.advanced = false }),
             Scene("$p-14-apps-missing", d(advanced = true, missing = true), tab = Tab.Apps, settleMillis = 3_000, prepare = { it.draft.focused = TELEGRAM }),
             Scene("$p-20-servers", advanced, tab = Tab.Servers, settleMillis = 2_500),
+            Scene("$p-24-servers-long-main", advanced, tab = Tab.Servers, settleMillis = 2_500, prepare = { it.controller.selectNode("us-3"); it.refresh() }),
+            Scene("$p-25-min-servers-long-main", advanced, 820, 620, tab = Tab.Servers, settleMillis = 2_500, prepare = { it.controller.selectNode("us-3"); it.refresh() }),
             Scene("$p-21-servers-empty", d(empty = true), tab = Tab.Servers),
             Scene("$p-22-add-servers-source", advanced, tab = Tab.Servers, prepare = addServersSource),
             Scene("$p-23-add-servers-review", advanced, tab = Tab.Servers, prepare = pastePreview, settleMillis = 2_000),
@@ -448,7 +439,6 @@ fun main(args: Array<String>) {
             Scene("$p-97-dark-servers", d(advanced = true, dark = true), tab = Tab.Servers, settleMillis = 2_500),
             Scene("$p-98-dark-settings", d(dark = true), tab = Tab.Settings),
             Scene("$p-99-keyboard-focus", advanced, tab = Tab.Rules, tabs = 6),
-            // 3.5
             Scene("$p-A0-workspaces", advanced, tab = Tab.Workspaces, settleMillis = 2_000, prepare = { shell ->
                 val browser = Files.writeString(Path.of(System.getProperty("perroute.data")).resolve("chrome.exe"), "x").toString()
                 shell.controller.createWorkspace("Work", browser, "")

@@ -34,11 +34,9 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 
-/** The upload colour of the New design: lime on charcoal, a deeper lime on bone so the line stays visible. */
 @Composable
 private fun newUpload(): Color = if (IsDark) NewColors.Lime else Color(0xFFB4CF1F)
 
-/** Traffic: totals, the live chart, every app's live rate against its limits, and the app's limits in the panel. */
 @Composable
 internal fun NewTrafficPage(shell: Shell) {
     val model = trafficModel(shell)
@@ -99,7 +97,7 @@ internal fun NewTrafficPage(shell: Shell) {
                 }
                 rows.forEach { row ->
                     NewTableRow(row.path.equals(model.selectedApp, true), onClick = { model.selectedApp = row.path }, label = "Bandwidth of ${appName(row.path)}") {
-                        Row(Modifier.weight(1.2f), verticalAlignment = Alignment.CenterVertically) {
+                        Row(Modifier.weight(1.2f).padding(end = 12.dp), verticalAlignment = Alignment.CenterVertically) {
                             AppAvatar(fileName(row.path), row.path, 26.dp)
                             Spacer(Modifier.width(10.dp))
                             EllipsisText(appName(row.path), White, 13.sp, fontWeight = FontWeight.Medium)

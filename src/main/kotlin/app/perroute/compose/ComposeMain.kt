@@ -125,10 +125,6 @@ internal const val SloganSubtitle = "Choose a route for each app. Keep the rest 
 internal const val Credit = "Created By Vexor"
 private const val WindowCornerRadius = 16.0
 
-/**
- * The destinations of the main window. New groups everything from Rules to Traffic under Tools; Simple lists
- * them all in its menu.
- */
 internal enum class Tab(val label: String, val icon: ImageVector) {
     Connection("Connection", Icons.Rounded.Link),
     Apps("Apps", Icons.Rounded.Apps),
@@ -144,20 +140,15 @@ internal enum class Tab(val label: String, val icon: ImageVector) {
     val isTool: Boolean get() = this != Connection && this != Apps && this != Servers && this != Settings
 }
 
-/** A modal dialog currently shown over the window, and what closing it does. */
 internal class DialogSpec(val onDismiss: () -> Unit, val content: @Composable () -> Unit)
 
-/** Edits on the Apps screen live here until Save changes; nothing reaches the controller before that. */
 internal class AppsDraft {
     val selected = mutableStateListOf<String>()
     var routes by mutableStateOf(mapOf<String, String>())
     var advanced by mutableStateOf(false)
-    /** Normalized paths in Auto mode, and their candidate pools. */
     var auto by mutableStateOf(setOf<String>())
     var pools by mutableStateOf(mapOf<String, String>())
-    /** Apps switched to Manual whose server has not been chosen yet; saving waits for a choice. */
     var manualPending by mutableStateOf(setOf<String>())
-    /** The application whose details the side panel shows. */
     var focused by mutableStateOf<String?>(null)
 
     fun load(shell: Shell) {
@@ -184,7 +175,6 @@ internal class AppsDraft {
         }
     }
 
-    /** Main drops the Manual choice, as in version 2; Auto keeps it so switching back restores it. */
     fun setMode(path: String, mode: app.perroute.routing.AppRouteMode) {
         val key = AppRoutes.normalize(path)
         when (mode) {
@@ -212,7 +202,6 @@ internal class AppsDraft {
     }
 }
 
-/** Window-level state shared by every screen and by both designs. */
 internal class Shell(
     val controller: PerRouteController,
     val hostWindow: Frame?,
@@ -243,10 +232,6 @@ internal class Shell(
     var addServersRequested by mutableStateOf(false)
     val draft = AppsDraft().also { it.load(this) }
 
-    /**
-     * Working state of the open screen (filters, editors, test results), shared by both designs so switching the
-     * design keeps it. It lasts as long as the screen is open, exactly as before: leaving a screen drops it.
-     */
     private val screenState = HashMap<String, Any>()
 
     @Suppress("UNCHECKED_CAST")
@@ -255,7 +240,6 @@ internal class Shell(
     private fun forget(prefix: String) { screenState.keys.removeAll { it.startsWith(prefix) } }
 
     val mainNode: ProxyNode? get() = nodes.firstOrNull { it.key() == selectedNodeKey } ?: nodes.firstOrNull()
-    /** Routing choices are locked from the moment a connection starts until it is fully torn down. */
     val locked: Boolean get() = connected || phase != ConnectionPhase.DISCONNECTED
     val perApp: Boolean get() = mode == app.perroute.model.ConnectionMode.NATIVE_PER_APP
 
@@ -281,7 +265,6 @@ internal class Shell(
 
     fun notify(result: ActionResult) { toast = result.message; toastError = !result.ok }
 
-    /** Runs a controller action off the UI thread; only one runs at a time. */
     fun run(silent: Boolean = false, done: (ActionResult) -> Unit = {}, action: () -> ActionResult) {
         if (busy) return
         scope.launch {
@@ -329,7 +312,6 @@ internal class Shell(
 
     fun discardDraft() { draft.load(this) }
 
-    /** Leaving the Apps screen with unsaved edits always asks first; nothing is saved or dropped silently. */
     fun leaveApps(then: () -> Unit) {
         if (tab != Tab.Apps || !draft.dirty(this)) { then(); return }
         showDialog {
@@ -361,7 +343,6 @@ internal class Shell(
         settingsCategory = category
     }
 
-    /** Applies a design choice. Only the drawing changes; nothing here touches the connection or any draft. */
     fun setUiStyle(style: UiStyle) {
         if (Appearance.style == style) return
         controller.setUiStyle(style.key)
@@ -391,7 +372,6 @@ internal class Shell(
     }
 }
 
-/** Runs as a small companion process in System proxy mode and restores the Windows proxy settings if PerRoute dies. */
 private fun runProxyGuard(dataDirectory: Path, parentPid: Long?) {
     val proxy = app.perroute.service.WindowsSystemProxyManager(dataDirectory)
     val parent = parentPid?.let { ProcessHandle.of(it).orElse(null) }
@@ -410,7 +390,6 @@ private fun runProxyGuard(dataDirectory: Path, parentPid: Long?) {
     }
 }
 
-/** The opening size of the main window: the designs' 3:2 frame, kept inside the screen. */
 private fun initialWindowSize(): Pair<Dp, Dp> {
     val area = runCatching { GraphicsEnvironment.getLocalGraphicsEnvironment().maximumWindowBounds }.getOrNull()
     val width = (area?.width?.times(.92)?.toInt() ?: 1180).coerceAtMost(1180).coerceAtLeast(MinWindowWidth)
@@ -421,7 +400,6 @@ private fun initialWindowSize(): Pair<Dp, Dp> {
 internal const val MinWindowWidth = 820
 internal const val MinWindowHeight = 620
 
-/** Entry point: single-instance check, state loading, then the main window, the tray icon and the Quick Access panel. */
 fun main(args: Array<String>) {
     Perf.mark("main.enter")
     val dataDirectory = AppDirectories.dataDirectory()
@@ -437,7 +415,6 @@ fun main(args: Array<String>) {
         lock.close()
         return
     }
-    // Recorded before anything else can fail, so a version that cannot start is noticed (see StartupHealth).
     runCatching { app.perroute.update.StartupHealth(dataDirectory.resolve("startup-health.json"))
         .beginStart(app.perroute.service.SecureUpdateService.CURRENT_VERSION, System.currentTimeMillis()) }
     val store = AppStateStore(dataDirectory.resolve("state.bin"))
@@ -455,6 +432,7 @@ fun main(args: Array<String>) {
     val controller = PerRouteController(state, store)
     loaded.exceptionOrNull()?.let { controller.reportStartupProblem("Saved settings could not be opened: ${it.message ?: it.javaClass.simpleName}") }
     Perf.mark("controller.ready")
+    controller.checkForUpdateInBackground()
     Appearance.load(controller)
 
     try { application {
@@ -514,7 +492,6 @@ fun main(args: Array<String>) {
             trayTemporaries = controller.temporaryRoutes()
             trayApps = controller.applications()
         }
-        /** The outcome of a Quick Access action as a notification, since the panel has no message area of its own. */
         fun trayToast(result: ActionResult) {
             runCatching { nativeTrayIcon?.displayMessage("PerRoute", result.message, if (result.ok) TrayIcon.MessageType.INFO else TrayIcon.MessageType.WARNING) }
         }
@@ -690,13 +667,8 @@ fun main(args: Array<String>) {
     }
 }
 
-/** What the designs need to draw their own title bar: the window to move and its three caption actions. */
 internal class WindowChrome(val hostWindow: Frame?, val minimize: () -> Unit, val maximize: () -> Unit, val close: () -> Unit)
 
-/**
- * The whole main window. [hostWindow] is null when the content is rendered without a real window,
- * which is how the screens are checked at different sizes, scales, themes and designs.
- */
 @OptIn(androidx.compose.ui.ExperimentalComposeUiApi::class)
 @Composable
 internal fun PerRouteWindow(
@@ -754,9 +726,20 @@ internal fun PerRouteWindow(
         else if (status.updatedFrom().isNotBlank() && System.currentTimeMillis() - status.updatedAt() < 120_000 && rollback != null) {
             shell.notify(ActionResult(true, "Updated from ${status.updatedFrom()}. If something does not work, Settings > Recovery can go back to $rollback."))
         }
-        // The window has been up for a while: this version starts properly.
         delay(10_000)
         withContext(Dispatchers.IO) { runCatching { controller.markStartupHealthy() } }
+    }
+
+    LaunchedEffect(Unit) {
+        if (hostWindow == null) return@LaunchedEffect
+        var offered: String? = null
+        while (isActive) {
+            delay(20_000)
+            val ready = controller.updateReadyVersion() ?: continue
+            if (ready == offered || shell.dialog != null) continue
+            offered = ready
+            offerUpdate(shell, ready)
+        }
     }
 
     LaunchedEffect(shell.toast, shell.toastError) {
@@ -801,8 +784,6 @@ internal fun PerRouteWindow(
                 }
             }
         ) {
-            // While a dialog is open the screen behind it must be out of reach for the keyboard as
-            // well as the pointer, so focus is not allowed to enter it.
             val dialogOpen = shell.dialog != null
             Box(Modifier.fillMaxSize().focusProperties { if (dialogOpen) enter = { FocusRequester.Cancel } }.focusGroup()) {
                 when (Appearance.style) {
@@ -827,7 +808,24 @@ internal fun PerRouteWindow(
     }
 }
 
-/** After this version failed to start properly more than once, offers to go back to the one the installer kept. */
+private fun offerUpdate(shell: Shell, version: String) {
+    shell.showDialog {
+        DialogCard("PerRoute $version is ready", "Downloaded and verified in the background.", shell::closeDialog, width = 480.dp,
+            actions = {
+                SecondaryButton("Later") { shell.closeDialog() }
+                PrimaryButton("Restart and update") {
+                    shell.closeDialog()
+                    val result = shell.controller.launchDownloadedUpdate()
+                    shell.notify(result)
+                    if (result.ok) shell.exitApp()
+                }
+            }) {
+            DialogText("PerRoute closes, Windows asks for Administrator approval once, and PerRoute $version opens by itself when it is done. Your servers, apps and settings are kept, and this version stays available for a rollback.")
+            if (shell.connected) DialogText("Routed apps are disconnected for the moment the update takes.", Muted)
+        }
+    }
+}
+
 private fun offerRollback(shell: Shell, status: app.perroute.update.StartupHealth.Status, version: String) {
     shell.showDialog {
         DialogCard("PerRoute did not start properly", "PerRoute ${status.version()} did not finish starting ${status.failedStarts()} times in a row.", shell::closeDialog, width = 480.dp,
@@ -844,7 +842,6 @@ private fun offerRollback(shell: Shell, status: app.perroute.update.StartupHealt
     }
 }
 
-/** The short confirmation or error after an action. It disappears on its own and when pressed. */
 @Composable
 private fun Toast(shell: Shell, modifier: Modifier) {
     AnimatedVisibility(visible = shell.toast != null, modifier = modifier, enter = fadeIn(tween(90)), exit = fadeOut(tween(70))) {
@@ -877,7 +874,6 @@ private fun Toast(shell: Shell, modifier: Modifier) {
     }
 }
 
-/** Gives the undecorated window rounded corners, except while it is maximized. */
 @Composable
 internal fun RoundedWindowEffect(hostWindow: Frame) {
     DisposableEffect(hostWindow) {
@@ -907,7 +903,6 @@ internal fun RoundedWindowEffect(hostWindow: Frame) {
     }
 }
 
-/** An area that moves the undecorated window when dragged. */
 @Composable
 internal fun WindowDragArea(hostWindow: Frame?, modifier: Modifier = Modifier, content: @Composable BoxScope.() -> Unit = {}) {
     val dragAnchors = remember { arrayOfNulls<Point>(2) }
@@ -935,10 +930,8 @@ internal fun WindowDragArea(hostWindow: Frame?, modifier: Modifier = Modifier, c
     )
 }
 
-/** The three caption buttons drawn in the custom title bar. */
 private enum class WindowControl { MINIMIZE, RESTORE, CLOSE }
 
-/** Minimize, maximize and close, drawn by hand so they match the design. */
 @Composable
 internal fun WindowButtons(chrome: WindowChrome, tint: Color, height: Dp = 44.dp, width: Dp = 50.dp) {
     Row(Modifier.fillMaxHeight()) {
@@ -972,5 +965,4 @@ private fun WindowButton(control: WindowControl, label: String, tint: Color, hei
     }
 }
 
-/** The apps a server carries, as a short sentence for cards and tooltips. */
 internal fun routeApplications(route: RoutePlanner.Route): String = joinNames(route.applications().map(::appName))

@@ -33,13 +33,11 @@ public record ConnectionProfile(
         autoApps = Collections.unmodifiableSet(normalizedAuto);
     }
 
-    /** Profiles saved by PerRoute 2: no application is in Auto mode. */
     public ConnectionProfile(String id, String name, List<String> applicationPaths, String nodeKey,
                              ConnectionMode mode, List<RouteRule> rules, boolean advancedRouting, Map<String, String> appRoutes) {
         this(id, name, applicationPaths, nodeKey, mode, rules, advancedRouting, appRoutes, Set.of());
     }
 
-    /** Profiles saved before Advanced routing existed: every application follows the main server. */
     public ConnectionProfile(String id, String name, List<String> applicationPaths, String nodeKey,
                              ConnectionMode mode, List<RouteRule> rules) {
         this(id, name, applicationPaths, nodeKey, mode, rules, false, Map.of(), Set.of());

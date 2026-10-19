@@ -3,31 +3,18 @@ package app.perroute.inspector;
 import java.util.regex.Matcher;
 import java.util.regex.Pattern;
 
-/**
- * Reads the lines Xray writes for each connection at log level "info". Two kinds matter:
- * <ul>
- *   <li>the access line, {@code from tcp:127.0.0.1:57338 accepted tcp:1.2.3.4:443 [perroute-app-0 -> proxy]},
- *       which names the source port, the inbound and the outbound Xray actually chose;</li>
- *   <li>session lines tagged {@code [id]}: the requested destination, the sniffed domain, the rule that matched
- *       ({@code Hit route rule: [tag] so taking detour [outbound] for [...]}) and failures.</li>
- * </ul>
- * Formats checked against Xray 26.3.27; both {@code ->} and {@code >>} separators are accepted.
- */
 public final class XrayLogParser {
     private XrayLogParser() {}
 
     public sealed interface Entry permits Access, Request, Sniffed, RuleHit, Failure {}
 
-    /** The core accepted a connection from {@code sourcePort} and sent it to {@code outbound}. */
     public record Access(String sourceHost, int sourcePort, String network, String destinationHost, int destinationPort,
                          String inbound, String outbound) implements Entry {}
 
-    /** A session's destination as the application asked for it. */
     public record Request(String session, String network, String destinationHost, int destinationPort) implements Entry {}
 
     public record Sniffed(String session, String domain) implements Entry {}
 
-    /** {@code ruleTag} is empty when no rule matched and the default outbound was taken. */
     public record RuleHit(String session, String ruleTag, String outbound, String destinationHost, int destinationPort) implements Entry {}
 
     public record Failure(String session, String detail) implements Entry {}
@@ -69,7 +56,6 @@ public final class XrayLogParser {
         return host.length() > 2 && host.startsWith("[") && host.endsWith("]") ? host.substring(1, host.length() - 1) : host;
     }
 
-    /** Keeps the most specific part of Xray's nested error text ("a > b > c" becomes "c"). */
     static String shorten(String detail) {
         String text = detail.trim();
         int arrow = text.lastIndexOf(" > ");

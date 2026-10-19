@@ -105,13 +105,10 @@ import kotlinx.coroutines.withContext
 import java.nio.file.Path
 import java.util.concurrent.ConcurrentHashMap
 
-/** True after the keyboard was used to move around, so focus is only outlined for keyboard users. */
 internal val KeyboardNavigation = mutableStateOf(false)
 
-/** Open menus. While one is open, Escape belongs to that menu and must not reach the window. */
 internal val OpenMenus = mutableStateOf(0)
 
-/** The colour of the keyboard focus outline: lime on charcoal, ink on bone, violet in the Simple design. */
 internal val FocusColor: Color
     @Composable get() = if (Tok.isNew) (if (IsDark) NewColors.Lime else Color(0xFF131514)) else Violet2
 
@@ -122,7 +119,6 @@ internal fun Modifier.focusRing(shape: Shape): Modifier = composed {
         .then(if (focused && KeyboardNavigation.value) Modifier.border(2.dp, color, shape) else Modifier)
 }
 
-/** A clickable surface with a hand cursor, an accessible label and role, and a keyboard focus outline. */
 internal fun Modifier.pressable(
     shape: Shape,
     enabled: Boolean = true,
@@ -159,7 +155,6 @@ internal fun Tooltip(text: String, modifier: Modifier = Modifier, content: @Comp
     ) { content() }
 }
 
-/** One line of text that shows its full value in a tooltip whenever it does not fit. */
 @Composable
 internal fun EllipsisText(
     text: String,
@@ -177,20 +172,17 @@ internal fun EllipsisText(
     }
 }
 
-/** A card on the page: white on bone or on the Simple page, a raised graphite card on dark pages. */
 @Composable
 internal fun SurfaceCard(modifier: Modifier = Modifier, shape: Shape = CardShape, content: @Composable BoxScope.() -> Unit) {
     Box(modifier.clip(shape).background(Surface).border(1.dp, Line, shape), content = content)
 }
 
-/** A one-pixel rule between rows or sections. */
 @Composable
 internal fun Divider(modifier: Modifier = Modifier, vertical: Boolean = false) {
     if (vertical) Box(modifier.width(1.dp).fillMaxHeight().background(Line))
     else Box(modifier.fillMaxWidth().height(1.dp).background(Line))
 }
 
-/** The main action of a screen or dialog: lime with ink text in New, violet with white text in Simple. */
 @Composable
 internal fun PrimaryButton(
     label: String,
@@ -203,7 +195,6 @@ internal fun PrimaryButton(
     contentColor: Color? = null,
     onClick: () -> Unit
 ) {
-    // A disabled main action turns neutral grey, as both designs show it, instead of a faded accent.
     val fill = if (enabled) color ?: Violet else NeutralOverlay.copy(if (IsDark) .10f else .09f)
     val content = if (enabled) contentColor ?: OnPrimary else Muted.copy(.85f)
     val shape = ControlShape
@@ -228,7 +219,6 @@ internal fun PrimaryButton(
     }
 }
 
-/** A lower-emphasis action: an outlined button on the page or in a panel. */
 @Composable
 internal fun SecondaryButton(
     label: String,
@@ -262,7 +252,6 @@ internal fun SecondaryButton(
     }
 }
 
-/** An underlined text action, with the north-east arrow both designs use for "go there". */
 @Composable
 internal fun LinkAction(
     label: String,
@@ -288,7 +277,6 @@ internal fun LinkAction(
     }
 }
 
-/** An icon-only control. The label is its accessible name and its tooltip. */
 @Composable
 internal fun IconAction(
     icon: ImageVector,
@@ -311,7 +299,6 @@ internal fun IconAction(
     }
 }
 
-/** An on/off switch. The label is announced together with its state; New also writes the state beside it. */
 @Composable
 internal fun ToggleSwitch(checked: Boolean, label: String, enabled: Boolean = true, showState: Boolean = Tok.switchStateText, onToggle: (Boolean) -> Unit) {
     val track = if (checked) Violet else if (IsDark) Color.White.copy(.18f) else Color(0xFFD5D6D0)
@@ -336,7 +323,6 @@ internal fun ToggleSwitch(checked: Boolean, label: String, enabled: Boolean = tr
     }
 }
 
-/** The visual of a check box; the surrounding row handles the toggling. */
 @Composable
 internal fun CheckMark(selected: Boolean) {
     val shape = RoundedCornerShape(if (Tok.isNew) 4.dp else 5.dp)
@@ -348,7 +334,6 @@ internal fun CheckMark(selected: Boolean) {
     ) { if (selected) Icon(Icons.Rounded.Check, null, tint = OnPrimary, modifier = Modifier.size(14.dp)) }
 }
 
-/** The visual of a radio button; the surrounding row handles the selection. */
 @Composable
 internal fun RadioMark(selected: Boolean, size: Dp = 20.dp) {
     if (Tok.isNew) {
@@ -365,7 +350,6 @@ internal fun RadioMark(selected: Boolean, size: Dp = 20.dp) {
     }
 }
 
-/** A small labelled pill, optionally with an icon. */
 @Composable
 internal fun Badge(label: String, color: Color, filled: Boolean = false, icon: ImageVector? = null, outlined: Boolean = false) {
     val shape = RoundedCornerShape(if (Tok.isNew) 5.dp else 7.dp)
@@ -384,7 +368,6 @@ internal fun Badge(label: String, color: Color, filled: Boolean = false, icon: I
     }
 }
 
-/** "Main", "Custom" and "Auto" never differ by colour alone: each says its name, and New draws them as outlined capsules. */
 @Composable
 internal fun RoutePill(kind: RouteKindLabel, modifier: Modifier = Modifier) {
     if (Tok.isNew) {
@@ -402,14 +385,12 @@ internal fun RoutePill(kind: RouteKindLabel, modifier: Modifier = Modifier) {
 
 internal enum class RouteKindLabel(val label: String) { MAIN("Main"), CUSTOM("Custom"), AUTO("Auto"), TEMPORARY("Temporary") }
 
-/** The older two-way badge: the main server, or a custom one. */
 @Composable
 internal fun RouteBadge(main: Boolean, long: Boolean = false) {
     if (main && long && !Tok.isNew) Badge("Main server", Violet, filled = true)
     else RoutePill(if (main) RouteKindLabel.MAIN else RouteKindLabel.CUSTOM)
 }
 
-/** A selectable chip used for filters: lime when chosen in New, violet in Simple. */
 @Composable
 internal fun FilterChip(label: String, selected: Boolean, modifier: Modifier = Modifier, enabled: Boolean = true, trailing: ImageVector? = null, onClick: () -> Unit) {
     val shape = ControlShape
@@ -431,7 +412,6 @@ internal fun FilterChip(label: String, selected: Boolean, modifier: Modifier = M
     }
 }
 
-/** A row of mutually exclusive choices drawn as one bordered group. */
 @Composable
 internal fun <T> Segmented(
     options: List<T>,
@@ -471,7 +451,6 @@ internal fun <T> Segmented(
     }
 }
 
-/** Tabs drawn as labels with an accent underline, as the Simple design and the New diagnostics do. */
 @Composable
 internal fun <T> UnderlineTabs(options: List<T>, selected: T, label: (T) -> String, modifier: Modifier = Modifier, onSelect: (T) -> Unit) {
     val accent = if (Tok.isNew) White else Violet2
@@ -495,7 +474,6 @@ internal fun <T> UnderlineTabs(options: List<T>, selected: T, label: (T) -> Stri
     }
 }
 
-/** A single-line text field. */
 @Composable
 internal fun TextInput(
     value: String,
@@ -537,12 +515,10 @@ internal fun TextInput(
     }
 }
 
-/** A password field whose content is never shown. */
 @Composable
 internal fun PasswordField(value: String, onValueChange: (String) -> Unit, hint: String, modifier: Modifier = Modifier.fillMaxWidth()) =
     TextInput(value, { onValueChange(it.take(128)) }, hint, modifier, password = true)
 
-/** A multi-line monospace text field. */
 @Composable
 internal fun TextArea(value: String, onValueChange: (String) -> Unit, hint: String, modifier: Modifier = Modifier.fillMaxWidth().height(96.dp), enabled: Boolean = true) {
     val shape = ControlShape
@@ -557,7 +533,6 @@ internal fun TextArea(value: String, onValueChange: (String) -> Unit, hint: Stri
     )
 }
 
-/** One line of a popup menu. */
 internal class MenuEntry(
     val label: String,
     val icon: ImageVector? = null,
@@ -568,14 +543,12 @@ internal class MenuEntry(
     val onClick: () -> Unit
 )
 
-/** A themed dropdown menu with an optional header, for example a filter field. */
 @Composable
 internal fun PopupMenu(expanded: Boolean, onDismiss: () -> Unit, entries: List<MenuEntry>, minWidth: Dp = 200.dp, header: (@Composable () -> Unit)? = null) {
     DisposableEffect(expanded) {
         if (expanded) OpenMenus.value++
         onDispose { if (expanded) OpenMenus.value-- }
     }
-    // Menus are drawn in the page colours even when opened from a charcoal panel, so they stay readable.
     val page = tokensFor(Tok.style, IsDark)
     ProvideTokens(if (Tok.isNew && IsDark) Tok else page) {
         val selectedColor = if (Tok.isNew) (if (IsDark) NewColors.Lime else White) else Violet2
@@ -609,7 +582,6 @@ internal fun PopupMenu(expanded: Boolean, onDismiss: () -> Unit, entries: List<M
     }
 }
 
-/** A field-like button that opens a menu and shows the current choice. */
 @Composable
 internal fun MenuButton(
     label: String,
@@ -650,7 +622,6 @@ internal fun MenuButton(
     }
 }
 
-/** An icon button that opens a menu, for overflow actions. */
 @Composable
 internal fun MenuIcon(icon: ImageVector, label: String, entries: List<MenuEntry>, modifier: Modifier = Modifier, size: Dp = 32.dp, tint: Color = Muted, bordered: Boolean = true) {
     var open by remember { mutableStateOf(false) }
@@ -660,7 +631,6 @@ internal fun MenuIcon(icon: ImageVector, label: String, entries: List<MenuEntry>
     }
 }
 
-/** A one-line explanation or warning, optionally with an action on the right. */
 @Composable
 internal fun InfoBanner(text: String, modifier: Modifier = Modifier, color: Color = Muted, icon: ImageVector = Icons.Rounded.Info, action: (@Composable RowScope.() -> Unit)? = null) {
     val tinted = color != Muted
@@ -678,7 +648,6 @@ internal fun InfoBanner(text: String, modifier: Modifier = Modifier, color: Colo
     }
 }
 
-/** A quiet note: an outlined info icon and muted text, without a box. */
 @Composable
 internal fun Note(text: String, modifier: Modifier = Modifier, icon: ImageVector = Icons.Rounded.Info, color: Color = Muted) {
     Row(modifier, verticalAlignment = Alignment.CenterVertically) {
@@ -688,7 +657,6 @@ internal fun Note(text: String, modifier: Modifier = Modifier, icon: ImageVector
     }
 }
 
-/** What a list shows when it has nothing to show, with the next step to take. */
 @Composable
 internal fun EmptyState(icon: ImageVector, title: String, detail: String, modifier: Modifier = Modifier, action: (@Composable () -> Unit)? = null) {
     Column(modifier.padding(24.dp), horizontalAlignment = Alignment.CenterHorizontally, verticalArrangement = Arrangement.Center) {
@@ -705,7 +673,6 @@ internal fun EmptyState(icon: ImageVector, title: String, detail: String, modifi
     }
 }
 
-/** A spinner with a short description of what is being loaded. */
 @Composable
 internal fun LoadingState(text: String, modifier: Modifier = Modifier) {
     Column(modifier.padding(24.dp), horizontalAlignment = Alignment.CenterHorizontally, verticalArrangement = Arrangement.Center) {
@@ -715,26 +682,22 @@ internal fun LoadingState(text: String, modifier: Modifier = Modifier) {
     }
 }
 
-/** A small coloured dot; always used next to text that says the same thing. */
 @Composable
 internal fun StatusDot(color: Color, size: Dp = 8.dp) {
     Box(Modifier.size(size).clip(CircleShape).background(color))
 }
 
-/** An upper-case, letter-spaced heading for a group of rows. */
 @Composable
 internal fun SectionLabel(text: String, color: Color = Muted) {
     Text(text.uppercase(), color = color, fontSize = 10.5.sp, fontWeight = FontWeight.SemiBold, letterSpacing = 1.4.sp, maxLines = 1)
 }
 
-/** The label above a form field. */
 @Composable
 internal fun FieldLabel(text: String) {
     Text(text, color = White.copy(.8f), fontSize = 11.5.sp, fontWeight = FontWeight.Medium)
     Spacer(Modifier.height(6.dp))
 }
 
-/** A label and its value on one line. */
 @Composable
 internal fun DetailLine(label: String, value: String, labelWidth: Dp = 150.dp, valueColor: Color = White) {
     Row(Modifier.fillMaxWidth().padding(vertical = 3.dp)) {
@@ -743,13 +706,11 @@ internal fun DetailLine(label: String, value: String, labelWidth: Dp = 150.dp, v
     }
 }
 
-/** A table header cell. */
 @Composable
 internal fun HeaderText(text: String, modifier: Modifier = Modifier) {
     Text(text, color = Muted, fontSize = 11.sp, fontWeight = FontWeight.Medium, maxLines = 1, overflow = TextOverflow.Ellipsis, modifier = modifier)
 }
 
-/** A modal card with a fixed title, scrolling body and fixed actions. It is shown through [Shell.showDialog]. */
 @Composable
 internal fun DialogCard(
     title: String,
@@ -785,7 +746,6 @@ internal fun DialogCard(
     }
 }
 
-/** Asks for confirmation before an action that cannot be undone. */
 @Composable
 internal fun ConfirmDialog(title: String, message: String, confirm: String, onCancel: () -> Unit, danger: Boolean = false, onConfirm: () -> Unit) {
     DialogCard(title, "", onCancel, width = 440.dp, actions = {
@@ -797,40 +757,61 @@ internal fun ConfirmDialog(title: String, message: String, confirm: String, onCa
     }
 }
 
-private val appIconCache = ConcurrentHashMap<String, java.util.Optional<ImageBitmap>>()
+private class AppIcon(val bitmap: ImageBitmap, val darkGlyph: Boolean)
 
-/** The executable's own icon when Windows can provide one. Callers fall back to the letter avatar. */
+private val appIconCache = ConcurrentHashMap<String, java.util.Optional<AppIcon>>()
+
+private val StoreAppRevision = mutableStateOf(0).also { state -> app.perroute.service.StoreAppPaths.onChange { state.value++ } }
+
 @Composable
-private fun rememberAppIcon(path: String): ImageBitmap? {
-    val key = path.lowercase()
+private fun rememberAppIcon(path: String): AppIcon? {
+    val revision = StoreAppRevision.value
+    val source = remember(path, revision) { app.perroute.service.StoreAppPaths.current(path) }
+    val key = source.lowercase()
     val state = produceState(appIconCache[key]?.orElse(null), key) {
         if (appIconCache.containsKey(key)) { value = appIconCache[key]?.orElse(null); return@produceState }
         value = withContext(Dispatchers.IO) {
             val loaded = runCatching {
-                val file = java.io.File(path)
+                val file = java.io.File(source)
                 if (!file.isFile) return@runCatching null
-                val icon = javax.swing.filechooser.FileSystemView.getFileSystemView().getSystemIcon(file, 32, 32) ?: return@runCatching null
+                val icon = javax.swing.filechooser.FileSystemView.getFileSystemView().getSystemIcon(file, 64, 64) ?: return@runCatching null
                 val image = java.awt.image.BufferedImage(icon.iconWidth.coerceAtLeast(1), icon.iconHeight.coerceAtLeast(1), java.awt.image.BufferedImage.TYPE_INT_ARGB)
                 val graphics = image.createGraphics()
-                try { icon.paintIcon(null, graphics, 0, 0) } finally { graphics.dispose() }
-                image.toComposeImageBitmap()
+                try {
+                    graphics.setRenderingHint(java.awt.RenderingHints.KEY_INTERPOLATION, java.awt.RenderingHints.VALUE_INTERPOLATION_BICUBIC)
+                    icon.paintIcon(null, graphics, 0, 0)
+                } finally { graphics.dispose() }
+                AppIcon(image.toComposeImageBitmap(), darkGlyph(image))
             }.getOrNull()
-            appIconCache[key] = java.util.Optional.ofNullable(loaded)
+            if (loaded != null || java.io.File(source).isFile) appIconCache[key] = java.util.Optional.ofNullable(loaded)
             loaded
         }
     }
     return state.value
 }
 
-/** The application icon, or a coloured initial when Windows has none for it. */
+private fun darkGlyph(image: java.awt.image.BufferedImage): Boolean {
+    var visible = 0
+    var luminance = 0.0
+    for (y in 0 until image.height) for (x in 0 until image.width) {
+        val argb = image.getRGB(x, y)
+        if ((argb ushr 24) < 128) continue
+        visible++
+        luminance += .2126 * ((argb shr 16) and 0xFF) + .7152 * ((argb shr 8) and 0xFF) + .0722 * (argb and 0xFF)
+    }
+    return visible > 0 && luminance / visible < 70.0
+}
+
 @Composable
 internal fun AppAvatar(name: String, path: String = "", size: Dp = 34.dp, framed: Boolean = false) {
     val icon = if (path.isBlank()) null else rememberAppIcon(path)
     val shape = RoundedCornerShape(size * .26f)
     val frame = if (framed) Modifier.border(1.dp, Line, shape) else Modifier
     if (icon != null) {
-        Box(Modifier.size(size).clip(shape).background(if (framed) Surface else Color.Transparent).then(frame), contentAlignment = Alignment.Center) {
-            Image(icon, null, Modifier.size(size * if (framed) .62f else .82f))
+        val tiled = IsDark && icon.darkGlyph
+        Box(Modifier.size(size).clip(shape).background(if (tiled) Color(0xFFEDEDE8) else if (framed) Surface else Color.Transparent).then(frame),
+            contentAlignment = Alignment.Center) {
+            Image(icon.bitmap, null, Modifier.size(size * if (framed || tiled) .62f else .82f))
         }
         return
     }
@@ -842,10 +823,6 @@ internal fun AppAvatar(name: String, path: String = "", size: Dp = 34.dp, framed
     }
 }
 
-/**
- * Country code of a server when its name or address reveals one; a globe otherwise. New draws a charcoal tile with
- * white letters, Simple a soft grey tile. Flag emoji are not drawn: Windows fonts cannot render them.
- */
 @Composable
 internal fun ServerAvatar(node: ProxyNode?, size: Dp = 34.dp) {
     val code = node?.let(::avatarCode).orEmpty()
@@ -859,7 +836,6 @@ internal fun ServerAvatar(node: ProxyNode?, size: Dp = 34.dp) {
     }
 }
 
-/** Country of a server when its flag emoji or address suffix states it; used for the country filter. */
 internal fun countryCode(node: ProxyNode): String {
     val name = PerRouteController.cleanName(node.name()).trim()
     val codePoints = name.codePoints().limit(2).toArray()
@@ -870,11 +846,9 @@ internal fun countryCode(node: ProxyNode): String {
     return suffix.takeIf { it.length == 2 && it.all(Char::isLetter) } ?: ""
 }
 
-/** A looser guess used only to label the avatar: a standalone two-letter code such as "DE" in "Germany DE-01". */
 private fun avatarCode(node: ProxyNode): String =
     countryCode(node).ifBlank { Regex("(?<![A-Za-z0-9])([A-Z]{2})(?![A-Za-z])").find(PerRouteController.cleanName(node.name()))?.groupValues?.get(1).orEmpty() }
 
-/** A server name without the leading flag emoji, which Windows fonts cannot draw. */
 internal fun serverName(node: ProxyNode): String {
     val name = PerRouteController.cleanName(node.name())
     val stripped = name.dropWhile { it.isSurrogate() || it.isWhitespace() }
@@ -882,16 +856,13 @@ internal fun serverName(node: ProxyNode): String {
     return if (points.size == 2 && points.all { it in 0x1F1E6..0x1F1FF } && stripped.isNotBlank()) stripped.trim() else name
 }
 
-/** The protocol as users know it; an embedded Xray JSON profile is shown as "Xray JSON". */
 internal fun protocolLabel(node: ProxyNode): String =
     if (node.protocol() == app.perroute.model.Protocol.XRAY_PROFILE) "Xray JSON" else node.protocol().label()
 
-/** An executable path as a readable application name. */
 internal fun appName(path: String): String = PerRouteController.displayName(path)
 
 internal fun fileName(path: String): String = runCatching { Path.of(path).fileName.toString() }.getOrDefault(path)
 
-/** Joins names as "A, B and C", shortening long lists to "... and N more". */
 internal fun joinNames(names: List<String>, limit: Int = 3): String = when {
     names.isEmpty() -> ""
     names.size == 1 -> names[0]
@@ -899,12 +870,10 @@ internal fun joinNames(names: List<String>, limit: Int = 3): String = when {
     else -> names.take(limit).joinToString(", ") + " and ${names.size - limit} more"
 }
 
-/** A count with its noun in the right number. */
 internal fun plural(count: Int, singular: String, plural: String = singular + "s"): String = "$count ${if (count == 1) singular else plural}"
 
 internal fun formatRate(bytes: Long): String = "${formatBytes(bytes)}/s"
 
-/** A byte count in binary units. */
 internal fun formatBytes(bytes: Long): String {
     val value = bytes.coerceAtLeast(0L).toDouble()
     return when {
@@ -923,10 +892,8 @@ internal fun formatDuration(seconds: Long): String {
     else "%02d:%02d".format(minutes, remaining)
 }
 
-/** A session length as hours, minutes and seconds, always with hours: 00:24:18. */
 internal fun formatClock(seconds: Long): String = "%02d:%02d:%02d".format(seconds / 3600, (seconds % 3600) / 60, seconds % 60)
 
-/** How long ago something happened, in words. */
 internal fun formatAgo(atMillis: Long, now: Long = System.currentTimeMillis()): String {
     val seconds = ((now - atMillis) / 1_000L).coerceAtLeast(0L)
     return when {
@@ -938,11 +905,9 @@ internal fun formatAgo(atMillis: Long, now: Long = System.currentTimeMillis()): 
     }
 }
 
-/** A clock time of day for timelines: 14:32. */
 internal fun formatTimeOfDay(atMillis: Long): String =
     java.time.Instant.ofEpochMilli(atMillis).atZone(java.time.ZoneId.systemDefault()).toLocalTime().withNano(0).toString().take(5)
 
-/** Lets a horizontal row be scrolled with the mouse wheel and by dragging. */
 internal fun Modifier.wheelAndDragScroll(state: ScrollState): Modifier = this
     .pointerInput(state) {
         awaitPointerEventScope {
@@ -968,7 +933,6 @@ internal fun Modifier.wheelAndDragScroll(state: ScrollState): Modifier = this
 internal fun CompositionLtr(content: @Composable () -> Unit) =
     CompositionLocalProvider(LocalLayoutDirection provides LayoutDirection.Ltr, content = content)
 
-/** The New design's mark: a lime route that branches from one line into several. */
 @Composable
 internal fun NewMark(size: Dp = 26.dp, color: Color = NewColors.Lime) {
     Canvas(Modifier.size(size).semantics { contentDescription = "PerRoute" }) {
@@ -987,7 +951,6 @@ internal fun NewMark(size: Dp = 26.dp, color: Color = NewColors.Lime) {
 }
 
 
-/** A horizontal bar showing a share, with an optional track colour. */
 @Composable
 internal fun ProgressBar(fraction: Float, color: Color, modifier: Modifier = Modifier, height: Dp = 6.dp) {
     Box(modifier.height(height).clip(CircleShape).background(NeutralOverlay.copy(if (IsDark) .12f else .08f))) {
@@ -995,7 +958,6 @@ internal fun ProgressBar(fraction: Float, color: Color, modifier: Modifier = Mod
     }
 }
 
-/** The arrow drawn between an app and its server. */
 @Composable
 internal fun ArrowGlyph(color: Color = Muted, size: Dp = 16.dp) {
     Icon(Icons.AutoMirrored.Rounded.ArrowForward, null, tint = color, modifier = Modifier.size(size).offset(y = 0.dp))
