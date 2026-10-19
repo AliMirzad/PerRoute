@@ -4,6 +4,7 @@ using System.Drawing;
 using System.IO;
 using System.IO.Compression;
 using System.Reflection;
+using System.Runtime.InteropServices;
 using System.Resources;
 using System.Security.Cryptography;
 using System.Security.Principal;
@@ -264,6 +265,7 @@ namespace PerRouteSetup
                 statusLabel.Text = "PerRoute was installed successfully.";
                 UseWaitCursor = false;
                 ResetStateKeyPermissions();
+                RefreshShellIcons(result.Executable);
                 if (launchAfterInstall.Checked && !result.RestartRequired) Process.Start("explorer.exe", "\"" + result.Executable + "\"");
                 string completion = "PerRoute " + Version + " and its per-app engine are ready to use.";
                 if (result.RestartRequired) completion += "\r\n\r\nWindows must be restarted before Smart per-app mode can be used.";
@@ -285,6 +287,27 @@ namespace PerRouteSetup
                 MessageBox.Show(this, error.Message, "PerRoute could not be installed",
                     MessageBoxButtons.OK, MessageBoxIcon.Error);
             }
+        }
+
+        [DllImport("shell32.dll", CharSet = CharSet.Unicode)]
+        private static extern void SHChangeNotify(int eventId, uint flags, string item1, IntPtr item2);
+
+        private static void RefreshShellIcons(string executable)
+        {
+            try
+            {
+                SHChangeNotify(0x00002000, 0x0005, executable, IntPtr.Zero);
+                SHChangeNotify(0x08000000, 0x0000, null, IntPtr.Zero);
+                string refresher = Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.System), "ie4uinit.exe");
+                if (File.Exists(refresher))
+                {
+                    ProcessStartInfo start = new ProcessStartInfo(refresher, "-show");
+                    start.UseShellExecute = false;
+                    start.CreateNoWindow = true;
+                    using (Process process = Process.Start(start)) process.WaitForExit(10000);
+                }
+            }
+            catch (Exception) { }
         }
 
         private static void ResetStateKeyPermissions()
