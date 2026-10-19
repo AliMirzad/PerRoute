@@ -34,6 +34,7 @@ import androidx.compose.material.icons.rounded.Lock
 import androidx.compose.material.icons.rounded.MonitorHeart
 import androidx.compose.material.icons.rounded.HealthAndSafety
 import androidx.compose.material.icons.rounded.Web
+import androidx.compose.material.icons.rounded.Devices
 import androidx.compose.material3.Icon
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
@@ -70,6 +71,7 @@ internal fun SimpleWindow(shell: Shell, chrome: WindowChrome) {
                         Tab.Rules -> SimpleRulesPage(shell)
                         Tab.Profiles -> SimpleProfilesPage(shell)
                         Tab.Workspaces -> WorkspacesPage(shell)
+                        Tab.Bridge -> BridgePage(shell)
                         Tab.Diagnostics -> SimpleDiagnosticsPage(shell)
                         Tab.Health -> HealthPage(shell)
                         Tab.Traffic -> SimpleTrafficPage(shell)
@@ -88,6 +90,7 @@ private fun simpleIcon(tab: Tab): ImageVector = when (tab) {
     Tab.Rules -> Icons.Outlined.Description
     Tab.Profiles -> Icons.Outlined.Folder
     Tab.Workspaces -> Icons.Rounded.Web
+    Tab.Bridge -> Icons.Rounded.Devices
     Tab.Diagnostics -> Icons.Rounded.MonitorHeart
     Tab.Health -> Icons.Rounded.HealthAndSafety
     Tab.Traffic -> Icons.Rounded.BarChart
@@ -108,12 +111,15 @@ private fun SimpleSidebar(shell: Shell, chrome: WindowChrome, modifier: Modifier
                 }
             }
         }
-        Column(Modifier.weight(1f).verticalScroll(rememberScrollState()).padding(horizontal = 14.dp, vertical = 8.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+        BoxWithConstraints(Modifier.weight(1f)) {
+        val short = maxHeight < (Tab.entries.size * 56 + 16).dp
+        Column(Modifier.fillMaxSize().verticalScroll(rememberScrollState()).padding(horizontal = 14.dp, vertical = if (short) 2.dp else 8.dp),
+            verticalArrangement = Arrangement.spacedBy(if (short) 2.dp else 8.dp)) {
             Tab.entries.forEach { tab ->
                 val selected = shell.tab == tab
                 val shape = RoundedCornerShape(10.dp)
                 Row(
-                    Modifier.fillMaxWidth().height(48.dp).focusRing(shape).background(if (selected) Violet else Color.Transparent, shape)
+                    Modifier.fillMaxWidth().height(if (short) 40.dp else 48.dp).focusRing(shape).background(if (selected) Violet else Color.Transparent, shape)
                         .selectable(selected, role = Role.Tab) { shell.navigate(tab) }.pointerHoverIcon(PointerIcon.Hand).padding(horizontal = 14.dp),
                     verticalAlignment = Alignment.CenterVertically
                 ) {
@@ -123,6 +129,7 @@ private fun SimpleSidebar(shell: Shell, chrome: WindowChrome, modifier: Modifier
                         fontWeight = if (selected) FontWeight.SemiBold else FontWeight.Normal, maxLines = 1)
                 }
             }
+        }
         }
         Text(Credit, color = Muted, fontSize = 12.sp, modifier = Modifier.padding(start = 26.dp, bottom = 22.dp, top = 8.dp))
     }
@@ -192,16 +199,29 @@ internal fun SimpleTableRow(selected: Boolean = false, modifier: Modifier = Modi
 
 @Composable
 internal fun SimpleSettingRow(title: String, detail: String, note: String = "", divider: Boolean = true, control: (@Composable () -> Unit)? = null) {
-    Row(Modifier.fillMaxWidth().padding(vertical = 16.dp), verticalAlignment = Alignment.CenterVertically) {
-        Column(Modifier.weight(1f)) {
-            Text(title, color = White, fontSize = 15.sp, fontWeight = FontWeight.SemiBold)
-            if (detail.isNotBlank()) { Spacer(Modifier.height(3.dp)); Text(detail, color = Muted, fontSize = 13.sp, lineHeight = 18.sp) }
+    BoxWithConstraints(Modifier.fillMaxWidth()) {
+        val narrow = maxWidth < 520.dp
+        val text: @Composable (Modifier) -> Unit = { modifier ->
+            Column(modifier) {
+                Text(title, color = White, fontSize = 15.sp, fontWeight = FontWeight.SemiBold)
+                if (detail.isNotBlank()) { Spacer(Modifier.height(3.dp)); Text(detail, color = Muted, fontSize = 13.sp, lineHeight = 18.sp) }
+            }
         }
-        if (control != null) {
-            Spacer(Modifier.width(18.dp))
-            Column(horizontalAlignment = Alignment.End) {
+        if (narrow && control != null) {
+            Column(Modifier.fillMaxWidth().padding(vertical = 16.dp)) {
+                text(Modifier.fillMaxWidth())
+                Spacer(Modifier.height(10.dp))
                 control()
                 if (note.isNotBlank()) { Spacer(Modifier.height(6.dp)); Text(note, color = Muted, fontSize = 12.sp) }
+            }
+        } else Row(Modifier.fillMaxWidth().padding(vertical = 16.dp), verticalAlignment = Alignment.CenterVertically) {
+            text(Modifier.weight(1f))
+            if (control != null) {
+                Spacer(Modifier.width(18.dp))
+                Column(horizontalAlignment = Alignment.End) {
+                    control()
+                    if (note.isNotBlank()) { Spacer(Modifier.height(6.dp)); Text(note, color = Muted, fontSize = 12.sp) }
+                }
             }
         }
     }

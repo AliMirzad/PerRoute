@@ -63,6 +63,9 @@ Full notes: [docs/releases/v3.5.1.md](docs/releases/v3.5.1.md).
 | **Gaming test** *(3.5)* | Steady latency, jitter, packet loss and UDP support per server, and a score built for games. |
 | **Block QUIC** *(3.5.1)* | Routed apps use HTTPS over TCP instead of QUIC, which is usually much faster through a tunnel. On by default, one switch to turn off. |
 | **Browser extension** | PerRoute inside Chrome, Edge, Brave and Vivaldi, with or without the app: site-by-site routing (Tunnel, Direct, Block, a server per site, temporary rules), server tests and quality scores, failover, kill switch, traffic, presets, recipes, profiles, a connection doctor, a request inspector and encrypted backups. See [Browser extension](#browser-extension). |
+| **Quick Route** | Right-click a program or its shortcut in Explorer and choose **Route with PerRoute**: pick the main server, a server of its own or Auto, and save, without opening Apps. |
+| **LAN Bridge** | Share this computer's connection with your phone, tablet or TV on the same Wi-Fi, for an hour, four hours or until you stop. Each device gets its own port, password and setup code, and can be removed on its own. |
+| **Resource saving** | On battery or a metered network, background server checks run less often, automatic speed tests pause and updates wait. Routes, route recovery and the kill switch are never weakened. |
 | **Three connection modes** | Smart per-app, System proxy, and Local proxy (SOCKS5 + HTTP). |
 | **Subscriptions** | Import by URL, pasted share links, Xray JSON, or QR code (image, clipboard, or camera). Updates keep your favorites, tags and selection. |
 | **Latency and speed tests** | Endpoint ping, a real tunnel test, and a download speed test per server, with sorting and filtering. |
@@ -141,7 +144,7 @@ Select a subscription and open its details for the provider's **usage, quota and
 
 ### Apps
 
-Choose from installed applications, running applications, or browse for any executable. Multi-process applications appear once. Microsoft Store apps are found at their current version after the Store updates them, so they keep their selection, route and icon. Changes are staged: nothing is applied until you choose **Save changes**, and leaving the screen with unsaved edits asks whether to save or discard them.
+Choose from installed applications, running applications, or browse for any executable. Or skip this screen: right-click a program or its shortcut in Explorer and choose **Route with PerRoute** (on Windows 11 under *Show more options*). A small window asks which server it should use and saves the route; while connected, it reconnects once to apply it. Multi-process applications appear once. Microsoft Store apps are found at their current version after the Store updates them, so they keep their selection, route and icon. Changes are staged: nothing is applied until you choose **Save changes**, and leaving the screen with unsaved edits asks whether to save or discard them.
 
 Select an application to open its panel on the right: its route mode, the current decision and the reason for it, and its **bandwidth limit** (download and upload in megabits per second, or unlimited). Limits are saved and applied at once, even while connected; the panel says whether the limit is **Enforced**, **Throttling**, **Pending** (applies when you connect) or **Not enforced** and why.
 
@@ -223,6 +226,15 @@ The **Inspector** tab lists the live connections of the selected applications in
 > [!NOTE]
 > Diagnostics report what public servers observed at that moment, and the rule tester predicts a routing decision without opening a connection. Neither captures packets, and neither is a substitute for a dedicated leak test.
 
+### LAN Bridge
+
+*Tools > LAN Bridge* lets a phone, tablet or TV on your Wi-Fi use this computer's connection through your main server. Add a device, choose the network and how long to share (one hour, four hours or until you stop), and start sharing. **Set up** shows a code that proxy apps on Android and iPhone can scan, plus the server, port, user name and password to enter by hand. An iPhone or iPad also works without an app: *Settings > Wi-Fi > (i) > Configure Proxy > Manual*, with Authentication on. Android's own Wi-Fi proxy cannot send a password, so it needs a proxy app.
+
+- Every device has its own port and random password. **Remove** makes that password stop working at once; other devices reconnect within a moment.
+- The list shows which devices are active, the address they connect from and the sites they opened recently. Nothing is written to disk.
+- Sharing listens only on the network you chose, works only on networks Windows treats as private, and stops when the time is up, when PerRoute closes or when the computer leaves that network. The first start asks once for Administrator approval to add a Windows Firewall rule for PerRoute's sharing ports, limited to private networks and to the copy of Xray that comes with PerRoute.
+- Shared devices cannot reach this computer or other devices on your network through it, and sharing follows the main server when you change it.
+
 ### Health
 
 The **Connection Doctor** takes an app (and optionally a site) that does not work and checks from the outside in: your connection, DNS and clock, the core and the per-app engine, the Windows proxy, the server, the tunnel and the rule for the site. It names the most likely cause and offers a repair that runs only after you confirm. The **Safety Center** tests every route's exit address, explains where name lookups go, and finds rules that are not loaded or can never apply.
@@ -272,6 +284,9 @@ Closing or minimizing the main window keeps PerRoute in the notification area. C
 | Browser workspaces | Tools > Workspaces (New), Workspaces (Simple) |
 | Connection Doctor, Safety Center | Tools > Health (New), Health (Simple) |
 | Local network | Settings > Local network |
+| LAN Bridge | Tools > LAN Bridge (New), LAN Bridge (Simple) |
+| Quick Route | Right-click a program in Explorer; *Settings > General* turns the menu entry on or off |
+| Resource saving | Settings > Automation |
 | Network Time Machine, rollback | Settings > Recovery; **PerRoute Recovery** in the Start menu |
 
 See [docs/releases/v3.5.0.md](docs/releases/v3.5.0.md) for how each works and its limits.

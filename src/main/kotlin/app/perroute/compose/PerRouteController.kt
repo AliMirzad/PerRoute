@@ -63,6 +63,13 @@ data class EnvironmentState(
 
 data class ActionResult(val ok: Boolean, val message: String)
 
+data class QuickRouteTarget(val path: String, val name: String, val selected: Boolean, val mode: AppRouteMode, val nodeKey: String, val problem: String)
+
+data class BridgeDeviceView(val device: app.perroute.bridge.BridgeDevice, val port: Int, val activity: app.perroute.bridge.BridgeActivity.Device,
+                            val socksLink: String, val httpLink: String)
+
+data class BridgeView(val running: Boolean, val address: String, val server: String, val startedAt: Long, val until: Long, val devices: List<BridgeDeviceView>)
+
 data class WorkspaceView(
     val workspace: app.perroute.workspace.Workspace,
     val running: Boolean,
@@ -238,6 +245,8 @@ class PerRouteController @JvmOverloads constructor(
     @Volatile private var updateProgress = 0
     @Volatile private var updateDownloadMessage = ""
     @Volatile private var downloadedUpdate: Path? = null
+    @Volatile private var resourceConditions = app.perroute.service.ResourceConditions.Snapshot.NORMAL
+    @Volatile private var resourceMonitor: Thread? = null
     @Volatile private var downloadedUpdateVersion: String? = null
     @Volatile private var updateChecker: Thread? = null
     @Volatile private var runningAppCache = emptyList<ProcessDiscovery.RunningApplication>()
@@ -303,6 +312,8 @@ class PerRouteController @JvmOverloads constructor(
         app.perroute.netstate.NetworkStateKeys.setPerRouteServer(app.perroute.service.WindowsSystemProxyManager.perRouteProxyServer())
         startNetworkMonitor()
         startQualityMeasurements()
+        startResourceMonitor()
+        syncExplorerMenu()
         recoverFromUnexpectedExit()
         if (applications().any(app.perroute.service.StoreAppPaths::stale)) {
             Thread.ofVirtual().name("perroute-store-apps").start { runCatching { installedApplications() } }
@@ -384,7 +395,7 @@ class PerRouteController @JvmOverloads constructor(
     fun autoUpdate(): Boolean = preferences.getBoolean(PREF_AUTO_UPDATE, true)
     fun setAutoUpdate(value: Boolean): ActionResult {
         preferences.putBoolean(PREF_AUTO_UPDATE, value)
-        if (value && availableUpdateVersion() != null && updateReadyVersion() == null) downloadAvailableUpdateInBackground()
+        if (value && availableUpdateVersion() != null && updateReadyVersion() == null && updateDownloadAllowed()) downloadAvailableUpdateInBackground()
         return ActionResult(true, if (value) "New versions are downloaded and verified automatically; you choose when to restart."
             else "New versions are only shown; download them here when you want.")
     }
@@ -399,7 +410,8 @@ class PerRouteController @JvmOverloads constructor(
                 val version = availableUpdateVersion()
                 if (result.ok && version != null && version != downloadedUpdateVersion) {
                     log(result.message)
-                    if (autoUpdate()) downloadAvailableUpdateInBackground()
+                    if (autoUpdate() && updateDownloadAllowed()) downloadAvailableUpdateInBackground()
+                    else if (autoUpdate()) log("The update downloads once you are off the metered network.")
                 }
                 try { Thread.sleep(UPDATE_CHECK_INTERVAL_MILLIS) } catch (_: InterruptedException) { return@start }
             }
@@ -515,7 +527,9 @@ class PerRouteController @JvmOverloads constructor(
             targets = ::qualityTargets,
             verifyCandidates = { if (hasAutoApps()) autoCandidateNodes() else emptyList() },
             ping = { node -> latencyProbe.probe(node, 2_000).let { if (it.reachable()) it.milliseconds() else -1L } },
-            verify = { node -> realTunnelProbe.probe(node).let { it.reachable() to it.milliseconds() } }
+            verify = { node -> realTunnelProbe.probe(node).let { it.reachable() to it.milliseconds() } },
+            interval = { if (resourceSaving()) QualityService.SAVING_INTERVAL_MILLIS else QualityService.INTERVAL_MILLIS },
+            batch = { if (resourceSaving()) QualityService.SAVING_BATCH else QualityService.BATCH }
         )
     }
 
@@ -1059,6 +1073,267 @@ class PerRouteController @JvmOverloads constructor(
     private fun deleteTree(root: Path) {
         if (!Files.exists(root)) return
         Files.walk(root).use { paths -> paths.sorted(Comparator.reverseOrder()).forEach { Files.deleteIfExists(it) } }
+    }
+
+    private val quickRouteRequests by lazy { app.perroute.service.QuickRouteRequests(AppDirectories.dataDirectory()) }
+
+    fun takeQuickRouteRequests(): List<app.perroute.service.QuickRouteRequests.Request> = quickRouteRequests.take()
+
+    fun quickRouteTarget(raw: String): QuickRouteTarget {
+        val fallbackName = raw.trim().trim('"').substringAfterLast('\\').substringAfterLast('/')
+        fun failed(problem: String) = QuickRouteTarget(raw, fallbackName, false, AppRouteMode.MAIN, "", problem)
+        val given = runCatching { Path.of(raw.trim().trim('"')).toAbsolutePath().normalize() }.getOrNull() ?: return failed("That is not a file PerRoute can route.")
+        val program = if (given.fileName?.toString()?.endsWith(".lnk", ignoreCase = true) == true) {
+            backend.resolveShortcut(given)?.toAbsolutePath()?.normalize() ?: return failed("That shortcut does not point to a program PerRoute can route.")
+        } else given
+        val name = program.fileName?.toString().orEmpty()
+        if (!name.endsWith(".exe", ignoreCase = true)) return failed("Only programs (.exe files) can be routed.")
+        if (!Files.isRegularFile(program)) return failed("$name was not found.")
+        val own = listOfNotNull(app.perroute.update.InstallLocation.current().map { it.root() }.orElse(null), AppDirectories.coreDirectory())
+        if (own.any { root -> program.startsWith(root.toAbsolutePath().normalize()) }) return failed("PerRoute and its own components are never routed.")
+        val path = program.toString()
+        val selected = applications().any { it.equals(path, ignoreCase = true) }
+        val key = AppRoutes.normalize(path)
+        val nodeKey = synchronized(state) { state.appRoutes()[key].orEmpty() }
+        return QuickRouteTarget(path, name, selected, if (selected) appRouteMode(path) else AppRouteMode.MAIN, nodeKey, "")
+    }
+
+    fun quickRoute(raw: String, mode: AppRouteMode?, nodeKey: String, reconnect: Boolean): ActionResult {
+        val target = quickRouteTarget(raw)
+        if (target.problem.isNotBlank()) return ActionResult(false, target.problem)
+        val name = target.name.removeSuffix(".exe").removeSuffix(".EXE")
+        val server = nodes().firstOrNull { it.key() == nodeKey }
+        if (mode == AppRouteMode.MANUAL && server == null) return ActionResult(false, "Choose a server for $name.")
+        val busy = isConnected() || phase != ConnectionPhase.DISCONNECTED
+        if (busy && !reconnect) return ActionResult(false, "Disconnect to change the selected apps, or choose Save and reconnect.")
+        if (busy) disconnect()
+        val key = AppRoutes.normalize(target.path)
+        val wasAdvanced = advancedRouting()
+        val paths = applications().filterNot { it.equals(target.path, ignoreCase = true) }.toMutableList()
+        if (mode != null) paths += target.path
+        val routes = LinkedHashMap(appRoutes()).apply { remove(key); if (mode == AppRouteMode.MANUAL) put(key, nodeKey) }
+        val auto = LinkedHashSet(autoApps()).apply { remove(key); if (mode == AppRouteMode.AUTO) add(key) }
+        val advanced = wasAdvanced || mode == AppRouteMode.MANUAL || mode == AppRouteMode.AUTO
+        val saved = saveApplicationSetup(paths, routes, advanced, auto, autoPools())
+        if (!saved.ok) {
+            if (busy) connect()
+            return saved
+        }
+        var message = when (mode) {
+            null -> "$name is no longer routed and uses your regular connection."
+            AppRouteMode.MAIN -> "$name now uses the main server."
+            AppRouteMode.MANUAL -> "$name now uses ${cleanName(server!!.name())}."
+            AppRouteMode.AUTO -> "$name now uses the best measured server."
+        }
+        log("Quick Route: $message")
+        if (advanced && !wasAdvanced) message += " Advanced routing was turned on for this."
+        if (mode != null && connectionMode() != ConnectionMode.NATIVE_PER_APP) message += " Apps are routed in Smart per-app mode."
+        if (!busy) return ActionResult(true, message)
+        val connected = connect()
+        return if (connected.ok) ActionResult(true, "$message Reconnected.") else ActionResult(false, "$message Reconnecting failed: ${connected.message}")
+    }
+
+    private fun installedExecutable(): Path? = app.perroute.update.InstallLocation.current()
+        .map { it.root().resolve("PerRoute.exe") }.filter(Files::isRegularFile).orElse(null)
+
+    fun explorerMenuAvailable(): Boolean = installedExecutable() != null
+    fun explorerMenu(): Boolean = preferences.getBoolean(PREF_EXPLORER_MENU, true)
+
+    fun setExplorerMenu(value: Boolean): ActionResult {
+        preferences.putBoolean(PREF_EXPLORER_MENU, value)
+        val executable = installedExecutable() ?: return ActionResult(false, "The Explorer menu needs the installed PerRoute or its portable folder.")
+        return try {
+            backend.setExplorerMenu(executable, value)
+            ActionResult(true, if (value) "Right-click a program and choose $EXPLORER_LABEL to route it. On Windows 11 it is under Show more options."
+                else "$EXPLORER_LABEL was removed from Explorer's menu.")
+        } catch (error: Throwable) { ActionResult(false, message(error)) }
+    }
+
+    private fun syncExplorerMenu() {
+        val executable = installedExecutable() ?: return
+        Thread.ofVirtual().name("perroute-explorer-menu").start {
+            runCatching {
+                val registered = backend.explorerMenuRegistered(executable)
+                if (explorerMenu() && !registered) backend.setExplorerMenu(executable, true)
+                if (!explorerMenu() && registered) backend.setExplorerMenu(executable, false)
+            }
+        }
+    }
+
+    fun adaptiveResources(): Boolean = preferences.getBoolean(PREF_ADAPTIVE_RESOURCES, true)
+
+    fun setAdaptiveResources(value: Boolean): ActionResult {
+        preferences.putBoolean(PREF_ADAPTIVE_RESOURCES, value)
+        return ActionResult(true, if (value) "On battery or a metered network, PerRoute now does less in the background. Routes and protection are unchanged."
+            else "PerRoute measures servers and downloads updates the same way on battery and metered networks.")
+    }
+
+    fun resourceConditions(): app.perroute.service.ResourceConditions.Snapshot = resourceConditions
+
+    fun resourceSaving(): Boolean = adaptiveResources() && resourceConditions.constrained()
+
+    fun automaticSpeedTestsNow(): Boolean = autoSpeedTest() && !resourceSaving()
+
+    fun refreshResourceConditions(): app.perroute.service.ResourceConditions.Snapshot {
+        val before = resourceConditions
+        val now = runCatching { backend.resourceConditions() }.getOrDefault(before)
+        resourceConditions = now
+        if (now != before && adaptiveResources()) {
+            if (now.constrained()) log("PerRoute is ${now.reason()}: background server checks run less often, automatic speed tests pause" +
+                (if (now.metered) " and updates wait for another network." else ".") + " Routes and the kill switch are unchanged.")
+            else if (before.constrained()) {
+                log("Back on mains power and an unmetered network: background checks run as usual.")
+                if (autoUpdate() && availableUpdateVersion() != null && updateReadyVersion() == null) downloadAvailableUpdateInBackground()
+            }
+        }
+        return now
+    }
+
+    private fun startResourceMonitor() {
+        if (resourceMonitor != null) return
+        resourceMonitor = Thread.ofVirtual().name("perroute-resources").start {
+            while (!closing) {
+                refreshResourceConditions()
+                try { Thread.sleep(RESOURCE_CHECK_MILLIS) } catch (_: InterruptedException) { return@start }
+            }
+        }
+    }
+
+    private fun updateDownloadAllowed(): Boolean = !(adaptiveResources() && resourceConditions.metered)
+
+    private val bridgeStore by lazy { app.perroute.bridge.BridgeStore(AppDirectories.dataDirectory().resolve("bridge-devices.bin")) }
+    private val bridgeActivity = app.perroute.bridge.BridgeActivity()
+    private class RunningBridge(val tunnel: IsolatedTunnel, val address: String, val nodeKey: String, val startedAt: Long, val until: Long)
+    @Volatile private var runningBridge: RunningBridge? = null
+
+    fun bridgePort(device: app.perroute.bridge.BridgeDevice): Int = BRIDGE_PORT_BASE + device.slot()
+
+    fun bridgeAddresses(): List<String> = localNetworks().map { it.address() }
+        .filter { address -> address.count { it == '.' } == 3 && runCatching { java.net.InetAddress.getByName(address).isSiteLocalAddress }.getOrDefault(false) }
+        .distinct()
+
+    fun bridgeView(now: Long = System.currentTimeMillis()): BridgeView {
+        val running = runningBridge?.takeIf { it.tunnel.alive() }
+        val devices = bridgeStore.all().map { device ->
+            val port = bridgePort(device)
+            val host = running?.address ?: ""
+            BridgeDeviceView(device, port, bridgeActivity.device(device.inboundTag()),
+                if (host.isBlank()) "" else app.perroute.bridge.BridgeLinks.socks(host, port, device),
+                if (host.isBlank()) "" else app.perroute.bridge.BridgeLinks.http(host, port, device))
+        }
+        val node = running?.let { live -> nodes().firstOrNull { it.key() == live.nodeKey } }
+        return BridgeView(running != null, running?.address.orEmpty(), node?.let { cleanName(it.name()) }.orEmpty(),
+            running?.startedAt ?: 0L, running?.until ?: 0L, devices)
+    }
+
+    fun addBridgeDevice(name: String): ActionResult {
+        val clean = name.trim()
+        if (clean.isBlank()) return ActionResult(false, "Give the device a name, such as My phone.")
+        if (bridgeStore.all().any { it.name.equals(clean, ignoreCase = true) }) return ActionResult(false, "A device with that name exists already.")
+        return try {
+            val device = bridgeStore.create(clean, System.currentTimeMillis())
+            log("LAN Bridge: ${device.name} was added.")
+            restartBridgeIfRunning()
+            ActionResult(true, "${device.name} was added. Open its setup to connect it.")
+        } catch (error: Throwable) { ActionResult(false, message(error)) }
+    }
+
+    fun renameBridgeDevice(id: String, name: String): ActionResult {
+        if (name.isBlank()) return ActionResult(false, "Give the device a name.")
+        if (bridgeStore.all().any { it.id != id && it.name.equals(name.trim(), ignoreCase = true) }) return ActionResult(false, "A device with that name exists already.")
+        return try { bridgeStore.rename(id, name.trim()); ActionResult(true, "Saved.") } catch (error: Throwable) { ActionResult(false, message(error)) }
+    }
+
+    fun removeBridgeDevice(id: String): ActionResult {
+        val device = bridgeStore.find(id) ?: return ActionResult(true, "That device was removed already.")
+        return try {
+            bridgeStore.remove(id)
+            bridgeActivity.forget(device.inboundTag())
+            log("LAN Bridge: access for ${device.name} was removed.")
+            if (bridgeStore.all().isEmpty()) stopBridge("the last device was removed") else restartBridgeIfRunning()
+            ActionResult(true, "${device.name} can no longer use this computer's connection. Its password will not work again.")
+        } catch (error: Throwable) { ActionResult(false, message(error)) }
+    }
+
+    fun bridgeFirewallReady(): Boolean = runCatching {
+        backend.bridgeFirewallReady(AppDirectories.coreDirectory().resolve("xray.exe"), BRIDGE_PORT_BASE, BRIDGE_PORT_BASE + app.perroute.bridge.BridgeDevice.SLOTS - 1)
+    }.getOrDefault(false)
+
+    @Synchronized
+    fun startBridge(address: String, minutes: Int, allowFirewall: Boolean): ActionResult {
+        val node = selectedNode() ?: return ActionResult(false, "Add a server first. Shared devices use your main server.")
+        val devices = bridgeStore.all()
+        if (devices.isEmpty()) return ActionResult(false, "Add a device first, such as your phone.")
+        if (minutes < 0 || minutes > 24 * 60) return ActionResult(false, "Choose how long to share.")
+        if (address !in bridgeAddresses()) return ActionResult(false, "That network is no longer available. Choose the network your phone is on.")
+        if (backend.networkCategory(address).equals("Public", ignoreCase = true)) return ActionResult(false,
+            "Windows treats this network as public, so sharing stays blocked. If it is your own network, set it to Private in Windows Settings > Network & internet, then start again.")
+        if (!bridgeFirewallReady()) {
+            if (!allowFirewall) return ActionResult(false, BRIDGE_NEEDS_FIREWALL)
+            try {
+                backend.allowBridgeFirewall(AppDirectories.coreDirectory().resolve("xray.exe"), BRIDGE_PORT_BASE, BRIDGE_PORT_BASE + app.perroute.bridge.BridgeDevice.SLOTS - 1)
+                log("LAN Bridge: Windows Firewall now lets devices on private networks reach the sharing ports.")
+            } catch (error: Throwable) { return ActionResult(false, message(error)) }
+        }
+        runningBridge?.let { runCatching { it.tunnel.close() } }
+        runningBridge = null
+        return try {
+            val inbounds = devices.map { XrayConfigGenerator.BridgeInbound(it.inboundTag(), bridgePort(it), it.user(), it.password()) }
+            val config = XrayConfigGenerator().generateBridge(node, address, inbounds, app.perroute.service.RealTunnelProbe.reservePort())
+            val tunnel = backend.startIsolatedCore(config, bridgePort(devices.first())) { line -> bridgeActivity.accept(line, System.currentTimeMillis()) }
+            Thread.sleep(300)
+            if (!tunnel.alive()) {
+                val reason = tunnel.lastLines().lastOrNull { it.contains("fail", true) || it.contains("error", true) } ?: "the core stopped at once"
+                tunnel.close()
+                return ActionResult(false, "Sharing could not start: $reason")
+            }
+            val now = System.currentTimeMillis()
+            val running = RunningBridge(tunnel, address, node.key(), now, if (minutes == 0) 0L else now + minutes * 60_000L)
+            runningBridge = running
+            watchBridge(running)
+            log("LAN Bridge: sharing on $address through ${cleanName(node.name())} with ${devices.size} device${if (devices.size == 1) "" else "s"}.")
+            ActionResult(true, "Sharing on $address" + (if (minutes == 0) "" else " for ${formatMinutes(minutes)}") + ". Set up a device to connect it.")
+        } catch (error: Throwable) {
+            ActionResult(false, "Sharing could not start: ${message(error)}")
+        }
+    }
+
+    @Synchronized
+    fun stopBridge(reason: String = ""): ActionResult {
+        val running = runningBridge ?: return ActionResult(true, "Sharing is off.")
+        runningBridge = null
+        runCatching { running.tunnel.close() }
+        log("LAN Bridge stopped" + (if (reason.isBlank()) "." else ": $reason."))
+        return ActionResult(true, "Sharing stopped. Devices can no longer use this computer's connection.")
+    }
+
+    private fun restartBridgeIfRunning() {
+        val running = runningBridge ?: return
+        val left = if (running.until == 0L) 0 else ((running.until - System.currentTimeMillis()) / 60_000L).toInt().coerceAtLeast(1)
+        val result = startBridge(running.address, left, allowFirewall = false)
+        if (!result.ok) log("LAN Bridge could not restart: ${result.message}")
+    }
+
+    private fun watchBridge(running: RunningBridge) {
+        Thread.ofVirtual().name("perroute-bridge-watch").start {
+            var ticks = 0
+            while (!closing && runningBridge === running) {
+                try { Thread.sleep(5_000) } catch (_: InterruptedException) { return@start }
+                if (closing || runningBridge !== running) return@start
+                val now = System.currentTimeMillis()
+                when {
+                    running.until in 1..now -> { stopBridge("the sharing time ended"); return@start }
+                    !running.tunnel.alive() -> { stopBridge("its core stopped"); return@start }
+                    selectedNode()?.key() != running.nodeKey -> { log("LAN Bridge follows the new main server."); restartBridgeIfRunning(); return@start }
+                    ++ticks % 6 == 0 && running.address !in bridgeAddresses() -> { stopBridge("this computer left the network ${running.address}"); return@start }
+                }
+            }
+        }
+    }
+
+    private fun formatMinutes(minutes: Int): String = when {
+        minutes % 60 == 0 -> "${minutes / 60} hour" + if (minutes == 60) "" else "s"
+        else -> "$minutes minutes"
     }
 
     private val recipeSnapshotFile: Path get() = AppDirectories.dataDirectory().resolve("recipe-rollback.bin")
@@ -2029,6 +2304,7 @@ class PerRouteController @JvmOverloads constructor(
         saveTemporary()
         runningWorkspaces.keys.toList().forEach { stopWorkspace(it) }
         runCatching { workspaceStore.clear() }
+        runCatching { stopBridge(); bridgeStore.clear(); bridgeActivity.clear() }
         localNetworkCache = emptyList()
         localNetworkCacheAt = 0L
         latencyCache = emptyMap()
@@ -3352,6 +3628,9 @@ class PerRouteController @JvmOverloads constructor(
         recovery.close()
         runningWorkspaces.values.forEach { runCatching { it.tunnel.close() } }
         runningWorkspaces.clear()
+        runningBridge?.let { runCatching { it.tunnel.close() } }
+        runningBridge = null
+        resourceMonitor?.interrupt()
         runCatching { markStartupHealthy() }
         runCatching { quality.close() }
         history.close()
@@ -3376,6 +3655,12 @@ class PerRouteController @JvmOverloads constructor(
         private const val PREF_TRAFFIC_GATEWAY = "v3.trafficGateway"
         private const val PREF_BLOCK_QUIC = "v3.blockQuic"
         private const val PREF_AUTO_UPDATE = "v3.autoUpdate"
+        private const val PREF_EXPLORER_MENU = "v3.explorerMenu"
+        private const val PREF_ADAPTIVE_RESOURCES = "v3.adaptiveResources"
+        private const val RESOURCE_CHECK_MILLIS = 2L * 60 * 1000
+        const val EXPLORER_LABEL = app.perroute.service.ExplorerMenu.LABEL
+        const val BRIDGE_NEEDS_FIREWALL = "Windows Firewall must let devices on your network reach PerRoute first."
+        val BRIDGE_PORT_BASE = 19800 + app.perroute.service.PortOffset.VALUE
         private const val UPDATE_CHECK_INTERVAL_MILLIS = 6L * 60 * 60 * 1000
         private const val PREF_AUTO_MARGIN = "v3.autoSwitchMargin"
         private const val PREF_AUTO_COOLDOWN = "v3.autoCooldownMinutes"

@@ -142,6 +142,7 @@ internal class AutomationSettingsModel(private val shell: Shell) {
     var killSwitch by mutableStateOf(controller.killSwitch())
     var fastestOnConnect by mutableStateOf(controller.fastestOnConnect())
     var autoSpeedTest by mutableStateOf(controller.autoSpeedTest())
+    var adaptive by mutableStateOf(controller.adaptiveResources())
 
     class Option(val title: String, val detail: String, val value: Boolean, val set: (Boolean) -> Unit)
 
@@ -150,9 +151,35 @@ internal class AutomationSettingsModel(private val shell: Shell) {
         Option("Main server failover", "After three failed checks, switch the main server to the fastest reachable one.", autoFailover) { autoFailover = it; controller.setAutoFailover(it) },
         Option("Per-app killswitch", "Keep selected apps offline while their tunnel is unavailable.", killSwitch) { killSwitch = it; controller.setKillSwitch(it) },
         Option("Fastest main server on connect", "Measure reachable servers and use the lowest latency as the main server when connecting.", fastestOnConnect) { fastestOnConnect = it; controller.setFastestOnConnect(it) },
-        Option("Automatic speed tests", "After pinging, measure the download speed of the 10 best servers (up to 10 MB each).", autoSpeedTest) { autoSpeedTest = it; controller.setAutoSpeedTest(it) }
+        Option("Automatic speed tests", "After pinging, measure the download speed of the 10 best servers (up to 10 MB each).", autoSpeedTest) { autoSpeedTest = it; controller.setAutoSpeedTest(it) },
+        Option("Save resources on battery and metered networks", AdaptiveResourcesDetail + resourceNow(), adaptive) { adaptive = it; shell.notify(controller.setAdaptiveResources(it)) }
     )
+
+    private fun resourceNow(): String {
+        val now = controller.resourceConditions()
+        return when {
+            !now.constrained() -> ""
+            adaptive -> " Now: saving resources, ${now.reason()}."
+            else -> " PerRoute is ${now.reason()}."
+        }
+    }
 }
+
+internal const val AdaptiveResourcesDetail = "Background server checks run hourly and on fewer servers, automatic speed tests pause, and updates wait for an unmetered network. Routes, route recovery and the kill switch are never weakened."
+
+internal const val ExplorerMenuDetail = "Right-click a program or its shortcut in Explorer and choose Route with PerRoute to route it, without opening Apps. On Windows 11 it is under Show more options."
+
+internal class ExplorerMenuModel(private val shell: Shell) {
+    val available = shell.controller.explorerMenuAvailable()
+    var enabled by mutableStateOf(shell.controller.explorerMenu())
+
+    fun change(on: Boolean) {
+        enabled = on
+        shell.run(silent = false) { shell.controller.setExplorerMenu(on) }
+    }
+}
+
+internal fun explorerMenuModel(shell: Shell): ExplorerMenuModel = shell.screen("${Tab.Settings.name}:explorer") { ExplorerMenuModel(shell) }
 
 internal const val AutoUpdateDetail = "New versions are downloaded and verified in the background. PerRoute asks before it restarts to install them."
 

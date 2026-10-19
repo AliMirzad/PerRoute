@@ -303,6 +303,59 @@ public final class XrayConfigGenerator {
         return Json.stringify(root) + System.lineSeparator();
     }
 
+    public record BridgeInbound(String tag, int port, String user, String password) {}
+
+    public static final String BRIDGE_PRIVATE_RULE = "perroute-bridge-private";
+    public static final String BRIDGE_LOCAL_NAMES_RULE = "perroute-bridge-local-names";
+
+    @SuppressWarnings("unchecked")
+    public String generateBridge(ProxyNode node, String listen, List<BridgeInbound> devices, int apiPort) {
+        if (listen == null || listen.isBlank()) throw new IllegalArgumentException("Choose the network to share on");
+        if (devices == null || devices.isEmpty()) throw new IllegalArgumentException("Add a device first");
+        Map<String, Object> root = Json.object(generateApplicationProxy(node, List.of(), List.of()));
+        List<Object> inbounds = new ArrayList<>();
+        Object api = ((List<Object>) root.get("inbounds")).stream()
+                .filter(value -> value instanceof Map<?, ?> map && "perroute-api".equals(map.get("tag"))).findFirst().orElse(null);
+        if (api instanceof Map<?, ?> raw) {
+            Map<String, Object> copy = new LinkedHashMap<>((Map<String, Object>) raw);
+            copy.put("port", apiPort);
+            inbounds.add(copy);
+        }
+        List<String> tags = new ArrayList<>();
+        for (BridgeInbound device : devices) {
+            Map<String, Object> settings = map();
+            settings.put("auth", "password");
+            settings.put("accounts", List.of(Map.of("user", device.user(), "pass", device.password())));
+            settings.put("udp", true);
+            settings.put("ip", listen);
+            Map<String, Object> sniffing = map();
+            sniffing.put("enabled", true);
+            sniffing.put("destOverride", List.of("http", "tls"));
+            sniffing.put("routeOnly", true);
+            Map<String, Object> inbound = map();
+            inbound.put("tag", device.tag());
+            inbound.put("listen", listen);
+            inbound.put("port", device.port());
+            inbound.put("protocol", "mixed");
+            inbound.put("settings", settings);
+            inbound.put("sniffing", sniffing);
+            inbounds.add(inbound);
+            tags.add(device.tag());
+        }
+        root.put("inbounds", inbounds);
+        String blockTag = ((List<Object>) root.get("outbounds")).stream()
+                .filter(value -> value instanceof Map<?, ?> map && "blackhole".equals(map.get("protocol")))
+                .map(value -> String.valueOf(((Map<?, ?>) value).get("tag"))).findFirst().orElse("block");
+        Map<String, Object> routing = (Map<String, Object>) root.get("routing");
+        List<Object> rules = new ArrayList<>(routing.get("rules") instanceof List<?> list ? list : List.of());
+        rules.add(0, Map.of("type", "field", "inboundTag", tags, "outboundTag", blockTag, "ruleTag", BRIDGE_LOCAL_NAMES_RULE,
+                "domain", List.of("full:localhost", "domain:local", "domain:lan", "domain:home.arpa", "domain:internal", "domain:localdomain")));
+        rules.add(0, Map.of("type", "field", "inboundTag", tags, "outboundTag", blockTag, "ruleTag", BRIDGE_PRIVATE_RULE,
+                "ip", List.of("geoip:private", "127.0.0.0/8", "0.0.0.0/8", "169.254.0.0/16", "::1/128", "fc00::/7", "fe80::/10")));
+        routing.put("rules", rules);
+        return Json.stringify(root) + System.lineSeparator();
+    }
+
     public String generate(ProxyNode node, List<String> applicationPaths, RoutingMode mode) {
         if (node == null) throw new IllegalArgumentException("A server must be selected");
         if (applicationPaths == null || applicationPaths.isEmpty()) {

@@ -48,7 +48,9 @@ class QualityService(
         targets: () -> List<ProxyNode>,
         verifyCandidates: () -> List<ProxyNode>,
         ping: (ProxyNode) -> Long,
-        verify: (ProxyNode) -> Pair<Boolean, Long>
+        verify: (ProxyNode) -> Pair<Boolean, Long>,
+        interval: () -> Long = { INTERVAL_MILLIS },
+        batch: () -> Int = { BATCH }
     ) {
         if (running) return
         running = true
@@ -62,9 +64,9 @@ class QualityService(
                     runRequested = false
                 }
                 if (!running) break
-                nextAt = clock() + INTERVAL_MILLIS
+                nextAt = clock() + interval()
                 if (!enabled()) continue
-                runCatching { pass(targets().take(BATCH), verifyCandidates(), ping, verify) }
+                runCatching { pass(targets().take(batch()), verifyCandidates(), ping, verify) }
                 lastPassAt = clock()
             }
         }
@@ -102,6 +104,8 @@ class QualityService(
         const val PARALLEL = 4
         const val VERIFY_PER_PASS = 2
         const val INTERVAL_MILLIS = 10 * 60_000L
+        const val SAVING_INTERVAL_MILLIS = 60 * 60_000L
+        const val SAVING_BATCH = 8
         const val FIRST_PASS_DELAY_MILLIS = 90_000L
     }
 }

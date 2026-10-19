@@ -21,6 +21,8 @@ import app.perroute.service.WindowsNetworkState
 import java.nio.file.Path
 import java.util.function.Consumer
 
+internal const val BRIDGE_FIREWALL_RULE = "PerRoute LAN Bridge"
+
 interface ConnectionBackend {
     fun coreReady(): Boolean
     fun perAppReady(): Boolean
@@ -77,6 +79,22 @@ interface ConnectionBackend {
 
     fun startIsolatedCore(config: String, socksPort: Int): IsolatedTunnel =
         throw UnsupportedOperationException("This backend cannot start a core of its own")
+
+    fun startIsolatedCore(config: String, socksPort: Int, onLine: (String) -> Unit): IsolatedTunnel = startIsolatedCore(config, socksPort)
+
+    fun resourceConditions(): app.perroute.service.ResourceConditions.Snapshot = app.perroute.service.ResourceConditions.Snapshot.NORMAL
+
+    fun resolveShortcut(shortcut: Path): Path? = null
+
+    fun explorerMenuRegistered(executable: Path): Boolean = false
+
+    fun setExplorerMenu(executable: Path?, enabled: Boolean) {}
+
+    fun networkCategory(address: String): String = "Private"
+
+    fun bridgeFirewallReady(core: Path, firstPort: Int, lastPort: Int): Boolean = true
+
+    fun allowBridgeFirewall(core: Path, firstPort: Int, lastPort: Int) {}
 
     fun startProgram(command: List<String>): Process = throw UnsupportedOperationException("This backend cannot start programs")
 
@@ -194,6 +212,73 @@ class SystemConnectionBackend : ConnectionBackend {
             override fun close() = core.close()
         }
     }
+
+    override fun startIsolatedCore(config: String, socksPort: Int, onLine: (String) -> Unit): IsolatedTunnel {
+        val core = IsolatedCore.start(config, socksPort) { line -> onLine(line) }
+        return object : IsolatedTunnel {
+            override fun socksPort(): Int = core.socksPort()
+            override fun alive(): Boolean = core.alive()
+            override fun lastLines(): List<String> = core.lastLines()
+            override fun close() = core.close()
+        }
+    }
+
+    override fun resourceConditions() = app.perroute.service.ResourceConditions.read()
+
+    override fun resolveShortcut(shortcut: Path): Path? {
+        val script = "(New-Object -ComObject WScript.Shell).CreateShortcut('" + shortcut.toString().replace("'", "''") + "').TargetPath"
+        val output = powerShell(script) ?: return null
+        return output.lines().lastOrNull { it.isNotBlank() }?.trim()?.takeIf { it.isNotBlank() }?.let { runCatching { Path.of(it) }.getOrNull() }
+    }
+
+    override fun explorerMenuRegistered(executable: Path): Boolean = app.perroute.service.ExplorerMenu.registeredFor(executable)
+
+    override fun setExplorerMenu(executable: Path?, enabled: Boolean) {
+        if (enabled && executable != null) app.perroute.service.ExplorerMenu.register(executable) else app.perroute.service.ExplorerMenu.unregister()
+    }
+
+    override fun networkCategory(address: String): String {
+        val script = "\$i=(Get-NetIPAddress -IPAddress '" + address.replace("'", "") + "' -ErrorAction Stop | Select-Object -First 1).InterfaceIndex;" +
+            "(Get-NetConnectionProfile -InterfaceIndex \$i -ErrorAction Stop).NetworkCategory.ToString()"
+        return powerShell(script)?.lines()?.lastOrNull { it.isNotBlank() }?.trim().orEmpty()
+    }
+
+    override fun bridgeFirewallReady(core: Path, firstPort: Int, lastPort: Int): Boolean {
+        val process = ProcessBuilder("netsh.exe", "advfirewall", "firewall", "show", "rule", "name=$BRIDGE_FIREWALL_RULE", "verbose")
+            .redirectErrorStream(true).start()
+        val output = process.inputStream.readBytes().toString(Charsets.UTF_8)
+        if (!process.waitFor(15, java.util.concurrent.TimeUnit.SECONDS)) { process.destroyForcibly(); return false }
+        if (process.exitValue() != 0) return false
+        val ports = "$firstPort-$lastPort"
+        val text = output.lowercase()
+        return Regex(Regex.escape(ports)).findAll(output).count() >= 2 && Regex(Regex.escape(core.toString().lowercase())).findAll(text).count() >= 2 &&
+            Regex("\\btcp\\b").containsMatchIn(text) && Regex("\\budp\\b").containsMatchIn(text)
+    }
+
+    override fun allowBridgeFirewall(core: Path, firstPort: Int, lastPort: Int) {
+        val program = core.toString().replace("'", "''")
+        val rule = { protocol: String ->
+            "netsh advfirewall firewall add rule name=\"$BRIDGE_FIREWALL_RULE\" dir=in action=allow program=\"\$core\" protocol=$protocol localport=$firstPort-$lastPort profile=private,domain | Out-Null; if (\$LASTEXITCODE -ne 0) { exit 2 }"
+        }
+        val inner = "\$core='$program'; netsh advfirewall firewall delete rule name=\"$BRIDGE_FIREWALL_RULE\" | Out-Null; ${rule("TCP")}; ${rule("UDP")}; exit 0"
+        val encoded = java.util.Base64.getEncoder().encodeToString(inner.toByteArray(Charsets.UTF_16LE))
+        val outer = "\$p = Start-Process -FilePath powershell.exe -ArgumentList '-NoProfile','-NonInteractive','-EncodedCommand','$encoded' " +
+            "-Verb RunAs -Wait -PassThru -WindowStyle Hidden; exit \$p.ExitCode"
+        val process = ProcessBuilder("powershell.exe", "-NoProfile", "-NonInteractive", "-Command", outer).redirectErrorStream(true).start()
+        val output = process.inputStream.readBytes().toString(Charsets.UTF_8)
+        if (!process.waitFor(120, java.util.concurrent.TimeUnit.SECONDS)) { process.destroyForcibly(); error("Windows did not answer in time.") }
+        if (process.exitValue() != 0) {
+            val cancelled = output.contains("canceled by the user", ignoreCase = true) || output.contains("cancelled by the user", ignoreCase = true)
+            error(if (cancelled) "The Administrator prompt was cancelled." else "Windows Firewall did not accept the rule.")
+        }
+    }
+
+    private fun powerShell(script: String): String? = runCatching {
+        val process = ProcessBuilder("powershell.exe", "-NoProfile", "-NonInteractive", "-Command", script).redirectErrorStream(true).start()
+        val output = process.inputStream.readBytes().toString(Charsets.UTF_8)
+        if (!process.waitFor(15, java.util.concurrent.TimeUnit.SECONDS)) { process.destroyForcibly(); return@runCatching null }
+        if (process.exitValue() != 0) null else output
+    }.getOrNull()
 
     override fun startProgram(command: List<String>): Process {
         val executable = Path.of(command.first())

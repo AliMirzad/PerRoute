@@ -37,6 +37,7 @@ import androidx.compose.material.icons.rounded.Storage
 import androidx.compose.material.icons.rounded.Link
 import androidx.compose.material.icons.rounded.HealthAndSafety
 import androidx.compose.material.icons.rounded.Web
+import androidx.compose.material.icons.rounded.Devices
 import androidx.compose.material3.Icon
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
@@ -132,6 +133,7 @@ internal enum class Tab(val label: String, val icon: ImageVector) {
     Rules("Rules", Icons.Rounded.Description),
     Profiles("Profiles", Icons.Rounded.Folder),
     Workspaces("Workspaces", Icons.Rounded.Web),
+    Bridge("LAN Bridge", Icons.Rounded.Devices),
     Diagnostics("Diagnostics", Icons.Rounded.MonitorHeart),
     Health("Health", Icons.Rounded.HealthAndSafety),
     Traffic("Traffic", Icons.Rounded.BarChart),
@@ -408,8 +410,15 @@ fun main(args: Array<String>) {
         runProxyGuard(dataDirectory, args.getOrNull(guardIndex + 1)?.toLongOrNull())
         return
     }
+    val routeIndex = args.indexOf(app.perroute.service.QuickRouteRequests.ROUTE_ARGUMENT)
+    val routeTarget = if (routeIndex >= 0) args.getOrNull(routeIndex + 1)?.takeIf { it.isNotBlank() } else null
+    val requests = app.perroute.service.QuickRouteRequests(dataDirectory)
     val lock = try { SingleInstanceLock.acquire(dataDirectory) } catch (e: Exception) { null }
-    if (lock == null) return
+    if (lock == null) {
+        if ("--recover" !in args) runCatching { if (routeTarget != null) requests.submitRoute(routeTarget) else requests.submitShow() }
+        return
+    }
+    if (routeTarget != null) runCatching { requests.submitRoute(routeTarget) }
     if ("--recover" in args) {
         runCatching { app.perroute.service.WindowsSystemProxyManager(dataDirectory).restore() }
         lock.close()
@@ -494,6 +503,24 @@ fun main(args: Array<String>) {
         }
         fun trayToast(result: ActionResult) {
             runCatching { nativeTrayIcon?.displayMessage("PerRoute", result.message, if (result.ok) TrayIcon.MessageType.INFO else TrayIcon.MessageType.WARNING) }
+        }
+        LaunchedEffect(Unit) {
+            val pending = ArrayDeque<String>()
+            while (isActive) {
+                delay(700)
+                val taken = withContext(Dispatchers.IO) { controller.takeQuickRouteRequests() }
+                if (taken.isNotEmpty() || pending.isNotEmpty()) {
+                    taken.filter { it.kind() == app.perroute.service.QuickRouteRequests.Kind.ROUTE }.forEach { pending.addLast(it.target()) }
+                    windowVisible = true
+                    mainWindow?.let { frame ->
+                        if (frame.extendedState and Frame.ICONIFIED != 0) frame.extendedState = frame.extendedState and Frame.ICONIFIED.inv()
+                        frame.toFront()
+                        frame.requestFocus()
+                    }
+                }
+                val shell = shellHolder[0] ?: continue
+                if (pending.isNotEmpty() && shell.dialog == null && !shell.busy) openQuickRoute(shell, pending.removeFirst())
+            }
         }
         DisposableEffect(Unit) {
             controller.onConnectionChanged { value ->

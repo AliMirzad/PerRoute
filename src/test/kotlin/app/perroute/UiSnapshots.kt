@@ -139,6 +139,17 @@ private class DemoBackend(private val perAppDriver: Boolean = true) : Connection
         InstalledApplicationDiscovery.InstalledApplication("A media player with a remarkably long product name, Professional Edition",
             "C:\\Program Files\\Example Software Company\\Remarkably Long Product Folder\\Professional Edition\\bin\\x64\\player.exe")
     )
+    override fun bridgeFirewallReady(core: java.nio.file.Path, firstPort: Int, lastPort: Int) = true
+    override fun startIsolatedCore(config: String, socksPort: Int, onLine: (String) -> Unit): app.perroute.compose.IsolatedTunnel {
+        onLine("2026/10/19 16:12:01.000000 from 192.168.1.42:51000 accepted tcp:www.youtube.com:443 [perroute-bridge-0 -> proxy]")
+        onLine("2026/10/19 16:12:02.000000 from 192.168.1.42:51001 accepted tcp:i.ytimg.com:443 [perroute-bridge-0 -> proxy]")
+        return object : app.perroute.compose.IsolatedTunnel {
+            override fun socksPort() = socksPort
+            override fun alive() = true
+            override fun lastLines() = emptyList<String>()
+            override fun close() {}
+        }
+    }
     override fun runningApplications() = listOf(
         ProcessDiscovery.RunningApplication("chrome.exe", CHROME), ProcessDiscovery.RunningApplication("Telegram.exe", TELEGRAM))
     override fun localNetworks(resolveNames: Boolean) = listOf(app.perroute.localnet.LocalNetwork("home-net", "Wi-Fi", "192.168.1.20", "192.168.1.0/24", 24,
@@ -461,7 +472,27 @@ fun main(args: Array<String>) {
             Scene("$p-A8-profiles-recipes", advanced, tab = Tab.Profiles, prepare = { shell ->
                 shell.controller.saveProfile("Gaming night")
             }),
-            Scene("$p-A9-quick-temporary", advancedOn, 390, 640, quick = true, setup = { controller -> controller.setTemporaryRoute(SPOTIFY, "de-2", 45) })
+            Scene("$p-A9-quick-temporary", advancedOn, 390, 640, quick = true, setup = { controller -> controller.setTemporaryRoute(SPOTIFY, "de-2", 45) }),
+            Scene("$p-B0-bridge-off", advanced, tab = Tab.Bridge, settleMillis = 2_000, prepare = { shell ->
+                shell.controller.addBridgeDevice("My phone"); shell.controller.addBridgeDevice("Living room TV")
+            }),
+            Scene("$p-B1-bridge-on", advanced, tab = Tab.Bridge, settleMillis = 2_500, prepare = { shell ->
+                shell.controller.addBridgeDevice("My phone"); shell.controller.addBridgeDevice("Living room TV")
+                shell.controller.startBridge("192.168.1.20", 60, false)
+            }),
+            Scene("$p-B2-bridge-setup", advanced, tab = Tab.Bridge, settleMillis = 2_500, prepare = { shell ->
+                shell.controller.addBridgeDevice("My phone")
+                shell.controller.startBridge("192.168.1.20", 0, false)
+                app.perroute.compose.bridgeModel(shell).let { model -> model.refresh(); model.setup(model.view.devices.first()) }
+            }),
+            Scene("$p-B3-bridge-empty", advanced, tab = Tab.Bridge, settleMillis = 2_000),
+            Scene("$p-B4-quick-route", advanced, tab = Tab.Connection, settleMillis = 2_000, prepare = { shell ->
+                val slack = Files.writeString(Path.of(System.getProperty("perroute.data")).resolve("slack.exe"), "x").toString()
+                app.perroute.compose.openQuickRoute(shell, slack)
+            }),
+            Scene("$p-B5-quick-route-connected", advancedOn, tab = Tab.Connection, settleMillis = 2_000, prepare = { shell ->
+                app.perroute.compose.openQuickRoute(shell, Files.writeString(Path.of(System.getProperty("perroute.data")).resolve("slack.exe"), "x").toString())
+            })
         )
     }
     val all = scenes(UiStyle.NEW) + scenes(UiStyle.SIMPLE)

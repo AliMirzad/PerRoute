@@ -190,6 +190,9 @@ private fun NewGeneral(shell: Shell) {
             RadioCard("New", "Charcoal, bone and lime, with a detail panel on each page.", Appearance.style == UiStyle.NEW) { shell.setUiStyle(UiStyle.NEW) }
         }
     }
+    val explorer = explorerMenuModel(shell)
+    ToggleBlock("Route with PerRoute in Explorer", ExplorerMenuDetail, explorer.enabled, enabled = explorer.available,
+        note = if (explorer.available) "" else "Available in the installed or portable PerRoute.") { explorer.change(it) }
     SettingBlock("Window behavior", "Closing or minimizing keeps PerRoute in the tray.") {
         Spacer(Modifier.height(8.dp))
         Text("When you close the window or minimize PerRoute, the app keeps running in the notification area so your routes remain active. Use Quick Access there to connect, switch the main server, or quit.",
