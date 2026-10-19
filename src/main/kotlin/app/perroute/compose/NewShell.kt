@@ -30,6 +30,8 @@ import androidx.compose.material.icons.rounded.Description
 import androidx.compose.material.icons.rounded.Dns
 import androidx.compose.material.icons.rounded.Folder
 import androidx.compose.material.icons.rounded.GridView
+import androidx.compose.material.icons.rounded.HealthAndSafety
+import androidx.compose.material.icons.rounded.Web
 import androidx.compose.material.icons.rounded.Lock
 import androidx.compose.material.icons.rounded.MonitorHeart
 import androidx.compose.material.icons.rounded.Settings
@@ -76,7 +78,9 @@ internal fun NewWindow(shell: Shell, chrome: WindowChrome) {
                     Tab.Servers -> NewServersPage(shell)
                     Tab.Rules -> NewRulesPage(shell)
                     Tab.Profiles -> NewProfilesPage(shell)
+                    Tab.Workspaces -> WorkspacesPage(shell)
                     Tab.Diagnostics -> NewDiagnosticsPage(shell)
+                    Tab.Health -> HealthPage(shell)
                     Tab.Traffic -> NewTrafficPage(shell)
                     Tab.Settings -> NewSettingsPage(shell)
                 }
@@ -108,7 +112,7 @@ private fun NewTitleBar(chrome: WindowChrome) {
 }
 
 /** The tools grouped under one rail entry, in the order of the Tools menu. */
-private val ToolTabs = listOf(Tab.Rules, Tab.Profiles, Tab.Diagnostics, Tab.Traffic)
+private val ToolTabs = listOf(Tab.Rules, Tab.Profiles, Tab.Workspaces, Tab.Diagnostics, Tab.Health, Tab.Traffic)
 
 @Composable
 private fun NewRail(shell: Shell) {
@@ -132,20 +136,24 @@ private fun NewRail(shell: Shell) {
     }
 }
 
-private fun toolsLabel(shell: Shell): String = if (shell.tab.isTool) "Tools, now showing ${shell.tab.label}" else "Tools: Rules, Profiles, Diagnostics and Traffic"
+private fun toolsLabel(shell: Shell): String = if (shell.tab.isTool) "Tools, now showing ${shell.tab.label}" else "Tools: Rules, Profiles, Workspaces, Diagnostics, Health and Traffic"
 
 internal fun toolIcon(tab: Tab): ImageVector = when (tab) {
     Tab.Rules -> Icons.Rounded.Description
     Tab.Profiles -> Icons.Rounded.Folder
+    Tab.Workspaces -> Icons.Rounded.Web
     Tab.Diagnostics -> Icons.Rounded.MonitorHeart
+    Tab.Health -> Icons.Rounded.HealthAndSafety
     Tab.Traffic -> Icons.Rounded.BarChart
     else -> Icons.Rounded.Apps
 }
 
 private fun toolDetail(tab: Tab): String = when (tab) {
     Tab.Rules -> "Which connections use a proxy"
-    Tab.Profiles -> "Presets and saved setups"
+    Tab.Profiles -> "Presets, saved setups and recipes"
+    Tab.Workspaces -> "Browser profiles with their own route"
     Tab.Diagnostics -> "Route checks, inspector, rule tester"
+    Tab.Health -> "Connection doctor and safety checks"
     Tab.Traffic -> "Usage, history and limits"
     else -> ""
 }

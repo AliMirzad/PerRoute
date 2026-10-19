@@ -555,7 +555,7 @@ final class ControllerTests {
 
         @Override public boolean coreReady() { return true; }
         @Override public boolean perAppReady() { return true; }
-        @Override public boolean elevated() { return false; }
+        @Override public boolean elevated() { return elevatedNow; }
 
         @Override public void validate(String config, boolean tun) {
             validateCount++;
@@ -578,11 +578,11 @@ final class ControllerTests {
 
         @Override public void stop() { stopCount++; running = false; }
         @Override public boolean isRunning() { return running; }
-        @Override public void stopOrphan() {}
+        @Override public void stopOrphan() { machineCalls.add("stopOrphan"); }
         @Override public void addLogListener(Consumer<String> listener) { logListeners.add(listener); }
         @Override public void addRunningListener(Consumer<Boolean> listener) { runningListeners.add(listener); }
         @Override public void applyPerApp(List<String> applications) { perAppApplications = List.copyOf(applications); applyPerAppCount++; }
-        @Override public void restorePerApp() { restorePerAppCount++; }
+        @Override public void restorePerApp() { restorePerAppCount++; machineCalls.add("restorePerApp"); }
 
         final List<Consumer<String>> logListeners = new java.util.concurrent.CopyOnWriteArrayList<>();
         volatile int applyPerAppCount, restorePerAppCount;
@@ -622,9 +622,37 @@ final class ControllerTests {
         @Override public void setGatewayLimits(String path, long down, long up) { gatewayLimits.put(path.toLowerCase(), new long[]{down, up}); }
         @Override public Map<String, app.perroute.gateway.AppGateway.Counters> gatewayCounters() { return Map.copyOf(gatewayCounters); }
         @Override public boolean gatewayRunning() { return gatewayRunning; }
-        @Override public void stopPerAppSidecar() {}
-        @Override public void applySystemProxy() {}
-        @Override public void restoreSystemProxy() {}
+        @Override public void stopPerAppSidecar() { machineCalls.add("stopPerAppSidecar"); }
+        @Override public void applySystemProxy() { machineCalls.add("applySystemProxy"); }
+        @Override public void restoreSystemProxy() { machineCalls.add("restoreSystemProxy"); }
+
+        // 3.5: what the newer features ask of the machine, recorded so tests can see exactly what was done.
+        final List<String> machineCalls = new java.util.concurrent.CopyOnWriteArrayList<>();
+        final Map<String, String> networkValues = new java.util.concurrent.ConcurrentHashMap<>();
+        volatile boolean supportsRuntimePlan;
+        final List<XrayConfigGenerator.RuntimePlan> runtimePlans = new java.util.concurrent.CopyOnWriteArrayList<>();
+        volatile boolean perRouteProxy = true;
+        volatile Long serverTime;
+        volatile boolean resolves = true;
+        volatile boolean elevatedNow;
+        volatile List<app.perroute.localnet.LocalNetwork> networks = List.of();
+
+        @Override public void applyPerApp(List<String> applications, boolean bypassLan) {
+            machineCalls.add("applyPerApp bypassLan=" + bypassLan);
+            applyPerApp(applications);
+        }
+        @Override public void applyRuntimePlan(XrayConfigGenerator.RuntimePlan plan) {
+            if (!supportsRuntimePlan) throw new UnsupportedOperationException("This backend cannot change a running core");
+            runtimePlans.add(plan);
+            lastConfig = plan.config();
+        }
+        @Override public Map<String, String> networkState() { return Map.copyOf(networkValues); }
+        @Override public void resetSystemProxyLeftover(Map<String, String> baseline) { machineCalls.add("resetSystemProxyLeftover " + (baseline == null ? "none" : "baseline")); }
+        @Override public void removeRecoveryEntry() { machineCalls.add("removeRecoveryEntry"); }
+        @Override public boolean perRouteProxyActive() { return perRouteProxy; }
+        @Override public List<app.perroute.localnet.LocalNetwork> localNetworks(boolean resolveNames) { return networks; }
+        @Override public boolean systemResolves(String host) { return resolves; }
+        @Override public Long directServerTime() { return serverTime; }
         @Override public ProxyHealthCheck.Result checkTunnel(int socksPort) {
             return failingPorts.contains(socksPort) ? new ProxyHealthCheck.Result(false, "The proxy could not reach the test endpoint")
                     : new ProxyHealthCheck.Result(true, "Tunnel answered from test (HTTP 204)");

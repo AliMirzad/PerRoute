@@ -75,7 +75,7 @@ Both designs work in **light and dark**. The design and the theme are separate c
 - **No "select all" checkbox** in the Simple Apps header: it would be a new action that is not in the product, and it is risky with hundreds of installed apps. No password reveal (eye) button either, for the same reason.
 - **Server sort** now defaults to Quality, as both images show; the previous default was the list order.
 - **Units:** New shows live speed in Mbps, as its images do; Simple Connection keeps MB/s, as its image does.
-- **The logo inside the app** is drawn per design: a lime route mark in New, a violet P in Simple. The window, taskbar and tray icon file is unchanged.
+- **The logo** is the lime route mark of the New design in both designs (since 3.5): bare on New's charcoal rail and title bar, and on a charcoal tile in Simple, Quick Access and About. The window, taskbar, tray, installer and program icons are the same tile, drawn by `tools/IconRenderer.java`.
 - **Small windows:** at the minimum size (820×620) the New detail panel narrows, headings put their buttons underneath, tables merge columns and "Browse for an EXE" keeps only its icon, so Save changes always fits.
 - **Credit:** the footer reads "Created By Vexor", as requested. The copyright line in README.md is unchanged.
 - **Window:** the default size is 1180×790 (the designs' 3:2 frame), centred and kept inside the screen. The minimum size is unchanged.

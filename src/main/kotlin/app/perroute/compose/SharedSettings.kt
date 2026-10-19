@@ -5,6 +5,8 @@ import androidx.compose.material.icons.automirrored.rounded.Article
 import androidx.compose.material.icons.rounded.AltRoute
 import androidx.compose.material.icons.rounded.Backup
 import androidx.compose.material.icons.rounded.Inventory2
+import androidx.compose.material.icons.rounded.Router
+import androidx.compose.material.icons.rounded.SettingsBackupRestore
 import androidx.compose.material.icons.rounded.Sync
 import androidx.compose.material.icons.rounded.SystemUpdateAlt
 import androidx.compose.material.icons.rounded.Tune
@@ -43,6 +45,8 @@ internal enum class SettingsCategory(val label: String, val icon: ImageVector, v
     Updates("Updates", Icons.Rounded.SystemUpdateAlt, "Keep the app current with signed releases."),
     Components("Components", Icons.Rounded.Inventory2, "The core and driver behind your routes."),
     Backup("Backup & Restore", Icons.Rounded.Backup, "Keep a copy of your setup."),
+    LocalNetwork("Local network", Icons.Rounded.Router, "Printers, NAS and other devices near you."),
+    Recovery("Recovery", Icons.Rounded.SettingsBackupRestore, "Undo PerRoute's network changes, or go back a version."),
     ActivityLog("Activity log", Icons.AutoMirrored.Rounded.Article, "Recent events from your setup.")
 }
 

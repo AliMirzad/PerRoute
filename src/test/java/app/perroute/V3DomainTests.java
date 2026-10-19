@@ -684,8 +684,16 @@ final class V3DomainTests {
                         check(expected.getMessage().contains("C.exe"), "The error must name the application: " + expected.getMessage());
                     }
                     check(!other.running(), "A failed start leaves the gateway stopped");
-                    try (ServerSocket again = new ServerSocket()) {
-                        again.bind(new InetSocketAddress(InetAddress.getLoopbackAddress(), first));
+                    // The released port must be bindable again. Another program on this computer can briefly take a
+                    // freed ephemeral port too, so a few attempts are allowed before this counts as a leak.
+                    for (int attempt = 1; ; attempt++) {
+                        try (ServerSocket again = new ServerSocket()) {
+                            again.bind(new InetSocketAddress(InetAddress.getLoopbackAddress(), first));
+                            break;
+                        } catch (java.net.BindException busyNow) {
+                            if (attempt >= 5) throw busyNow;
+                            Thread.sleep(200);
+                        }
                     }
                 }
 

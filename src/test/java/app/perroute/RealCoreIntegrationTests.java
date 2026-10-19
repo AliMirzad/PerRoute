@@ -74,14 +74,18 @@ final class RealCoreIntegrationTests {
         final String name;
         final String uuid = UUID.randomUUID().toString();
         final ServerSocket http;
+        /** Echoes datagrams on the same port number as the HTTP endpoint, so UDP redirected by the server comes back. */
+        final java.net.DatagramSocket echo;
         final int vlessPort;
         Process process;
 
         LocalServer(String name, Path xray, Path directory) throws Exception {
             this.name = name;
             this.http = new ServerSocket(0, 50, InetAddress.getLoopbackAddress());
+            this.echo = new java.net.DatagramSocket(new java.net.InetSocketAddress(InetAddress.getLoopbackAddress(), http.getLocalPort()));
             this.vlessPort = freePort();
             Thread.ofVirtual().start(this::serveHttp);
+            Thread.ofVirtual().start(this::serveEcho);
             Path config = directory.resolve("server-" + name + ".json");
             Files.writeString(config, """
                     {"log":{"loglevel":"warning"},
@@ -131,11 +135,23 @@ final class RealCoreIntegrationTests {
             }
         }
 
+        private void serveEcho() {
+            byte[] buffer = new byte[2048];
+            while (!echo.isClosed()) {
+                try {
+                    java.net.DatagramPacket packet = new java.net.DatagramPacket(buffer, buffer.length);
+                    echo.receive(packet);
+                    echo.send(new java.net.DatagramPacket(packet.getData(), packet.getLength(), packet.getSocketAddress()));
+                } catch (IOException closed) { return; }
+            }
+        }
+
         void kill() { if (process != null) process.destroyForcibly(); }
 
         @Override public void close() throws IOException {
             kill();
             http.close();
+            echo.close();
         }
     }
 
@@ -169,6 +185,8 @@ final class RealCoreIntegrationTests {
         @Override public void applyRuntimeChange(XrayConfigGenerator.RuntimeChange change, String newTag, String oldTag, String config) {
             real.applyRuntimeChange(change, newTag, oldTag, config);
         }
+        @Override public void applyRuntimePlan(XrayConfigGenerator.RuntimePlan plan) { real.applyRuntimePlan(plan); }
+        @Override public app.perroute.compose.IsolatedTunnel startIsolatedCore(String config, int socksPort) { return real.startIsolatedCore(config, socksPort); }
         @Override public void startGateway(List<AppGateway.Route> routes) { real.startGateway(routes); }
         @Override public void stopGateway() { real.stopGateway(); }
         @Override public void setGatewayLimits(String path, long down, long up) { real.setGatewayLimits(path, down, up); }
@@ -283,6 +301,32 @@ final class RealCoreIntegrationTests {
             check(chatRow.getViaGateway() && chatRow.getDownloadBytes() > 0, "Gateway rows carry byte counts");
             System.out.println("    inspector: Chat -> integration.test observed on " + chatRow.getObserved().getRouteLabel()
                     + " via outbound " + chatRow.getObserved().getOutboundTag());
+
+            // 3.5: a temporary server for Browser starts and ends in place; Game's open connection keeps working.
+            try (KeepAlive gameConnection = new KeepAlive(XrayConfigGenerator.perAppPort(2))) {
+                equal("server-c", gameConnection.get("/"));
+                int before = backend.starts;
+                var temporary = live.setTemporaryRoute(browser, c.node().key(), 30);
+                check(temporary.getOk(), "Start a temporary server: " + temporary.getMessage());
+                equal(before, backend.starts);
+                equal("server-c", request(0));
+                equal("server-c", gameConnection.get("/"));
+                check(live.activeRoutes().stream().anyMatch(route -> route.getId().startsWith(app.perroute.service.RoutePlanner.TEMPORARY_ROUTE_PREFIX)),
+                        "The temporary route is a route of its own");
+                var ended = live.cancelTemporaryRoute(browser);
+                check(ended.getOk(), "End the temporary server: " + ended.getMessage());
+                equal(before, backend.starts);
+                equal("server-d", request(0));
+                equal("server-c", gameConnection.get("/"));
+                System.out.println("    temporary server for Browser started and ended in place; Game's open connection kept working");
+            }
+
+            // 3.5: the gaming test through a core of its own, with UDP carried by the real core to the server's echo.
+            var gaming = live.gamingTest(List.of(c.node()), () -> false, (node, score) -> kotlin.Unit.INSTANCE).get(c.node().key());
+            check(gaming != null && gaming.udpSupported() && gaming.lossPercent() == 0 && gaming.score() > 0,
+                    "The gaming test must measure TCP and UDP through the real core: " + (gaming == null ? "no result" : gaming.note()));
+            System.out.printf("    gaming test through server C: score %d, %d ms, jitter %d ms, UDP %s%n", gaming.score(), gaming.latencyMillis(), gaming.jitterMillis(),
+                    gaming.udpSupported() ? "yes" : "no");
 
             live.disconnect();
             check(!backend.real.gatewayRunning() && !backend.real.isRunning(), "Disconnect stops the gateway and the core");

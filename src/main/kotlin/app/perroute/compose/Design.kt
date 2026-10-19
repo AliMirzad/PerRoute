@@ -396,10 +396,11 @@ internal fun RoutePill(kind: RouteKindLabel, modifier: Modifier = Modifier) {
         RouteKindLabel.MAIN -> Badge("Main", Violet, filled = true)
         RouteKindLabel.CUSTOM -> Badge("Custom", White.copy(.8f), outlined = true)
         RouteKindLabel.AUTO -> Badge("Auto", Cyan)
+        RouteKindLabel.TEMPORARY -> Badge("Temporary", Amber)
     }
 }
 
-internal enum class RouteKindLabel(val label: String) { MAIN("Main"), CUSTOM("Custom"), AUTO("Auto") }
+internal enum class RouteKindLabel(val label: String) { MAIN("Main"), CUSTOM("Custom"), AUTO("Auto"), TEMPORARY("Temporary") }
 
 /** The older two-way badge: the main server, or a custom one. */
 @Composable
@@ -985,19 +986,6 @@ internal fun NewMark(size: Dp = 26.dp, color: Color = NewColors.Lime) {
     }
 }
 
-/** The Simple design's mark: the PerRoute "P" in violet tones. */
-@Composable
-internal fun SimpleMark(size: Dp = 30.dp) {
-    val tint = Violet
-    Image(
-        painterResource("icons/perroute-icon-256.png"), "PerRoute",
-        Modifier.size(size).graphicsLayer(compositingStrategy = CompositingStrategy.Offscreen)
-            .drawWithContent {
-                drawContent()
-                drawRect(Brush.linearGradient(listOf(Color(0xFF4B2FD6), tint, Color(0xFF9A7BFF))), blendMode = BlendMode.SrcAtop)
-            }
-    )
-}
 
 /** A horizontal bar showing a share, with an optional track colour. */
 @Composable

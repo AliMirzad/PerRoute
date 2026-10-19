@@ -257,7 +257,8 @@ internal fun NewProfilesPage(shell: Shell) {
             }
             Spacer(Modifier.height(12.dp))
             Note("Profiles include apps, routes, rules and connection settings.")
-            Spacer(Modifier.height(12.dp))
+            Spacer(Modifier.height(18.dp))
+            RecipesSection(shell)
         }
     }
 }

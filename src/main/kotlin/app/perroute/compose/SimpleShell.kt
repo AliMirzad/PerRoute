@@ -32,6 +32,8 @@ import androidx.compose.material.icons.rounded.GridView
 import androidx.compose.material.icons.rounded.Link
 import androidx.compose.material.icons.rounded.Lock
 import androidx.compose.material.icons.rounded.MonitorHeart
+import androidx.compose.material.icons.rounded.HealthAndSafety
+import androidx.compose.material.icons.rounded.Web
 import androidx.compose.material3.Icon
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
@@ -71,7 +73,9 @@ internal fun SimpleWindow(shell: Shell, chrome: WindowChrome) {
                         Tab.Servers -> SimpleServersPage(shell)
                         Tab.Rules -> SimpleRulesPage(shell)
                         Tab.Profiles -> SimpleProfilesPage(shell)
+                        Tab.Workspaces -> WorkspacesPage(shell)
                         Tab.Diagnostics -> SimpleDiagnosticsPage(shell)
+                        Tab.Health -> HealthPage(shell)
                         Tab.Traffic -> SimpleTrafficPage(shell)
                         Tab.Settings -> SimpleSettingsPage(shell)
                     }
@@ -87,7 +91,9 @@ private fun simpleIcon(tab: Tab): ImageVector = when (tab) {
     Tab.Servers -> Icons.Rounded.Dns
     Tab.Rules -> Icons.Outlined.Description
     Tab.Profiles -> Icons.Outlined.Folder
+    Tab.Workspaces -> Icons.Rounded.Web
     Tab.Diagnostics -> Icons.Rounded.MonitorHeart
+    Tab.Health -> Icons.Rounded.HealthAndSafety
     Tab.Traffic -> Icons.Rounded.BarChart
     Tab.Settings -> Icons.Outlined.Settings
 }
@@ -97,7 +103,7 @@ private fun SimpleSidebar(shell: Shell, chrome: WindowChrome, modifier: Modifier
     Column(modifier.background(SimpleColors.sidebar(IsDark))) {
         WindowDragArea(chrome.hostWindow, Modifier.fillMaxWidth().height(96.dp)) {
             Row(Modifier.fillMaxSize().padding(start = 24.dp, end = 16.dp, top = 18.dp), verticalAlignment = Alignment.CenterVertically) {
-                SimpleMark(34.dp)
+                BrandMark(34.dp)
                 Spacer(Modifier.width(12.dp))
                 Text("PerRoute", color = White, fontSize = 19.sp, fontWeight = FontWeight.Bold)
                 if (showVersion) {

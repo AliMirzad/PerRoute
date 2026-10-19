@@ -192,5 +192,13 @@ private fun SimpleAppDialog(shell: Shell) {
         Divider()
         Spacer(Modifier.height(16.dp))
         BandwidthEditor(shell, path)
+        if (shell.apps.any { it.equals(path, true) }) {
+            Spacer(Modifier.height(16.dp))
+            Divider()
+            Spacer(Modifier.height(16.dp))
+            Text("For a while", color = White, fontSize = 15.sp, fontWeight = FontWeight.SemiBold)
+            Spacer(Modifier.height(8.dp))
+            TemporaryAppAction(shell, path)
+        }
     }
 }

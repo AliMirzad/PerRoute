@@ -128,7 +128,10 @@ internal fun SimpleConnectionPage(shell: Shell) {
             Spacer(Modifier.height(14.dp))
             Text("Everything else stays on your regular connection.", color = Muted, fontSize = 14.sp)
         }
-        Spacer(Modifier.height(22.dp))
+        Spacer(Modifier.height(10.dp))
+        TemporaryRoutesCard(shell)
+        ConnectionTools(shell)
+        Spacer(Modifier.height(12.dp))
         Divider()
         Row(Modifier.fillMaxWidth().padding(vertical = 18.dp), verticalAlignment = Alignment.CenterVertically) {
             SimpleStat(Icons.Rounded.ArrowDownward, "Download", if (shell.connected) formatRate(shell.traffic.downloadBytesPerSecond) else "—")

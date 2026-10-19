@@ -65,6 +65,45 @@ data class EnvironmentState(
 /** The outcome of a user action and the sentence shown for it. */
 data class ActionResult(val ok: Boolean, val message: String)
 
+/**
+ * A browser workspace as the screens show it: whether its route is running, the server it uses (null when that
+ * server is gone), its loopback port and, when it cannot open, why.
+ */
+data class WorkspaceView(
+    val workspace: app.perroute.workspace.Workspace,
+    val running: Boolean,
+    val runningSince: Long,
+    val node: ProxyNode?,
+    val port: Int,
+    val problem: String
+)
+
+/** What can go into a recipe made from the current setup; the user picks what to share. */
+data class RecipeDraft(
+    val apps: List<app.perroute.recipe.Recipe.AppEntry>,
+    val roles: List<app.perroute.recipe.Recipe.Role>,
+    val rules: List<RouteRule>,
+    val settings: Map<String, Boolean>
+)
+
+/**
+ * A finished comparison of a live route (or the current server) with a candidate. [route] is the live route that
+ * was compared, or null when the current server was tested on a core of its own because PerRoute was not connected.
+ */
+data class ShadowResult(
+    val report: app.perroute.shadow.ShadowExperiment.Report?,
+    val route: ActiveRoute?,
+    val liveExit: String,
+    val candidateExit: String,
+    val error: String,
+    val liveNode: ProxyNode? = null
+)
+
+/** One app on a server for a limited time; when [until] passes it returns to its usual route. */
+data class TemporaryRoute(val application: String, val nodeKey: String, val startedAt: Long, val until: Long) {
+    fun remainingMillis(now: Long = System.currentTimeMillis()): Long = (until - now).coerceAtLeast(0L)
+}
+
 /** Live counters of one selected application. */
 data class AppTraffic(
     val path: String,
@@ -182,12 +221,14 @@ data class ScenarioPreview(
 data class ImportCandidate(val node: ProxyNode, val alreadySaved: Boolean)
 
 /** Parsed servers waiting for the user to confirm. Nothing is stored until [PerRouteController.commitImport]. */
-class ImportPreview(
+class ImportPreview @JvmOverloads constructor(
     val source: String,
     val replaceSource: Boolean,
     val result: ParseResult,
     val candidates: List<ImportCandidate>,
-    val removedCount: Int
+    val removedCount: Int,
+    /** The provider's response for a subscription: usage, expiry and title, recorded when the import is confirmed. */
+    val fetched: app.perroute.service.SubscriptionService.Fetched? = null
 ) {
     val warnings: List<String> get() = result.warnings()
     val newCount: Int get() = candidates.count { !it.alreadySaved }
@@ -303,6 +344,7 @@ class PerRouteController @JvmOverloads constructor(
                 if (result.ok && availableUpdateVersion() != null) log(result.message)
             }
         }
+        app.perroute.netstate.NetworkStateKeys.setPerRouteServer(app.perroute.service.WindowsSystemProxyManager.perRouteProxyServer())
         startNetworkMonitor()
         startQualityMeasurements()
         recoverFromUnexpectedExit()
@@ -426,8 +468,12 @@ class PerRouteController @JvmOverloads constructor(
         val installer = downloadedUpdatePath()
             ?: return ActionResult(false, "Download and verify an update first.")
         return try {
-            ProcessBuilder(installer.toString()).start()
-            ActionResult(true, "Verified installer started.")
+            // The installer needs Administrator approval. Started through the Windows shell it shows the usual
+            // prompt; a plain process start would fail. PerRoute closes afterwards so its files can be replaced,
+            // and the installer keeps this version for a rollback.
+            takeNetworkSnapshot(app.perroute.netstate.NetworkSnapshot.Reason.MANUAL)
+            backend.shellOpen(installer, emptyList(), elevated = true)
+            ActionResult(true, "The verified installer is starting. PerRoute closes so it can be updated.")
         } catch (error: Throwable) {
             ActionResult(false, message(error))
         }
@@ -653,6 +699,1039 @@ class PerRouteController @JvmOverloads constructor(
         }
     }
 
+    // ---------------------------------------------------------------- temporary routes
+
+    private val temporaryFile: Path get() = AppDirectories.dataDirectory().resolve("temporary-routes.json")
+    @Volatile private var temporary: List<TemporaryRoute> = emptyList()
+    private val temporaryLoaded = AtomicBoolean(false)
+
+    /** Apps on a server for a limited time, soonest to end first. Ended ones are not listed. */
+    fun temporaryRoutes(now: Long = System.currentTimeMillis()): List<TemporaryRoute> =
+        loadedTemporary().filter { it.until > now }.sortedBy { it.until }
+
+    fun temporaryRoute(path: String): TemporaryRoute? = temporaryRoutes().firstOrNull { AppRoutes.normalize(it.application) == AppRoutes.normalize(path) }
+
+    private fun loadedTemporary(): List<TemporaryRoute> {
+        if (temporaryLoaded.compareAndSet(false, true)) {
+            temporary = runCatching {
+                if (!Files.isRegularFile(temporaryFile)) return@runCatching emptyList()
+                (Json.`object`(Files.readString(temporaryFile))["routes"] as? List<*>).orEmpty().mapNotNull { raw ->
+                    val map = raw as? Map<*, *> ?: return@mapNotNull null
+                    TemporaryRoute(map["app"]?.toString().orEmpty(), map["node"]?.toString().orEmpty(),
+                        (map["startedAt"] as? Number)?.toLong() ?: 0L, (map["until"] as? Number)?.toLong() ?: 0L)
+                }.filter { it.application.isNotBlank() && it.nodeKey.isNotBlank() }
+            }.getOrDefault(emptyList())
+        }
+        return temporary
+    }
+
+    private fun saveTemporary() {
+        runCatching {
+            val routes = temporary.map { mapOf("app" to it.application, "node" to it.nodeKey, "startedAt" to it.startedAt, "until" to it.until) }
+            if (routes.isEmpty()) Files.deleteIfExists(temporaryFile)
+            else {
+                Files.createDirectories(temporaryFile.parent)
+                Files.writeString(temporaryFile, Json.stringify(mapOf("format" to 1, "routes" to routes)))
+            }
+        }
+    }
+
+    /** The temporary servers in effect for a connection, by normalized path. */
+    private fun temporaryChoices(): Map<String, String> {
+        val now = System.currentTimeMillis()
+        return loadedTemporary().filter { it.until > now }.associate { AppRoutes.normalize(it.application) to it.nodeKey }
+    }
+
+    /**
+     * Puts one app on [nodeKey] for [minutes], without touching its saved route, the app selection or any rule.
+     * When the time is up it goes back to its usual route on its own. While connected only that app's route
+     * changes; the other routes keep running.
+     */
+    @Synchronized
+    fun setTemporaryRoute(path: String, nodeKey: String, minutes: Int): ActionResult {
+        if (minutes < 1 || minutes > 24 * 60) return ActionResult(false, "Choose between 1 minute and 24 hours.")
+        val key = AppRoutes.normalize(path)
+        val selected = applications().firstOrNull { AppRoutes.normalize(it) == key }
+            ?: return ActionResult(false, "Select ${displayName(path)} in Apps first; only selected apps can use a temporary server.")
+        val mode = activeMode ?: state.connectionMode()
+        if (mode != ConnectionMode.NATIVE_PER_APP) return ActionResult(false, "Temporary servers need Smart per-app mode, where each app has a route of its own.")
+        if (phase == ConnectionPhase.CONNECTING || phase == ConnectionPhase.DISCONNECTING) return ActionResult(false, "Wait for the current connection operation to finish.")
+        val node = nodes().firstOrNull { it.key() == nodeKey } ?: return ActionResult(false, "Server was not found.")
+        val now = System.currentTimeMillis()
+        val previous = loadedTemporary()
+        temporary = previous.filter { AppRoutes.normalize(it.application) != key && it.until > now } + TemporaryRoute(selected, nodeKey, now, now + minutes * 60_000L)
+        saveTemporary()
+        val until = LocalTime.now().plusMinutes(minutes.toLong()).format(DateTimeFormatter.ofPattern("HH:mm"))
+        val done = "${displayName(selected)} uses ${cleanName(node.name())} until $until, then returns to its usual route."
+        if (!isConnected()) { log(done); return ActionResult(true, done) }
+        return applyTemporaryChange(done) { temporary = previous; saveTemporary() }
+    }
+
+    /** Ends a temporary server early; the app goes back to its usual route at once. */
+    @Synchronized
+    fun cancelTemporaryRoute(path: String): ActionResult {
+        val key = AppRoutes.normalize(path)
+        val previous = loadedTemporary()
+        if (previous.none { AppRoutes.normalize(it.application) == key }) return ActionResult(true, "${displayName(path)} is on its usual route.")
+        temporary = previous.filter { AppRoutes.normalize(it.application) != key }
+        saveTemporary()
+        val done = "${displayName(path)} is back on its usual route."
+        if (!isConnected()) { log(done); return ActionResult(true, done) }
+        return applyTemporaryChange(done) { temporary = previous; saveTemporary() }
+    }
+
+    private fun applyTemporaryChange(done: String, revert: () -> Unit): ActionResult {
+        if (phase != ConnectionPhase.CONNECTED) { revert(); return ActionResult(false, "Wait for the current connection operation to finish.") }
+        val running = runningPrepared ?: run { revert(); return ActionResult(false, "Connect first.") }
+        val main = selectedNode() ?: run { revert(); return ActionResult(false, "The active server was not found.") }
+        val next = try {
+            prepare(main, activeMode ?: state.connectionMode(), running.applications, running.autoChoices).also { validate(it) }
+        } catch (invalid: Throwable) {
+            revert()
+            return ActionResult(false, "The temporary server could not be applied; nothing changed: ${message(invalid)}")
+        }
+        return applyLive(next, done, revert)
+    }
+
+    /** Ends temporary servers whose time is up. Runs for as long as PerRoute does. */
+    private fun startTemporaryExpiry() {
+        Thread.ofVirtual().name("perroute-temporary-routes").start {
+            while (!closing) {
+                try { Thread.sleep(5_000) } catch (_: InterruptedException) { break }
+                val now = System.currentTimeMillis()
+                val ended = loadedTemporary().filter { it.until <= now }
+                val drifted = isConnected() && runningPrepared?.let { it.temporary != temporaryChoices() } == true
+                if (ended.isEmpty() && !drifted) continue
+                synchronized(this) {
+                    if (ended.isNotEmpty()) {
+                        temporary = temporary.filter { it.until > now }
+                        saveTemporary()
+                    }
+                    val names = joinNames(ended.map { displayName(it.application) })
+                    // Also catches a change that could not be applied earlier, so the core always ends up matching.
+                    if (isConnected() && phase == ConnectionPhase.CONNECTED && runningPrepared?.let { it.temporary != temporaryChoices() } == true) {
+                        val result = applyTemporaryChange(if (ended.isEmpty()) "Temporary servers updated." else "The temporary server of $names ended; back on the usual route.") { }
+                        if (!result.ok) log("A temporary server ended but the route could not change yet: ${result.message}")
+                    } else if (ended.isNotEmpty()) log("The temporary server of $names ended.")
+                }
+            }
+        }
+    }
+
+    /** Starts the per-app engine; on untrusted networks local traffic also goes to the core so it can be blocked. */
+    private fun applyPerAppEngine(apps: List<String>, prepared: PreparedConnection) {
+        if (prepared.localBlocking) backend.applyPerApp(apps, false) else backend.applyPerApp(apps)
+    }
+
+    // ---------------------------------------------------------------- local network
+
+    private val localPolicy by lazy { app.perroute.localnet.LocalNetworkPolicy(AppDirectories.dataDirectory().resolve("local-networks.json")) }
+    @Volatile private var localNetworkCache: List<app.perroute.localnet.LocalNetwork> = emptyList()
+    @Volatile private var localNetworkCacheAt = 0L
+    /** The untrusted ranges the running core blocks, so a network change that alters them can be noticed. */
+    @Volatile private var appliedLocalBlocking: List<String> = emptyList()
+
+    /** The networks this computer is on, with their devices. Cached for half a minute unless [refresh]. */
+    fun localNetworks(refresh: Boolean = false, resolveNames: Boolean = false): List<app.perroute.localnet.LocalNetwork> {
+        val now = System.currentTimeMillis()
+        if (!refresh && now - localNetworkCacheAt < 30_000 && localNetworkCacheAt > 0) return localNetworkCache
+        val found = runCatching { backend.localNetworks(resolveNames) }.getOrDefault(emptyList())
+        localNetworkCache = found
+        localNetworkCacheAt = now
+        return found
+    }
+
+    fun localNamesDirect(): Boolean = localPolicy.localNamesDirect()
+    fun setLocalNamesDirect(value: Boolean): ActionResult {
+        localPolicy.setLocalNamesDirect(value)
+        return ActionResult(true, (if (value) "Local names such as printer.local now stay on your local network." else "Local names are routed like any other name.") + appliesNext())
+    }
+
+    fun networkTrusted(id: String): Boolean = localPolicy.trust(id) == app.perroute.localnet.LocalNetworkPolicy.Trust.TRUSTED
+    fun untrustedNetworks(): Map<String, String> = localPolicy.untrusted()
+
+    /**
+     * On a network that is not trusted, routed apps cannot reach its devices (its router and DNS servers stay
+     * reachable). Apps that are not routed are not affected.
+     */
+    fun setNetworkTrusted(id: String, label: String, trusted: Boolean): ActionResult {
+        localPolicy.setTrust(id, label, if (trusted) app.perroute.localnet.LocalNetworkPolicy.Trust.TRUSTED else app.perroute.localnet.LocalNetworkPolicy.Trust.UNTRUSTED)
+        return ActionResult(true, (if (trusted) "$label is trusted: routed apps can reach its devices." else "$label is not trusted: routed apps cannot reach its devices, except the router and DNS.") + appliesNext())
+    }
+
+    private fun appliesNext(): String = if (isConnected()) " It applies from the next connection." else ""
+
+    private fun localNetworkRules(): app.perroute.localnet.LocalNetworkPolicy.Rules {
+        val networks = if (localPolicy.untrusted().isEmpty()) emptyList() else localNetworks(refresh = true)
+        return localPolicy.rules(networks).also { appliedLocalBlocking = it.blocked() }
+    }
+
+    // ---------------------------------------------------------------- network time machine
+
+    private val networkHistory by lazy { app.perroute.netstate.NetworkHistoryStore(AppDirectories.dataDirectory().resolve("network-history.json")) }
+
+    fun networkSnapshots(): List<app.perroute.netstate.NetworkSnapshot> = networkHistory.all()
+    fun networkBaseline(): app.perroute.netstate.NetworkSnapshot? = networkHistory.baseline()
+
+    /** The settings as they are right now, not stored. */
+    fun currentNetworkState(): app.perroute.netstate.NetworkSnapshot =
+        app.perroute.netstate.NetworkSnapshot(0, System.currentTimeMillis(), app.perroute.netstate.NetworkSnapshot.Reason.MANUAL,
+            SecureUpdateService.CURRENT_VERSION, runCatching { backend.networkState() }.getOrDefault(emptyMap()))
+
+    fun takeNetworkSnapshot(reason: app.perroute.netstate.NetworkSnapshot.Reason = app.perroute.netstate.NetworkSnapshot.Reason.MANUAL): app.perroute.netstate.NetworkSnapshot? {
+        val values = runCatching { backend.networkState() }.getOrDefault(emptyMap())
+        if (values.isEmpty()) return null
+        return networkHistory.add(reason, SecureUpdateService.CURRENT_VERSION, values, System.currentTimeMillis())
+    }
+
+    /** Takes a snapshot in the background; used around connecting so it never slows a connection down. */
+    private fun snapshotLater(reason: app.perroute.netstate.NetworkSnapshot.Reason, delayMillis: Long = 0) {
+        if (closing) return
+        Thread.ofVirtual().name("perroute-network-snapshot").start {
+            if (delayMillis > 0) try { Thread.sleep(delayMillis) } catch (_: InterruptedException) { return@start }
+            if (!closing) runCatching { takeNetworkSnapshot(reason) }
+        }
+    }
+
+    /** What a safe restore would do now. */
+    fun networkRestorePlan(): app.perroute.netstate.NetworkRestorePlan =
+        app.perroute.netstate.NetworkRestorePlan.build(currentNetworkState(), networkHistory.baseline(), isConnected() || phase != ConnectionPhase.DISCONNECTED)
+
+    /**
+     * Undoes PerRoute's own leftovers and nothing else (see [app.perroute.netstate.NetworkRestorePlan]). A snapshot
+     * of the settings before the restore is kept, so the comparison shows what was done.
+     */
+    @Synchronized
+    fun restoreNetwork(): ActionResult {
+        val plan = networkRestorePlan()
+        plan.blocked()?.let { return ActionResult(false, it) }
+        if (!plan.needed()) return ActionResult(true, "Nothing to restore: PerRoute has left nothing behind.")
+        takeNetworkSnapshot(app.perroute.netstate.NetworkSnapshot.Reason.BEFORE_RESTORE)
+        val done = mutableListOf<String>()
+        val failed = mutableListOf<String>()
+        var needsAdmin = false
+        for (step in plan.actions()) {
+            val outcome = runCatching {
+                when (step.action()) {
+                    // Both go through the safe restore, which only writes the saved values while the proxy is still PerRoute's.
+                    app.perroute.netstate.NetworkRestorePlan.Action.RESTORE_PROXY,
+                    app.perroute.netstate.NetworkRestorePlan.Action.DISCARD_PROXY_COPY -> backend.restoreSystemProxy()
+                    app.perroute.netstate.NetworkRestorePlan.Action.RESET_PROXY -> backend.resetSystemProxyLeftover(networkHistory.baseline()?.values())
+                    app.perroute.netstate.NetworkRestorePlan.Action.REMOVE_RECOVERY_ENTRY -> backend.removeRecoveryEntry()
+                    app.perroute.netstate.NetworkRestorePlan.Action.STOP_CORES -> backend.stopOrphan()
+                    app.perroute.netstate.NetworkRestorePlan.Action.RESTORE_ENGINE -> {
+                        if (!backend.elevated()) { needsAdmin = true; return@runCatching }
+                        backend.restorePerApp()
+                    }
+                    app.perroute.netstate.NetworkRestorePlan.Action.STOP_LIMITED_ENGINE -> backend.stopPerAppSidecar()
+                    app.perroute.netstate.NetworkRestorePlan.Action.CLEAR_SESSION -> Files.deleteIfExists(sessionMarker)
+                    app.perroute.netstate.NetworkRestorePlan.Action.LEAVE -> {}
+                }
+            }
+            if (outcome.isSuccess) done += step.title() else failed += "${step.title()}: ${message(outcome.exceptionOrNull()!!)}"
+        }
+        snapshotLater(app.perroute.netstate.NetworkSnapshot.Reason.AFTER_DISCONNECT, 500)
+        val left = plan.leftAlone().size
+        val note = if (left == 0) "" else " ${plural(left, "setting")} set by others ${if (left == 1) "was" else "were"} left as ${if (left == 1) "it was" else "they were"}."
+        log("Network restore: ${done.size} ${if (done.size == 1) "step" else "steps"} done.$note")
+        return when {
+            failed.isNotEmpty() -> ActionResult(false, "Some steps failed: ${failed.joinToString(" | ")}")
+            needsAdmin -> ActionResult(false, "Done, except the per-app engine: restoring it needs Administrator approval. Use Open recovery tool.$note")
+            else -> ActionResult(true, "Restored. PerRoute's leftovers were removed.$note")
+        }
+    }
+
+    // ---------------------------------------------------------------- safe update and rollback
+
+    private val startupHealthStore by lazy { app.perroute.update.StartupHealth(AppDirectories.dataDirectory().resolve("startup-health.json")) }
+
+    fun startupHealth(): app.perroute.update.StartupHealth.Status = startupHealthStore.read()
+
+    /** Marks this start as working; called once the window has been up for a while and on a clean exit. */
+    fun markStartupHealthy() = startupHealthStore.markHealthy(System.currentTimeMillis())
+
+    /** The version the installer kept for a rollback, or null. */
+    fun rollbackVersion(): String? = app.perroute.update.InstallLocation.current().flatMap { it.rollbackVersion() }.orElse(null)
+
+    fun recoveryToolAvailable(): Boolean = app.perroute.update.InstallLocation.current().map { Files.isRegularFile(it.recoveryTool()) }.orElse(false)
+
+    /**
+     * Hands over to the recovery tool to put the previous version back. It needs Administrator approval, and
+     * PerRoute closes afterwards (the caller exits), so its files can be replaced. Settings are kept.
+     */
+    fun rollBack(): ActionResult {
+        val location = app.perroute.update.InstallLocation.current().orElse(null) ?: return ActionResult(false, "Rollback is available in the installed PerRoute only.")
+        val version = location.rollbackVersion().orElse(null) ?: return ActionResult(false, "No previous version is kept on this computer.")
+        if (!Files.isRegularFile(location.recoveryTool())) return ActionResult(false, "The recovery tool is missing. Reinstall PerRoute to restore it.")
+        return try {
+            backend.shellOpen(location.recoveryTool(), listOf("/rollback", "/wait", ProcessHandle.current().pid().toString()), elevated = true)
+            log("Rolling back to $version.")
+            ActionResult(true, "Going back to PerRoute $version. PerRoute closes now and opens again when the rollback is done.")
+        } catch (error: Throwable) {
+            ActionResult(false, message(error))
+        }
+    }
+
+    fun openRecoveryTool(): ActionResult {
+        val location = app.perroute.update.InstallLocation.current().orElse(null) ?: return ActionResult(false, "The recovery tool comes with the installed PerRoute.")
+        if (!Files.isRegularFile(location.recoveryTool())) return ActionResult(false, "The recovery tool is missing. Reinstall PerRoute to restore it.")
+        return runCatching { backend.shellOpen(location.recoveryTool(), emptyList(), elevated = false); ActionResult(true, "PerRoute Recovery opened.") }
+            .getOrElse { ActionResult(false, message(it)) }
+    }
+
+    // ---------------------------------------------------------------- browser workspaces
+
+    private val workspaceStore by lazy { app.perroute.workspace.WorkspaceStore(AppDirectories.dataDirectory().resolve("workspaces.json")) }
+    /** Workspaces whose core is running, by id, with the server it was started for. */
+    private val runningWorkspaces = java.util.concurrent.ConcurrentHashMap<String, RunningWorkspace>()
+
+    private class RunningWorkspace(val tunnel: IsolatedTunnel, val nodeKey: String, val startedAt: Long, @Volatile var browser: Process?)
+
+    fun workspaces(): List<WorkspaceView> = workspaceStore.all().map { workspace ->
+        val running = runningWorkspaces[workspace.id]
+        val alive = running?.tunnel?.alive() == true
+        val node = workspaceNode(workspace)
+        WorkspaceView(workspace, alive, running?.startedAt ?: 0L, node, workspacePort(workspace),
+            when {
+                !Files.isRegularFile(Path.of(workspace.browserPath)) -> "The browser was not found at ${workspace.browserPath}."
+                node == null && !workspace.followsMain() -> "Its server was removed. Choose another one."
+                node == null -> "Add a server first."
+                running != null && !alive -> "Its connection stopped. Open it again to reconnect."
+                else -> ""
+            })
+    }
+
+    fun workspaceBrowsers(): List<app.perroute.workspace.WorkspaceBrowsers.Browser> = app.perroute.workspace.WorkspaceBrowsers.find(
+        runCatching { installedApplications().map { it.path() } + runningApplications().map { it.path() } }.getOrDefault(emptyList()))
+
+    fun workspacePort(workspace: app.perroute.workspace.Workspace): Int = WORKSPACE_PORT_BASE + workspace.slot
+
+    /** The folder that holds a workspace's cookies, sign-ins and history. */
+    fun workspaceProfile(workspace: app.perroute.workspace.Workspace): Path = AppDirectories.dataDirectory().resolve("workspaces").resolve(workspace.id)
+
+    private fun workspaceNode(workspace: app.perroute.workspace.Workspace): ProxyNode? =
+        if (workspace.followsMain()) selectedNode() else nodes().firstOrNull { it.key() == workspace.nodeKey }
+
+    fun createWorkspace(name: String, browser: String, nodeKey: String): ActionResult {
+        if (name.isBlank()) return ActionResult(false, "Give the workspace a name, such as Work or Personal.")
+        if (!app.perroute.workspace.WorkspaceBrowsers.supported(browser)) return ActionResult(false, "Choose Chrome, Edge, Brave, Vivaldi or Chromium. Other browsers cannot take a separate route this way.")
+        if (!Files.isRegularFile(Path.of(browser))) return ActionResult(false, "That browser was not found.")
+        if (nodeKey.isNotBlank() && nodes().none { it.key() == nodeKey }) return ActionResult(false, "Server was not found.")
+        if (workspaceStore.all().any { it.name.equals(name.trim(), ignoreCase = true) }) return ActionResult(false, "A workspace with that name exists already.")
+        return try {
+            val workspace = workspaceStore.create(name.trim(), Path.of(browser).toAbsolutePath().normalize().toString(), nodeKey, System.currentTimeMillis())
+            log("Workspace ${workspace.name} created.")
+            ActionResult(true, "${workspace.name} is ready. Open it to start its own browser window.")
+        } catch (error: Throwable) { ActionResult(false, message(error)) }
+    }
+
+    /** Renames a workspace or moves it to another browser or server; an open one reconnects on the new server. */
+    fun updateWorkspace(id: String, name: String, browser: String, nodeKey: String): ActionResult {
+        val workspace = workspaceStore.find(id) ?: return ActionResult(false, "That workspace no longer exists.")
+        if (name.isBlank()) return ActionResult(false, "Give the workspace a name.")
+        if (!app.perroute.workspace.WorkspaceBrowsers.supported(browser) || !Files.isRegularFile(Path.of(browser))) return ActionResult(false, "Choose an installed Chromium browser.")
+        if (nodeKey.isNotBlank() && nodes().none { it.key() == nodeKey }) return ActionResult(false, "Server was not found.")
+        if (workspaceStore.all().any { it.id != id && it.name.equals(name.trim(), ignoreCase = true) }) return ActionResult(false, "A workspace with that name exists already.")
+        val updated = app.perroute.workspace.Workspace(id, name.trim(), Path.of(browser).toAbsolutePath().normalize().toString(), nodeKey, workspace.slot, workspace.createdAt)
+        workspaceStore.update(updated)
+        val running = runningWorkspaces[id]
+        if (running != null && running.tunnel.alive() && running.nodeKey != workspaceNode(updated)?.key()) {
+            val restarted = startWorkspaceCore(updated)
+            return if (restarted.ok) ActionResult(true, "${updated.name} now uses ${workspaceNode(updated)?.let { cleanName(it.name()) }}. Its open window keeps working.") else restarted
+        }
+        return ActionResult(true, "${updated.name} saved.")
+    }
+
+    /** Removes a workspace. Its profile folder (cookies, sign-ins, history) is only deleted when asked to. */
+    fun removeWorkspace(id: String, deleteProfile: Boolean): ActionResult {
+        val workspace = workspaceStore.find(id) ?: return ActionResult(false, "That workspace no longer exists.")
+        stopWorkspace(id)
+        val profile = workspaceProfile(workspace)
+        if (deleteProfile && backend.profileInUse(profile)) return ActionResult(false, "Close the ${workspace.name} browser window first, then remove it.")
+        workspaceStore.remove(id)
+        if (deleteProfile) runCatching { deleteTree(profile) }.onFailure { return ActionResult(false, "${workspace.name} was removed, but its profile folder could not be deleted: ${message(it)}") }
+        log("Workspace ${workspace.name} removed.")
+        return ActionResult(true, "${workspace.name} was removed." + if (deleteProfile) " Its browsing data was deleted." else " Its browsing data is kept in ${profile.fileName}.")
+    }
+
+    /** Opens the workspace's browser on its own route. It works whether or not PerRoute is connected. */
+    @Synchronized
+    fun openWorkspace(id: String): ActionResult {
+        val workspace = workspaceStore.find(id) ?: return ActionResult(false, "That workspace no longer exists.")
+        if (!Files.isRegularFile(Path.of(workspace.browserPath))) return ActionResult(false, "The browser was not found at ${workspace.browserPath}.")
+        val running = runningWorkspaces[id]
+        val wanted = workspaceNode(workspace)?.key()
+        if (running == null || !running.tunnel.alive() || running.nodeKey != wanted) startWorkspaceCore(workspace).let { if (!it.ok) return it }
+        val profile = workspaceProfile(workspace)
+        return try {
+            Files.createDirectories(profile)
+            val browser = backend.startProgram(app.perroute.workspace.WorkspaceBrowsers.command(workspace.browserPath, profile, workspacePort(workspace)))
+            runningWorkspaces[id]?.browser = browser
+            watchWorkspace(id, browser)
+            ActionResult(true, "${workspace.name} opened on ${workspaceNode(workspace)?.let { cleanName(it.name()) }}.")
+        } catch (error: Throwable) {
+            ActionResult(false, "The browser could not be started: ${message(error)}")
+        }
+    }
+
+    /** Stops a workspace's route. Its window stays open but has no connection until the workspace is opened again. */
+    fun stopWorkspace(id: String): ActionResult {
+        val running = runningWorkspaces.remove(id) ?: return ActionResult(true, "That workspace is not running.")
+        runCatching { running.tunnel.close() }
+        val name = workspaceStore.find(id)?.name ?: "The workspace"
+        log("$name stopped. Its browser window has no connection until you open it again.")
+        return ActionResult(true, "$name stopped. Its window has no connection until you open it again.")
+    }
+
+    private fun startWorkspaceCore(workspace: app.perroute.workspace.Workspace): ActionResult {
+        val node = workspaceNode(workspace) ?: return ActionResult(false, if (workspace.followsMain()) "Add a server first." else "The workspace's server was removed. Choose another one.")
+        runningWorkspaces.remove(workspace.id)?.let { runCatching { it.tunnel.close() } }
+        val port = workspacePort(workspace)
+        return try {
+            val config = XrayConfigGenerator().generateIsolated(node, port, app.perroute.service.RealTunnelProbe.reservePort(), rules())
+            val tunnel = backend.startIsolatedCore(config, port)
+            Thread.sleep(300)
+            if (!tunnel.alive()) {
+                val reason = tunnel.lastLines().lastOrNull { it.contains("fail", true) || it.contains("error", true) } ?: "the core stopped at once"
+                tunnel.close()
+                return ActionResult(false, "${workspace.name} could not start its route: $reason")
+            }
+            runningWorkspaces[workspace.id] = RunningWorkspace(tunnel, node.key(), System.currentTimeMillis(), null)
+            log("${workspace.name} routes through ${cleanName(node.name())} on its own port.")
+            ActionResult(true, "${workspace.name} uses ${cleanName(node.name())}.")
+        } catch (error: Throwable) {
+            ActionResult(false, "${workspace.name} could not start its route: ${message(error)}")
+        }
+    }
+
+    /** Stops the workspace's route once its browser has closed and its profile is no longer in use. */
+    private fun watchWorkspace(id: String, browser: Process) {
+        Thread.ofVirtual().name("perroute-workspace-watch").start {
+            runCatching { browser.waitFor() }
+            // A browser that was already open hands the window to the running one and exits at once, so the
+            // profile lock, not the launcher process, says when the window really closed.
+            val profile = workspaceStore.find(id)?.let(::workspaceProfile) ?: return@start
+            while (!closing && runningWorkspaces[id]?.browser === browser && backend.profileInUse(profile)) {
+                try { Thread.sleep(3_000) } catch (_: InterruptedException) { return@start }
+            }
+            if (!closing && runningWorkspaces[id]?.browser === browser) {
+                runningWorkspaces.remove(id)?.let { runCatching { it.tunnel.close() } }
+                log("${workspaceStore.find(id)?.name ?: "A workspace"} closed; its route stopped.")
+            }
+        }
+    }
+
+    /** Workspace windows left open across a PerRoute restart get their route back. */
+    private fun reattachWorkspaces() {
+        for (workspace in workspaceStore.all()) {
+            if (closing) return
+            if (!backend.profileInUse(workspaceProfile(workspace))) continue
+            if (startWorkspaceCore(workspace).ok) {
+                log("${workspace.name} was still open; its route was restored.")
+                Thread.ofVirtual().start {
+                    while (!closing && runningWorkspaces.containsKey(workspace.id) && backend.profileInUse(workspaceProfile(workspace))) {
+                        try { Thread.sleep(3_000) } catch (_: InterruptedException) { return@start }
+                    }
+                    if (!closing && runningWorkspaces[workspace.id]?.browser == null) runningWorkspaces.remove(workspace.id)?.let { runCatching { it.tunnel.close() } }
+                }
+            }
+        }
+    }
+
+    private fun deleteTree(root: Path) {
+        if (!Files.exists(root)) return
+        Files.walk(root).use { paths -> paths.sorted(Comparator.reverseOrder()).forEach { Files.deleteIfExists(it) } }
+    }
+
+    // ---------------------------------------------------------------- routing recipes
+
+    private val recipeSnapshotFile: Path get() = AppDirectories.dataDirectory().resolve("recipe-rollback.bin")
+
+    /**
+     * What a recipe made from the current setup would contain. Every distinct custom server becomes a numbered
+     * slot; nothing about the server itself is included.
+     */
+    fun recipeDraft(): RecipeDraft = synchronized(state) {
+        val advanced = state.advancedRouting()
+        val roles = LinkedHashMap<String, String>()
+        val apps = state.appPaths().map { path ->
+            val key = AppRoutes.normalize(path)
+            val policy = state.bandwidthPolicies()[key] ?: BandwidthPolicy.UNLIMITED
+            val route = when {
+                advanced && key in state.autoApps() -> app.perroute.recipe.Recipe.Route.AUTO
+                advanced && state.appRoutes().containsKey(key) -> app.perroute.recipe.Recipe.Route.ROLE
+                else -> app.perroute.recipe.Recipe.Route.MAIN
+            }
+            val role = if (route == app.perroute.recipe.Recipe.Route.ROLE) roles.getOrPut(state.appRoutes()[key]!!) { "server-${roles.size + 1}" } else ""
+            app.perroute.recipe.Recipe.AppEntry(Path.of(path).fileName.toString(), displayName(path), route, role,
+                if (route == app.perroute.recipe.Recipe.Route.AUTO) AutoCandidatePool.decode(state.autoPools()[key]).encode() else "",
+                policy.downloadBitsPerSecond(), policy.uploadBitsPerSecond())
+        }
+        RecipeDraft(apps, roles.values.mapIndexed { index, id -> app.perroute.recipe.Recipe.Role(id, "Server ${index + 1}", "") },
+            state.routeRules().filter { it.enabled() }, mapOf("perAppKillSwitch" to killSwitch(), "autoReconnect" to autoReconnect(),
+                "autoFailover" to autoFailover(), "fastestOnConnect" to fastestOnConnect()))
+    }
+
+    /** Builds the recipe the user chose to share from [draft]. */
+    fun buildRecipe(name: String, description: String, author: String, draft: RecipeDraft, includeApps: Boolean, includeSettings: Boolean,
+                    roleHints: Map<String, String>, skippedRules: Set<String>): app.perroute.recipe.Recipe {
+        val roles = if (includeApps) draft.roles.map { app.perroute.recipe.Recipe.Role(it.id(), roleHints[it.id()]?.takeIf { hint -> hint.isNotBlank() } ?: it.label(), "") } else emptyList()
+        return app.perroute.recipe.RecipePlanner.export(name.ifBlank { "My routing recipe" }, description, author, "PerRoute ${SecureUpdateService.CURRENT_VERSION}",
+            roles, if (includeApps) draft.apps else emptyList(), draft.rules, if (includeSettings) draft.settings else emptyMap(), skippedRules)
+    }
+
+    fun saveRecipe(recipe: app.perroute.recipe.Recipe, file: Path): ActionResult = try {
+        Files.createDirectories(file.toAbsolutePath().parent)
+        Files.writeString(file, app.perroute.recipe.RecipeCodec.toJson(recipe))
+        log("Recipe ${recipe.name()} saved.")
+        ActionResult(true, "Recipe saved to ${file.fileName}. It contains no servers, links or passwords.")
+    } catch (error: Throwable) { ActionResult(false, "The recipe could not be saved: ${message(error)}") }
+
+    /** Reads a recipe (file contents or shared text) and compares it with this setup. Nothing changes yet. */
+    fun openRecipe(text: String): Pair<app.perroute.recipe.RecipePlanner.Plan?, String?> = try {
+        val recipe = app.perroute.recipe.RecipeCodec.parse(text)
+        val known = runCatching { installedApplications().map { it.path() } + runningApplications().map { it.path() } }.getOrDefault(emptyList())
+        val modes = synchronized(state) {
+            state.appPaths().associate { path ->
+                val key = AppRoutes.normalize(path)
+                key to when {
+                    state.advancedRouting() && key in state.autoApps() -> "Auto"
+                    state.advancedRouting() && state.appRoutes().containsKey(key) -> "Manual"
+                    else -> "Main"
+                }
+            }
+        }
+        val preferences = mapOf("perAppKillSwitch" to killSwitch(), "autoReconnect" to autoReconnect(), "autoFailover" to autoFailover(), "fastestOnConnect" to fastestOnConnect())
+        app.perroute.recipe.RecipePlanner.plan(recipe, rules(), applications(), known, modes, preferences) to null
+    } catch (error: app.perroute.recipe.RecipeCodec.RecipeException) {
+        null to error.message
+    } catch (error: Throwable) {
+        null to "The recipe could not be read: ${message(error)}"
+    }
+
+    /**
+     * Applies a recipe the user reviewed. [roleServers] points every slot at one of the user's servers;
+     * [appPaths] gives the path of each recipe app to set up (apps left out are skipped); [replace] lists apps that
+     * are already routed differently and should follow the recipe anyway. Rules are added after the user's own.
+     * A rollback snapshot is written first, so [undoRecipe] can put everything back.
+     */
+    fun applyRecipe(plan: app.perroute.recipe.RecipePlanner.Plan, roleServers: Map<String, String>, appPaths: Map<String, String>,
+                    replace: Set<String>, applySettings: Boolean): ActionResult {
+        editLock("routing")?.let { return it }
+        val recipe = plan.recipe()
+        val chosenApps = recipe.apps().filter { appPaths[it.executable()]?.isNotBlank() == true }
+        for (entry in chosenApps) {
+            if (entry.route() == app.perroute.recipe.Recipe.Route.ROLE) {
+                val key = roleServers[entry.role()] ?: return ActionResult(false, "Choose a server for ${recipe.roles().firstOrNull { it.id() == entry.role() }?.label() ?: entry.role()}.")
+                if (nodes().none { it.key() == key }) return ActionResult(false, "One of the chosen servers no longer exists.")
+            }
+            if (!Files.isRegularFile(Path.of(appPaths[entry.executable()]!!))) return ActionResult(false, "${entry.executable()} was not found at the chosen place.")
+        }
+        val before = synchronized(state) { store.serialize(state) }
+        try { AppStateStore(recipeSnapshotFile).write(withPreferences(before, preferenceSnapshot())) }
+        catch (error: Throwable) { return ActionResult(false, "A rollback snapshot could not be written, so nothing was changed: ${message(error)}") }
+        var addedRules = 0
+        var setUp = 0
+        synchronized(state) {
+            for (rulePlan in plan.rules()) {
+                if (rulePlan.status() == app.perroute.recipe.RecipePlanner.RuleStatus.DUPLICATE) continue
+                val entry = rulePlan.rule()
+                val application = when {
+                    entry.executable().isBlank() -> ""
+                    else -> appPaths[entry.executable()] ?: rulePlan.applicationPath().ifBlank { null }
+                } ?: continue
+                state.routeRules().add(RouteRule("", app.perroute.recipe.RecipePlanner.ruleName(recipe, entry), application, entry.match(), entry.value(), entry.action(), true))
+                addedRules++
+            }
+            var needsAdvanced = false
+            for (entry in chosenApps) {
+                val path = Path.of(appPaths[entry.executable()]!!).toAbsolutePath().normalize().toString()
+                val key = AppRoutes.normalize(path)
+                val already = state.appPaths().any { AppRoutes.normalize(it) == key }
+                val configured = plan.apps().firstOrNull { it.app().executable() == entry.executable() }?.configured() == true
+                if (!already) state.appPaths().add(path)
+                if (configured && entry.executable() !in replace) continue
+                when (entry.route()) {
+                    app.perroute.recipe.Recipe.Route.MAIN -> { state.autoApps().remove(key); state.appRoutes().remove(key) }
+                    app.perroute.recipe.Recipe.Route.ROLE -> {
+                        val node = roleServers[entry.role()]!!
+                        state.autoApps().remove(key)
+                        state.appRoutes()[key] = node
+                        state.nodes().firstOrNull { it.key() == node }?.let { state.appRouteLabels()[node] = cleanName(it.name()) }
+                        needsAdvanced = true
+                    }
+                    app.perroute.recipe.Recipe.Route.AUTO -> {
+                        state.autoApps().add(key)
+                        val pool = AutoCandidatePool.decode(entry.pool())
+                        if (pool.kind() == AutoCandidatePool.Kind.ALL) state.autoPools().remove(key) else state.autoPools()[key] = pool.encode()
+                        needsAdvanced = true
+                    }
+                }
+                if (entry.downloadBitsPerSecond() > 0 || entry.uploadBitsPerSecond() > 0) {
+                    state.bandwidthPolicies()[key] = BandwidthPolicy(entry.downloadBitsPerSecond(), entry.uploadBitsPerSecond())
+                }
+                setUp++
+            }
+            if (needsAdvanced) state.setAdvancedRouting(true)
+            state.appRouteLabels().keys.retainAll(state.appRoutes().values.toSet())
+        }
+        if (applySettings) plan.settings().forEach { setting ->
+            when (setting.key()) {
+                "perAppKillSwitch" -> setKillSwitch(setting.to())
+                "autoReconnect" -> setAutoReconnect(setting.to())
+                "autoFailover" -> setAutoFailover(setting.to())
+                "fastestOnConnect" -> setFastestOnConnect(setting.to())
+            }
+        }
+        autoRouting.clear()
+        save()
+        log("Recipe ${recipe.name()} applied: ${plural(addedRules, "rule")} added, ${plural(setUp, "app")} set up.")
+        return ActionResult(true, "${recipe.name()} applied: ${plural(addedRules, "rule")} added, ${plural(setUp, "app")} set up. Undo recipe puts your previous setup back.")
+    }
+
+    fun hasRecipeSnapshot(): Boolean = Files.isRegularFile(recipeSnapshotFile)
+
+    /** Puts the setup from before the last recipe back. */
+    fun undoRecipe(): ActionResult {
+        editLock("routing")?.let { return it }
+        if (!hasRecipeSnapshot()) return ActionResult(false, "There is no recipe to undo.")
+        return try {
+            val properties = AppStateStore(recipeSnapshotFile).loadProperties()
+            val previous = store.parse(properties)
+            val prefs = properties.stringPropertyNames().filter { it.startsWith(ROLLBACK_PREFIX) }.associate { it.removePrefix(ROLLBACK_PREFIX) to properties.getProperty(it) }
+            store.write(store.serialize(previous))
+            synchronized(state) { state.replaceWith(previous) }
+            applyPreferences(prefs)
+            Files.deleteIfExists(recipeSnapshotFile)
+            afterStateReplaced()
+            log("The last recipe was undone.")
+            ActionResult(true, "Your setup from before the recipe is back.")
+        } catch (error: Throwable) {
+            ActionResult(false, "The recipe could not be undone: ${message(error)}")
+        }
+    }
+
+    /** Takes every rule a recipe added out again; apps and settings stay as they are. */
+    fun removeRecipeRules(): ActionResult {
+        editLock("routing rules")?.let { return it }
+        val removed = synchronized(state) {
+            val before = state.routeRules().size
+            state.routeRules().removeIf { it.name().startsWith(app.perroute.recipe.RecipePlanner.RULE_PREFIX) }
+            before - state.routeRules().size
+        }
+        save()
+        return ActionResult(true, if (removed == 0) "No recipe rules to remove." else "${plural(removed, "recipe rule")} removed.")
+    }
+
+    // ---------------------------------------------------------------- gaming
+
+    private val gamingResults by lazy { app.perroute.gaming.GamingResultStore(AppDirectories.dataDirectory().resolve("gaming-results.json")) }
+
+    fun gamingScores(): Map<String, app.perroute.gaming.GamingScore> = gamingResults.all()
+    fun gamingScore(key: String): app.perroute.gaming.GamingScore? = gamingResults.get(key)
+
+    /**
+     * Tests servers for games, one after another, each through a core of its own so the running connection is not
+     * involved. [progress] gets each result as it arrives; [cancelled] stops between servers.
+     */
+    fun gamingTest(targets: List<ProxyNode>, cancelled: () -> Boolean = { false },
+                   progress: (ProxyNode, app.perroute.gaming.GamingScore) -> Unit = { _, _ -> }): Map<String, app.perroute.gaming.GamingScore> {
+        val results = LinkedHashMap<String, app.perroute.gaming.GamingScore>()
+        for (node in targets) {
+            if (cancelled() || closing) break
+            val score = runCatching { gamingTestOne(node) }.getOrElse {
+                app.perroute.gaming.GamingScore(0, "Unavailable", false, -1, -1, -1, 100.0, -1, 100.0, System.currentTimeMillis(), message(it))
+            }
+            gamingResults.put(node.key(), score)
+            results[node.key()] = score
+            progress(node, score)
+        }
+        if (results.isNotEmpty()) log("Gaming test finished for ${plural(results.size, "server")}.")
+        return results
+    }
+
+    private fun gamingTestOne(node: ProxyNode): app.perroute.gaming.GamingScore {
+        val port = app.perroute.service.RealTunnelProbe.reservePort()
+        backend.startIsolatedCore(XrayConfigGenerator().generateProbe(node, port, app.perroute.service.RealTunnelProbe.reservePort()), port).use { tunnel ->
+            // The usual tunnel check first: it waits for the core to listen and proves the server answers at all.
+            val health = backend.checkTunnel(port)
+            if (!tunnel.alive()) return unavailable("Xray did not accept this server.")
+            if (!health.success()) return unavailable(health.detail())
+            return app.perroute.gaming.GamingScore.of(app.perroute.gaming.GamingProbe().measure(port), System.currentTimeMillis())
+        }
+    }
+
+    private fun unavailable(reason: String) = app.perroute.gaming.GamingScore(0, "Unavailable", false, -1, -1, -1, 100.0, -1, 100.0, System.currentTimeMillis(), reason)
+
+    // ---------------------------------------------------------------- shadow routing
+
+    /**
+     * Destinations worth comparing for a route: the HTTPS sites its apps were seen using in this session (the
+     * inspector's observations, kept in memory only), then common sites, five at most.
+     */
+    fun shadowDestinations(routeId: String?): List<String> {
+        val route = routeId?.let { id -> activeRoutes.firstOrNull { it.id == id } }
+        val apps = route?.applications?.map { AppRoutes.normalize(it) }?.toSet().orEmpty()
+        val seen = inspector.snapshot(System.currentTimeMillis())
+            .filter { apps.isEmpty() || AppRoutes.normalize(it.applicationPath()) in apps }
+            .filter { it.destinationPort() == 443 }
+            .mapNotNull { observation -> observation.sniffedDomain().ifBlank { observation.destinationHost() }.takeIf { host -> host.contains('.') && !host.matches(Regex("[0-9.]+|.*:.*")) } }
+            .groupingBy { it.lowercase(Locale.ROOT) }.eachCount().entries.sortedByDescending { it.value }.map { it.key }
+        return (seen.take(4) + DEFAULT_SHADOW_DESTINATIONS).distinct().take(5)
+    }
+
+    /**
+     * Compares a route with a candidate server, side by side, without touching the route. While connected the live
+     * side is the route's own port; otherwise the route's server is tested on a core of its own as well.
+     */
+    fun runShadowExperiment(routeId: String?, candidateKey: String, destinations: List<String>, cancelled: () -> Boolean = { false }): ShadowResult {
+        val candidate = nodes().firstOrNull { it.key() == candidateKey } ?: return ShadowResult(null, null, "", "", "Server was not found.")
+        val route = routeId?.let { id -> activeRoutes.takeIf { isConnected() }?.firstOrNull { it.id == id } }
+        val liveNode = route?.node ?: routeId?.let { id -> nodes().firstOrNull { it.key() == id } } ?: selectedNode()
+            ?: return ShadowResult(null, null, "", "", "Choose a server to compare with.")
+        if (liveNode.key() == candidate.key() && route == null) return ShadowResult(null, null, "", "", "Pick a different server to compare with.")
+        val hosts = destinations.ifEmpty { shadowDestinations(routeId) }
+        val timer = app.perroute.shadow.ShadowExperiment.Timer { port, host -> app.perroute.service.TunnelHttp.timeHead(app.perroute.service.TunnelHttp.Route.socks(port), host, 6_000) }
+        val opened = mutableListOf<IsolatedTunnel>()
+        return try {
+            fun isolated(node: ProxyNode): Int {
+                val port = app.perroute.service.RealTunnelProbe.reservePort()
+                opened += backend.startIsolatedCore(XrayConfigGenerator().generateProbe(node, port, app.perroute.service.RealTunnelProbe.reservePort()), port)
+                // Waits until the core listens; a failure shows up in the comparison itself.
+                backend.checkTunnel(port)
+                return port
+            }
+            val livePort = route?.checkPort ?: isolated(liveNode)
+            val candidatePort = isolated(candidate)
+            val report = app.perroute.shadow.ShadowExperiment.run(timer, livePort, candidatePort, hosts, app.perroute.shadow.ShadowExperiment.ROUNDS, cancelled)
+            val (liveExit, candidateExit) = runCatching { backend.lookupPublicAddress(livePort) to backend.lookupPublicAddress(candidatePort) }.getOrDefault(RouteReport() to RouteReport())
+            log("Compared ${cleanName(liveNode.name())} with ${cleanName(candidate.name())}: ${report.verdict().outcome().headline().lowercase()}. The live route was not changed.")
+            ShadowResult(report, route, describeExit(liveExit), describeExit(candidateExit), "", liveNode)
+        } catch (error: Throwable) {
+            ShadowResult(null, route, "", "", "The comparison could not run: ${message(error)}", liveNode)
+        } finally {
+            opened.forEach { runCatching { it.close() } }
+        }
+    }
+
+    private fun describeExit(report: RouteReport): String =
+        report.ip?.let { ip -> ip + (report.country?.takeIf { it.isNotBlank() }?.let { " ($it)" } ?: "") } ?: ""
+
+    // ---------------------------------------------------------------- subscription intelligence
+
+    private val insights by lazy { app.perroute.subscription.SubscriptionInsightStore(AppDirectories.dataDirectory().resolve("subscription-insights.json")) }
+
+    fun subscriptionInsight(url: String): app.perroute.subscription.SubscriptionInsight? = insights.get(url)
+
+    fun subscriptionHealth(url: String): app.perroute.subscription.SubscriptionHealth.Report =
+        app.perroute.subscription.SubscriptionHealth.analyze(insights.get(url), System.currentTimeMillis())
+
+    /** The worst report across all subscriptions, for a badge on the Servers screen. */
+    fun subscriptionAttention(): Int = subscriptions().count { subscriptionHealth(it).severity() >= app.perroute.subscription.SubscriptionHealth.Severity.WARNING }
+
+    /** Records a successful update: what the provider reported and how the server list changed. */
+    private fun recordSubscription(url: String, fetched: app.perroute.service.SubscriptionService.Fetched, previous: List<ProxyNode>) {
+        runCatching {
+            val now = System.currentTimeMillis()
+            val incoming = fetched.result().nodes()
+            val identities = incoming.map { it.identity() }
+            val within = identities.size - identities.toSet().size
+            val (elsewhere, shared) = synchronized(state) {
+                val others = state.nodes().filter { node -> !state.nodeSources()[node.key()].equals(url, ignoreCase = true) }
+                val otherIdentities = others.mapTo(hashSetOf()) { it.identity() }
+                val otherEndpoints = others.mapTo(hashSetOf()) { "${it.address().lowercase(Locale.ROOT)}:${it.port()}" }
+                identities.toSet().count { it in otherIdentities } to
+                    incoming.distinctBy { it.identity() }.count { it.identity() !in otherIdentities && "${it.address().lowercase(Locale.ROOT)}:${it.port()}" in otherEndpoints }
+            }
+            val change = if (previous.isEmpty() && (insights.get(url)?.lastSuccessAt() ?: 0L) == 0L) null
+                else app.perroute.subscription.SubscriptionChange.between(previous.map { app.perroute.subscription.SubscriptionChange.Entry(it.identity(), cleanName(it.name())) },
+                    incoming.distinctBy { it.identity() }.map { app.perroute.subscription.SubscriptionChange.Entry(it.identity(), cleanName(it.name())) }, now)
+            val current = insights.get(url) ?: app.perroute.subscription.SubscriptionInsight.empty(now)
+            insights.put(url, current.succeeded(now, fetched.title(), fetched.userInfo(), fetched.updateIntervalHours(),
+                incoming.distinctBy { it.identity() }.size, within, elsewhere, shared, change))
+            if (change?.unexpected() == true) log("${sourceLabel(url)} changed a lot in this update (${change.summary()}). Check that the link still belongs to your provider.")
+            fetched.userInfo().takeIf { it.hasExpiry() && it.expireAtMillis() <= now }?.let { log("${sourceLabel(url)} reports that it has expired.") }
+        }
+    }
+
+    private fun recordSubscriptionFailure(url: String, error: String) {
+        runCatching {
+            val now = System.currentTimeMillis()
+            insights.put(url, (insights.get(url) ?: app.perroute.subscription.SubscriptionInsight.empty(now)).failed(now, error))
+        }
+    }
+
+    private fun serversOf(url: String): List<ProxyNode> = synchronized(state) {
+        state.nodes().filter { node -> state.nodeSources()[node.key()].equals(url, ignoreCase = true) }
+    }
+
+    // ---------------------------------------------------------------- connection doctor and safety center
+
+    /** The core's recent lines, in memory only, so the Doctor can say why a server refuses connections. */
+    private val coreLogTail = java.util.concurrent.ConcurrentLinkedDeque<String>()
+
+    private fun rememberCoreLine(line: String) {
+        coreLogTail.addLast(line)
+        while (coreLogTail.size > 300) coreLogTail.pollFirst()
+    }
+
+    /**
+     * Looks for the reason something does not connect, from the outside in: this computer's own connection, its
+     * DNS and clock, PerRoute's parts, the server, the tunnel, and finally the app and the destination. Nothing is
+     * changed; a finding that can be fixed carries a [Repair] the user can choose to run.
+     */
+    fun diagnose(appPath: String?, destination: String?): HealthReport {
+        val findings = mutableListOf<HealthFinding>()
+        val connected = isConnected()
+        val mode = activeMode ?: state.connectionMode()
+        val now = System.currentTimeMillis()
+        val target = appPath?.takeIf { it.isNotBlank() }
+        val appName = healthAppName(target)
+
+        val direct = runCatching { backend.lookupPublicAddress(null) }.getOrElse { RouteReport(error = message(it)) }
+        val offline = direct.ip == null
+        findings += if (offline) HealthFinding("network", "This computer", CheckStatus.FAIL, "Your own internet connection does not work",
+            "Even without the tunnel, a public test site did not answer (${direct.error ?: "no answer"}). Check Wi-Fi or the cable and your router first; nothing in PerRoute can work until this does.")
+        else HealthFinding("network", "This computer", CheckStatus.PASS, "Your internet connection works", "Public address ${direct.ip}${direct.country?.let { " ($it)" } ?: ""}.")
+
+        findings += if (!runCatching { backend.systemResolves("www.cloudflare.com") }.getOrDefault(false))
+            HealthFinding("dns", "This computer", if (offline) CheckStatus.SKIPPED else CheckStatus.FAIL, "Windows cannot look up names",
+                "Names such as www.cloudflare.com do not resolve through your DNS servers (${backend.systemDnsServers().joinToString(", ").ifBlank { "unknown" }}). Servers given by name cannot be reached either.")
+        else HealthFinding("dns", "This computer", CheckStatus.PASS, "Name lookups work", "Windows resolves names through ${backend.systemDnsServers().joinToString(", ").ifBlank { "its DNS servers" }}.")
+
+        if (!offline) {
+            val serverTime = runCatching { backend.directServerTime() }.getOrNull()
+            if (serverTime != null) {
+                val skew = kotlin.math.abs(now - serverTime) / 1000
+                findings += when {
+                    skew > 90 -> HealthFinding("clock", "This computer", CheckStatus.FAIL, "Your clock is ${formatSkew(skew)} off",
+                        "VMess servers refuse connections when the clock differs by more than 90 seconds, and secure connections can fail too. Turn on Set time automatically in Windows settings.")
+                    skew > 30 -> HealthFinding("clock", "This computer", CheckStatus.WARN, "Your clock is ${formatSkew(skew)} off",
+                        "Close to the 90 seconds some servers accept. Turn on Set time automatically in Windows settings.")
+                    else -> HealthFinding("clock", "This computer", CheckStatus.PASS, "Your clock is correct", "Within $skew seconds of a public time source.")
+                }
+            }
+        }
+
+        val environment = environment()
+        findings += if (!environment.coreReady) HealthFinding("core", "PerRoute", CheckStatus.FAIL, "The connection core is not installed",
+            "Xray is missing, so no connection can start.", Repair.OPEN_COMPONENTS)
+        else HealthFinding("core", "PerRoute", CheckStatus.PASS, "The connection core is installed", "")
+        if (mode == ConnectionMode.NATIVE_PER_APP) {
+            findings += if (!environment.perAppReady) HealthFinding("engine", "PerRoute", CheckStatus.FAIL, "The per-app engine is not installed",
+                "Smart per-app needs it to send the selected apps to the tunnel. Install PerRoute with the Full Installer.", Repair.OPEN_COMPONENTS)
+            else HealthFinding("engine", "PerRoute", CheckStatus.PASS, "The per-app engine is installed", "")
+        }
+
+        when {
+            desiredConnected && !connected && phase == ConnectionPhase.DISCONNECTED -> findings += HealthFinding("connection", "Connection", CheckStatus.FAIL,
+                "The connection stopped", "You connected, but the connection is not running now${if (autoReconnect()) " and is being retried" else ""}.", Repair.RECONNECT)
+            !connected -> findings += HealthFinding("connection", "Connection", CheckStatus.INFO, "Not connected",
+                "Routed apps only use the tunnel while PerRoute is connected." + if (killSwitch() && mode == ConnectionMode.NATIVE_PER_APP) " The kill switch keeps the selected apps offline until then." else "")
+            else -> findings += HealthFinding("connection", "Connection", CheckStatus.PASS, "Connected", "Mode: ${modeLabel(mode)}.")
+        }
+
+        if (connected && mode == ConnectionMode.SYSTEM_PROXY) {
+            findings += if (!runCatching { backend.perRouteProxyActive() }.getOrDefault(true))
+                HealthFinding("proxy", "Windows", CheckStatus.FAIL, "Another program changed the Windows proxy",
+                    "Apps that follow Windows proxy settings no longer go through PerRoute. A VPN or another proxy tool may have replaced the setting.", Repair.REAPPLY_SYSTEM_PROXY)
+            else HealthFinding("proxy", "Windows", CheckStatus.PASS, "The Windows proxy points to PerRoute", "")
+        }
+        if (!connected) {
+            val plan = runCatching { networkRestorePlan() }.getOrNull()
+            if (plan != null && plan.needed()) findings += HealthFinding("leftovers", "Windows", CheckStatus.WARN, "PerRoute left settings behind",
+                plan.actions().joinToString(" ") { it.title() + "." }, Repair.RESTORE_NETWORK)
+        }
+
+        // The route the app (or the main connection) takes, and its server.
+        val route = when {
+            target != null && connected -> activeRoutes.firstOrNull { r -> r.applications.any { AppRoutes.normalize(it) == AppRoutes.normalize(target) } }
+            connected -> activeRoutes.firstOrNull { it.main }
+            else -> null
+        }
+        val node = route?.node ?: target?.let { routePlan().nodeFor(it) } ?: selectedNode()
+        if (node == null) {
+            findings += HealthFinding("server", "Server", CheckStatus.FAIL, "There is no server", "Add a server in Servers first.")
+        } else if (!offline) {
+            val name = cleanName(node.name())
+            if (node.protocol() != app.perroute.model.Protocol.XRAY_PROFILE) {
+                val reach = latencyProbe.probe(node, 3_000)
+                findings += if (!reach.reachable()) HealthFinding("server", "Server", CheckStatus.FAIL, "$name does not answer",
+                    "Its address ${node.address()}:${node.port()} cannot be reached (${reach.detail()}). The server may be down or blocked from your network.",
+                    if (route?.main != false) Repair.SWITCH_SERVER else null)
+                else HealthFinding("server", "Server", CheckStatus.PASS, "$name is reachable", "Its port answered in ${reach.milliseconds()} ms.")
+            }
+            val source = nodeSource(node.key())
+            if (source != MANUAL_SOURCE && source != IMPORTED_SOURCE) {
+                val health = subscriptionHealth(source)
+                if (health.severity() == app.perroute.subscription.SubscriptionHealth.Severity.PROBLEM) findings += HealthFinding("subscription", "Server",
+                    CheckStatus.FAIL, "Its subscription: ${health.status().lowercase()}", health.findings().first().detail(), Repair.UPDATE_SUBSCRIPTIONS)
+                else if (health.severity() == app.perroute.subscription.SubscriptionHealth.Severity.WARNING) findings += HealthFinding("subscription", "Server",
+                    CheckStatus.WARN, "Its subscription: ${health.status().lowercase()}", health.findings().first().detail(), Repair.UPDATE_SUBSCRIPTIONS)
+            }
+            if (route != null) {
+                val tunnel = runCatching { backend.checkTunnel(route.checkPort) }.getOrElse { app.perroute.service.ProxyHealthCheck.Result(false, message(it)) }
+                if (tunnel.success()) findings += HealthFinding("tunnel", "Tunnel", CheckStatus.PASS, "The tunnel through $name works", tunnel.detail())
+                else {
+                    val hint = CoreLogHints.analyze(coreLogTail.toList().takeLast(120))
+                    findings += HealthFinding("tunnel", "Tunnel", CheckStatus.FAIL, hint?.title ?: "The tunnel through $name does not work",
+                        (hint?.detail ?: "The server is reachable but does not carry traffic: ${tunnel.detail()}") + " Other routes are not affected.",
+                        if (route.main) Repair.SWITCH_SERVER else Repair.RECONNECT)
+                }
+            }
+        }
+
+        if (target != null) {
+            val selected = applications().any { AppRoutes.normalize(it) == AppRoutes.normalize(target) }
+            when {
+                mode != ConnectionMode.NATIVE_PER_APP -> findings += HealthFinding("app", "App", CheckStatus.INFO, "$appName follows the ${modeLabel(mode)} mode",
+                    if (mode == ConnectionMode.SYSTEM_PROXY) "It only uses the tunnel if it follows the Windows proxy settings. Many games and some apps do not; use Smart per-app for them."
+                    else "It only uses the tunnel if it is set to the local proxy ports itself.")
+                !selected -> findings += HealthFinding("app", "App", CheckStatus.FAIL, "$appName is not selected",
+                    "Only selected apps use the tunnel in Smart per-app. Select it in Apps and save.", Repair.OPEN_APPS)
+                else -> {
+                    val running = processIds(target).isNotEmpty()
+                    findings += HealthFinding("app", "App", if (running) CheckStatus.PASS else CheckStatus.INFO, if (running) "$appName is selected and running" else "$appName is selected but not running",
+                        if (running && connected && connectedAtMillis > 0) "If it was already open before you connected, connections it opened earlier may still use the old route. Restart it to be sure." else "")
+                    if (!connected && killSwitch()) findings += HealthFinding("killswitch", "App", CheckStatus.WARN, "The kill switch keeps $appName offline",
+                        "This is intended while PerRoute is disconnected. Connect, or turn the kill switch off.", Repair.RECONNECT)
+                    temporaryRoute(target)?.let { temporary ->
+                        findings += HealthFinding("temporary", "App", CheckStatus.INFO, "$appName is on a temporary server",
+                            "${nodes().firstOrNull { it.key() == temporary.nodeKey }?.let { cleanName(it.name()) } ?: "A server"} until ${formatClockTime(temporary.until)}.")
+                    }
+                }
+            }
+        }
+
+        if (!destination.isNullOrBlank()) {
+            val host = destination.trim().removePrefix("https://").removePrefix("http://").substringBefore('/').substringBefore(':')
+            val verdict = evaluateRoute(target.orEmpty(), host, 443)
+            val rule = verdict.rule()
+            findings += when {
+                rule != null && rule.action() == RouteRule.Action.BLOCK -> HealthFinding("rule", "Rules", CheckStatus.FAIL, "A rule blocks $host",
+                    "Rule \"${ruleDisplayName(rule)}\" blocks it for ${if (rule.applicationPath().isBlank()) "every app" else healthAppName(rule.applicationPath())}. Change or disable the rule in Rules.")
+                rule != null && rule.action() == RouteRule.Action.DIRECT -> HealthFinding("rule", "Rules", CheckStatus.INFO, "$host goes direct",
+                    "Rule \"${ruleDisplayName(rule)}\" sends it around the tunnel. If the site only works through the tunnel, change that rule.")
+                else -> HealthFinding("rule", "Rules", CheckStatus.PASS, "No rule stands in the way of $host", "It takes the app's route.")
+            }
+        }
+        return HealthReport(findings, now, target?.let { appName } ?: "Your connection")
+    }
+
+    /**
+     * Checks that protection works as configured, with real tests where they are possible: each route's exit
+     * address against your own, where name lookups go, the kill switch and the per-app engine, and the rules
+     * loaded in the core. What can only be predicted is labelled as such.
+     */
+    fun safetyCheck(): HealthReport {
+        val findings = mutableListOf<HealthFinding>()
+        val now = System.currentTimeMillis()
+        val connected = isConnected()
+        val mode = activeMode ?: state.connectionMode()
+        runCatching { checkRoutes() }
+        val checks = routeChecks
+        val direct = checks[DIRECT_ROUTE_KEY]?.publicIp
+        if (!connected) findings += HealthFinding("exit", "Exit address", CheckStatus.SKIPPED, "Connect to test the routes", "Exit addresses can only be observed through a running connection.")
+        else for (route in activeRoutes) {
+            val check = checks[route.id]
+            val name = cleanName(route.node.name())
+            findings += when {
+                check?.state != RouteCheckState.PASSED -> HealthFinding("exit:${route.id}", "Exit address", CheckStatus.FAIL, "$name could not be tested", check?.detail?.ifBlank { null } ?: "No answer through this route.")
+                direct != null && check.publicIp == direct -> HealthFinding("exit:${route.id}", "Exit address", CheckStatus.FAIL, "$name leaves from your own address",
+                    "Traffic on this route appears with $direct, the same as without the tunnel. The server may forward traffic directly, or a rule sends the test site direct.")
+                else -> HealthFinding("exit:${route.id}", "Exit address", CheckStatus.PASS, "$name hides your address",
+                    "Seen as ${check.publicIp}${check.country?.let { " ($it)" } ?: ""}" + (direct?.let { "; your own address is $it." } ?: "."))
+            }
+        }
+
+        val dns = dnsObservation
+        findings += when (mode) {
+            ConnectionMode.NATIVE_PER_APP -> HealthFinding("dns", "Name lookups", CheckStatus.WARN, "Name lookups use your normal DNS",
+                "Windows looks up names for the selected apps itself, through ${dns?.systemServers?.joinToString(", ")?.ifBlank { null } ?: "your DNS servers"}" +
+                    (dns?.publicResolver?.let { ", which reaches the internet as $it" } ?: "") +
+                    ". The traffic goes through the tunnel, but your DNS provider can see which names are looked up. Turn on secure DNS (DNS over HTTPS) in Windows or in the browser to hide them.")
+            ConnectionMode.SYSTEM_PROXY -> HealthFinding("dns", "Name lookups", CheckStatus.INFO, "Browsers send names to the proxy",
+                "Apps that use the Windows proxy hand the site name to PerRoute, so it is looked up on the far side. Other apps look names up with your normal DNS.")
+            else -> HealthFinding("dns", "Name lookups", CheckStatus.INFO, "Depends on each app", "Apps set to the SOCKS port can send names to the proxy; apps set to the HTTP port always do.")
+        }
+
+        if (mode == ConnectionMode.NATIVE_PER_APP) {
+            val engine = runCatching { backend.networkState() }.getOrDefault(emptyMap())
+            val redirecting = engine[app.perroute.netstate.NetworkStateKeys.ENGINE_SERVICE] == app.perroute.netstate.NetworkStateKeys.RUNNING ||
+                engine[app.perroute.netstate.NetworkStateKeys.ENGINE_LIMITED] == app.perroute.netstate.NetworkStateKeys.RUNNING
+            val ours = engine[app.perroute.netstate.NetworkStateKeys.ENGINE_CONFIG] == app.perroute.netstate.NetworkStateKeys.CONFIG_PERROUTE ||
+                engine[app.perroute.netstate.NetworkStateKeys.ENGINE_LIMITED] == app.perroute.netstate.NetworkStateKeys.RUNNING
+            val count = engine[app.perroute.netstate.NetworkStateKeys.ENGINE_APPS]?.toIntOrNull()
+            if (engine.isNotEmpty()) findings += when {
+                connected && (!redirecting || !ours) -> HealthFinding("engine", "Per-app engine", CheckStatus.FAIL, "The per-app engine is not redirecting",
+                    "PerRoute is connected, but the engine is not running with PerRoute's app list, so the selected apps may connect directly.", Repair.RECONNECT)
+                connected && count != null && engine[app.perroute.netstate.NetworkStateKeys.ENGINE_LIMITED] != app.perroute.netstate.NetworkStateKeys.RUNNING && count != applications().size ->
+                    HealthFinding("engine", "Per-app engine", CheckStatus.WARN, "The engine redirects ${plural(count, "app")}, not ${applications().size}",
+                        "Its app list differs from your selection. Reconnect to bring them in line.", Repair.RECONNECT)
+                connected -> HealthFinding("engine", "Per-app engine", CheckStatus.PASS, "The selected apps are redirected", "The engine uses PerRoute's list of ${plural(applications().size, "app")}.")
+                else -> HealthFinding("engine", "Per-app engine", CheckStatus.INFO, "Not connected", if (redirecting && ours) "The kill switch holds the selected apps." else "The selected apps connect directly until you connect.")
+            }
+            findings += if (killSwitch()) HealthFinding("killswitch", "Kill switch", CheckStatus.PASS, "The kill switch is on",
+                "If the tunnel stops, the selected apps stay offline instead of using your direct connection." +
+                    if (trafficGateway()) " The traffic gateway fails closed as well." else "")
+            else HealthFinding("killswitch", "Kill switch", CheckStatus.WARN, "The kill switch is off",
+                "If the tunnel stops unexpectedly, the selected apps fall back to your direct connection. Turn it on in Settings > Automation to keep them offline instead.")
+        }
+
+        val loaded = loadedRuleIds()
+        val enabledRules = rules().filter { it.enabled() }
+        if (loaded != null && enabledRules.isNotEmpty()) {
+            val inUse = synchronized(state) { state.appPaths().map { AppRoutes.normalize(it) }.toSet() }
+            val missing = enabledRules.filter { it.id() !in loaded && (it.applicationPath().isBlank() || AppRoutes.normalize(it.applicationPath()) in inUse) }
+            findings += if (missing.isEmpty()) HealthFinding("rules", "Rules", CheckStatus.PASS, "Every rule is loaded in the running core", "${plural(enabledRules.size, "rule")} checked.")
+            else HealthFinding("rules", "Rules", CheckStatus.FAIL, "${plural(missing.size, "rule")} not loaded",
+                "${joinNames(missing.map { ruleDisplayName(it) })} ${if (missing.size == 1) "is" else "are"} missing from the running core. Reconnect to load them.", Repair.RECONNECT)
+        } else if (enabledRules.isNotEmpty()) findings += HealthFinding("rules", "Rules", CheckStatus.SKIPPED, "Connect to check the loaded rules", "Which rules the core uses can only be read while connected.")
+        RuleAnalysis.shadowed(rules()).forEach { item ->
+            findings += HealthFinding("shadow:${item.rule.id()}", "Rules", CheckStatus.WARN, "\"${ruleDisplayName(item.rule)}\" never applies",
+                "\"${ruleDisplayName(item.by)}\" comes first and already decides every destination it lists. Remove it or move it up in Rules.")
+        }
+
+        val untrusted = localPolicy.untrusted()
+        if (untrusted.isNotEmpty()) {
+            val blocked = localPolicy.rules(localNetworks()).blocked()
+            findings += if (blocked.isEmpty()) HealthFinding("local", "Local network", CheckStatus.PASS, "You are on a trusted network", "Routed apps can reach local devices.")
+            else if (connected && appliedLocalBlocking == blocked) HealthFinding("local", "Local network", CheckStatus.PASS, "Local devices are blocked for routed apps",
+                "This network is not trusted. Only its router and DNS servers are reachable from routed apps.")
+            else HealthFinding("local", "Local network", CheckStatus.WARN, "Local protection applies after reconnecting", "This network is not trusted, but the running connection was started for another network.", Repair.RECONNECT)
+        }
+
+        findings += HealthFinding("loopback", "Local ports", CheckStatus.INFO, "Local ports are on this computer only",
+            "PerRoute's ports listen on 127.0.0.1, so other devices cannot use them. On a computer shared by several signed-in users, other users can.")
+        workspaces().filter { it.running }.forEach { view ->
+            findings += HealthFinding("workspace:${view.workspace.id}", "Workspaces", CheckStatus.PASS, "${view.workspace.name} has its own route",
+                "Its browser uses port ${view.port} through ${view.node?.let { cleanName(it.name()) } ?: "its server"}; if that stops, the window has no connection rather than a direct one.")
+        }
+        return HealthReport(findings, now, "Routing safety")
+    }
+
+    /** Runs one repair the user confirmed. */
+    fun repair(repair: Repair): ActionResult = when (repair) {
+        Repair.RECONNECT -> { if (isConnected() || phase != ConnectionPhase.DISCONNECTED) disconnect(); connect() }
+        Repair.RESTORE_NETWORK -> restoreNetwork()
+        Repair.REAPPLY_SYSTEM_PROXY -> if (!isConnected() || activeMode != ConnectionMode.SYSTEM_PROXY) ActionResult(false, "Connect in System proxy mode first.")
+            else runCatching { backend.applySystemProxy(); ActionResult(true, "The Windows proxy points to PerRoute again.") }.getOrElse { ActionResult(false, message(it)) }
+        Repair.SWITCH_SERVER -> switchToFastest()
+        Repair.STOP_LEFTOVER_CORES -> runCatching { backend.stopOrphan(); ActionResult(true, "Leftover cores were stopped.") }.getOrElse { ActionResult(false, message(it)) }
+        Repair.UPDATE_SUBSCRIPTIONS -> updateAllSubscriptions()
+        Repair.TURN_OFF_KILL_SWITCH -> { setKillSwitch(false); ActionResult(true, "The kill switch is off. The selected apps use your direct connection while PerRoute is disconnected.") }
+        Repair.OPEN_COMPONENTS, Repair.OPEN_APPS -> ActionResult(true, "")
+    }
+
+    private fun formatSkew(seconds: Long): String = when {
+        seconds < 120 -> "$seconds seconds"
+        seconds < 7200 -> "${seconds / 60} minutes"
+        else -> "${seconds / 3600} hours"
+    }
+
+    private fun formatClockTime(millis: Long): String =
+        java.time.Instant.ofEpochMilli(millis).atZone(java.time.ZoneId.systemDefault()).toLocalTime().format(DateTimeFormatter.ofPattern("HH:mm"))
+
     // ---------------------------------------------------------------- bandwidth
 
     fun bandwidthPolicies(): Map<String, BandwidthPolicy> = synchronized(state) { LinkedHashMap(state.bandwidthPolicies()) }
@@ -815,6 +1894,63 @@ class PerRouteController @JvmOverloads constructor(
         return true
     }
 
+    /**
+     * Applies [next] to the running core when its route layout differs from what runs: an app that gets or loses
+     * a route of its own (a temporary server), or routes that merge or split. Routes that exist on both sides keep
+     * their outbound and their open connections; only routes that appear or go away are added or removed. Returns
+     * false, changing nothing, when that is not possible (embedded profiles, balancers, a different app list or a
+     * core without the control API); the caller then restarts the core.
+     */
+    @Synchronized
+    private fun applyReconfiguration(next: PreparedConnection): Boolean {
+        val current = runningPrepared ?: return false
+        val config = runningConfig ?: return false
+        if (!connectionReady || current.tun || next.tun || current.gateway != next.gateway || !current.runtimeControl || !next.runtimeControl) return false
+        if (current.applications != next.applications) return false
+        val running = XrayConfigGenerator.applicationRouteTargets(config)
+        val planned = XrayConfigGenerator.applicationRouteTargets(next.config)
+        // A route that exists on both sides, on the same server, keeps the outbound the core already has.
+        val keep = HashMap<String, String>()
+        for (route in next.routes) {
+            val before = current.routes.firstOrNull { it.id == route.id && it.node.key() == route.node.key() } ?: continue
+            val plannedTag = planned[route.ruleTag] ?: return false
+            val liveTag = running[before.ruleTag] ?: return false
+            keep[plannedTag] = liveTag
+        }
+        val plan = XrayConfigGenerator.runtimePlan(config, next.config, keep) ?: return false
+        backend.validate(plan.config(), false)
+        backend.applyRuntimePlan(plan)
+        val previous = activeRoutes
+        runningConfig = plan.config()
+        runningPrepared = next
+        activeRoutes = next.routes
+        // Routes that stayed keep their health history; new ones start fresh and old ones stop being watched.
+        previous.filter { old -> next.routes.none { it.id == old.id } }.forEach { recovery.remove(it.id) }
+        next.routes.forEach { route ->
+            val before = previous.firstOrNull { it.id == route.id }
+            if (before == null || before.checkPort != route.checkPort || before.node.key() != route.node.key()) {
+                recovery.replace(RouteTarget(route.id, cleanName(route.node.name()), route.node.key(), route.checkPort))
+                synchronized(routeCheckLock) { routeChecks = routeChecks + (route.id to RouteCheck(RouteCheckState.CHECKING)) }
+            }
+        }
+        synchronized(routeCheckLock) { routeChecks = routeChecks.filterKeys { key -> key == DIRECT_ROUTE_KEY || next.routes.any { it.id == key } } }
+        startAutoLoop()
+        return true
+    }
+
+    /** Moves the running core to [next] with as little disruption as possible: in place when it can, else a restart. */
+    private fun applyLive(next: PreparedConnection, done: String, revert: () -> Unit): ActionResult {
+        val fallback = runningPrepared ?: return ActionResult(false, "Connect first.")
+        val inPlace = runCatching { applyReconfiguration(next) }
+        if (inPlace.getOrNull() == true) {
+            stateListeners.forEach { it(true) }
+            log("$done Other routes kept running.")
+            return ActionResult(true, done)
+        }
+        inPlace.exceptionOrNull()?.let { log("The change could not be made in place (${message(it)}); restarting the core.") }
+        return restartCore(next, fallback, activeMode ?: state.connectionMode(), done, revert)
+    }
+
     private fun outboundTags(config: String): Set<String> = runCatching {
         (Json.`object`(config)["outbounds"] as? List<*>).orEmpty().mapNotNull { (it as? Map<*, *>)?.get("tag") as? String }.toSet()
     }.getOrDefault(emptySet())
@@ -969,6 +2105,7 @@ class PerRouteController @JvmOverloads constructor(
         latencyCache = latencyCache.filterKeys { it in live }
         speedCache = speedCache.filterKeys { it in live }
         quality.retain(live)
+        runCatching { gamingResults.retain(live) }
         autoRouting.clear()
         if (deduplicateNodes()) save()
     }
@@ -1066,6 +2203,18 @@ class PerRouteController @JvmOverloads constructor(
         runCatching { quality.clear() }
         autoRouting.clear()
         runCatching { Files.deleteIfExists(restoreSnapshotFile) }
+        runCatching { Files.deleteIfExists(recipeSnapshotFile) }
+        runCatching { gamingResults.clear() }
+        runCatching { insights.clear() }
+        runCatching { localPolicy.clear() }
+        temporary = emptyList()
+        temporaryLoaded.set(true)
+        saveTemporary()
+        // Workspace windows lose their route; their browsing data stays in its folders until removed by hand.
+        runningWorkspaces.keys.toList().forEach { stopWorkspace(it) }
+        runCatching { workspaceStore.clear() }
+        localNetworkCache = emptyList()
+        localNetworkCacheAt = 0L
         latencyCache = emptyMap()
         speedCache = emptyMap()
         dnsObservation = null
@@ -1110,7 +2259,8 @@ class PerRouteController @JvmOverloads constructor(
                 state.nodes().toList(), state.selectedNodeKey(), state.appPaths().toList(),
                 assumeAdvanced || state.advancedRouting(), LinkedHashMap(state.appRoutes()),
                 LinkedHashMap(state.appRouteLabels()),
-                if (assumeAdvanced) ConnectionMode.NATIVE_PER_APP else state.connectionMode(), choices
+                if (assumeAdvanced) ConnectionMode.NATIVE_PER_APP else state.connectionMode(), choices,
+                runningPrepared?.temporary ?: temporaryChoices()
             )
         }
     }
@@ -1243,13 +2393,17 @@ class PerRouteController @JvmOverloads constructor(
     fun fetchSubscription(url: String): ActionResult {
         if (url.isBlank()) return ActionResult(false, "Enter a subscription URL.")
         editLock("subscriptions")?.let { return it }
+        val normalized = url.trim()
         return try {
-            val normalized = url.trim()
-            val result = subscriptionService.fetch(normalized)
+            val previous = serversOf(normalized)
+            val fetched = subscriptionService.fetchDetailed(normalized)
+            val result = fetched.result()
             if (result.nodes().isEmpty()) return parseMessage(result)
             storeSubscription(result, normalized)
+            recordSubscription(normalized, fetched, previous)
             parseMessage(result)
         } catch (e: Throwable) {
+            if (subscriptions().any { it.equals(normalized, ignoreCase = true) }) recordSubscriptionFailure(normalized, message(e))
             ActionResult(false, message(e))
         }
     }
@@ -1270,16 +2424,21 @@ class PerRouteController @JvmOverloads constructor(
         val failures = mutableListOf<String>()
         urls.forEach { url ->
             try {
-                val result = subscriptionService.fetch(url)
+                val previous = serversOf(url)
+                val fetched = subscriptionService.fetchDetailed(url)
+                val result = fetched.result()
                 result.warnings().forEach { log("Warning: $it") }
                 if (result.nodes().isEmpty()) {
                     failures += "${sourceLabel(url)}: no valid servers in the response; kept the existing ones"
+                    recordSubscriptionFailure(url, "The response had no valid servers.")
                 } else {
                     merge(result, url, replaceSource = true)
+                    recordSubscription(url, fetched, previous)
                     updated += result.nodes().size
                 }
             } catch (error: Throwable) {
                 failures += "${sourceLabel(url)}: ${message(error)}"
+                recordSubscriptionFailure(url, message(error))
             }
         }
         save()
@@ -1313,6 +2472,7 @@ class PerRouteController @JvmOverloads constructor(
             }
         }
         save()
+        runCatching { insights.remove(url) }
         return ActionResult(true, "Subscription removed with $removedNodes servers.")
     }
 
@@ -1525,7 +2685,8 @@ class PerRouteController @JvmOverloads constructor(
         }
     }
 
-    private fun preview(result: ParseResult, source: String, replaceSource: Boolean): ImportOutcome {
+    private fun preview(result: ParseResult, source: String, replaceSource: Boolean,
+                        fetched: app.perroute.service.SubscriptionService.Fetched? = null): ImportOutcome {
         if (result.nodes().isEmpty()) {
             return ImportOutcome(error = listOfNotNull("No valid servers were found.", result.warnings().firstOrNull()).joinToString(" "))
         }
@@ -1537,15 +2698,20 @@ class PerRouteController @JvmOverloads constructor(
             val candidates = result.nodes().filter { seen.add(it.identity()) }
                 .map { ImportCandidate(it, it.identity() in kept || it.identity() in previous) }
             val incoming = candidates.mapTo(hashSetOf()) { it.node.identity() }
-            ImportOutcome(ImportPreview(source, replaceSource, result, candidates, previous.count { it !in incoming }))
+            ImportOutcome(ImportPreview(source, replaceSource, result, candidates, previous.count { it !in incoming }, fetched))
         }
     }
 
     /** Fetches and parses without saving anything, so the user can review servers and parser warnings. */
     fun previewSubscription(url: String): ImportOutcome {
         if (url.isBlank()) return ImportOutcome(error = "Enter a subscription URL.")
-        return try { preview(subscriptionService.fetch(url.trim()), url.trim(), replaceSource = true) }
-        catch (error: Throwable) { ImportOutcome(error = message(error)) }
+        return try {
+            val fetched = subscriptionService.fetchDetailed(url.trim())
+            preview(fetched.result(), url.trim(), replaceSource = true, fetched)
+        } catch (error: Throwable) {
+            if (subscriptions().any { it.equals(url.trim(), ignoreCase = true) }) recordSubscriptionFailure(url.trim(), message(error))
+            ImportOutcome(error = message(error))
+        }
     }
 
     fun previewPasted(content: String): ImportOutcome {
@@ -1564,7 +2730,11 @@ class PerRouteController @JvmOverloads constructor(
     fun commitImport(preview: ImportPreview): ActionResult {
         if (preview.replaceSource) editLock("subscriptions")?.let { return it }
         return try {
-            if (preview.replaceSource) storeSubscription(preview.result, preview.source)
+            if (preview.replaceSource) {
+                val previous = serversOf(preview.source)
+                storeSubscription(preview.result, preview.source)
+                preview.fetched?.let { recordSubscription(preview.source, it, previous) }
+            }
             else { merge(preview.result, preview.source, replaceSource = false); save() }
             parseMessage(preview.result)
         } catch (error: Throwable) {
@@ -1793,7 +2963,11 @@ class PerRouteController @JvmOverloads constructor(
         val applications: List<String> = emptyList(),
         val autoChoices: Map<String, String> = emptyMap(),
         val plan: RoutePlanner.Plan,
-        val runtimeControl: Boolean = false
+        val runtimeControl: Boolean = false,
+        /** Temporary servers baked into this config, by normalized path. */
+        val temporary: Map<String, String> = emptyMap(),
+        /** Whether the per-app engine must also send local-network traffic to the core (untrusted networks). */
+        val localBlocking: Boolean = false
     )
 
     private fun missingRouteMessage(plan: RoutePlanner.Plan): String {
@@ -1816,36 +2990,59 @@ class PerRouteController @JvmOverloads constructor(
      */
     private fun prepare(main: ProxyNode, mode: ConnectionMode, apps: List<String>,
                         autoChoices: Map<String, String> = autoChoices(persist = false)): PreparedConnection {
+        val temporaries = if (mode == ConnectionMode.NATIVE_PER_APP) temporaryChoices().filterKeys { key -> apps.any { AppRoutes.normalize(it) == key } } else emptyMap()
         val plan = synchronized(state) {
             RoutePlanner.plan(state.nodes().toList(), main.key(), apps, state.advancedRouting(),
-                LinkedHashMap(state.appRoutes()), LinkedHashMap(state.appRouteLabels()), mode, autoChoices)
+                LinkedHashMap(state.appRoutes()), LinkedHashMap(state.appRouteLabels()), mode, autoChoices, temporaries)
         }
         check(plan.ready()) { missingRouteMessage(plan) }
         val tun = mode == ConnectionMode.TUN_COMPATIBILITY
         val perApp = mode == ConnectionMode.NATIVE_PER_APP
         val gateway = perApp && trafficGateway()
-        // The core's control API is only enabled for features that change routes in place.
-        val runtimeControl = !tun && (routeMonitoring() || hasAutoApps())
+        // The core's control API is only enabled for features that change routes in place. A temporary server is
+        // one of them, so it can begin and end without interrupting anyone else. Once on, it stays on for the
+        // rest of the session, so the end of the last temporary server does not need a restart either.
+        val runtimeControl = !tun && (routeMonitoring() || hasAutoApps() || (perApp && temporaries.isNotEmpty()) ||
+            (connectionReady && runningPrepared?.runtimeControl == true))
+        val local = localNetworkRules()
         val generator = XrayConfigGenerator(if (gateway) XrayConfigGenerator.GATEWAY_UPSTREAM_PORT_BASE else XrayConfigGenerator.PER_APP_PORT_BASE, runtimeControl)
+            .withLocalNetwork(local.localNamesDirect(), local.allowed(), local.blocked())
         val configNodes = if (!perApp) emptyList() else plan.applicationNodes().mapIndexed { index, node ->
-            if (node != null && plan.routeFor(apps[index])?.auto() == true) autoSlot(apps[index], node) else node
+            val route = plan.routeFor(apps[index])
+            when {
+                node == null -> null
+                route?.temporary() == true -> temporarySlot(apps[index], node)
+                route?.auto() == true -> autoSlot(apps[index], node)
+                else -> node
+            }
         }
         val config = if (tun) configGenerator.generate(main, apps, state.routingMode())
             else generator.generateApplicationProxy(main, if (perApp) apps else emptyList(), rules(), configNodes)
         val customKeys = if (perApp) XrayConfigGenerator.customRouteKeys(main, apps, configNodes) else emptyList()
         val routes = plan.routes().map { route ->
-            val index = customKeys.indexOf(if (route.auto()) autoSlotKey(route.applications().first()) else route.node().key())
+            val slot = when {
+                route.temporary() -> temporarySlotKey(route.applications().first())
+                route.auto() -> autoSlotKey(route.applications().first())
+                else -> route.node().key()
+            }
+            val index = customKeys.indexOf(slot)
             ActiveRoute(route.node(), route.main(), if (perApp) route.applications() else emptyList(),
                 if (route.main()) AppProxyLauncher.SOCKS_PORT else XrayConfigGenerator.routeCheckPort(index),
                 id = route.id(), auto = route.auto(),
                 ruleTag = XrayConfigGenerator.applicationRouteRuleTag(if (route.main()) -1 else index))
         }
-        return PreparedConnection(config, tun, routes, gateway, apps, if (perApp) autoChoices else emptyMap(), plan, runtimeControl)
+        return PreparedConnection(config, tun, routes, gateway, apps, if (perApp) autoChoices else emptyMap(), plan, runtimeControl,
+            temporaries, perApp && local.blocking())
     }
 
     private fun autoSlotKey(application: String) = "auto-slot:" + AppRoutes.normalize(application)
 
     private fun autoSlot(application: String, node: ProxyNode) = ProxyNode(autoSlotKey(application), node.name(), node.protocol(),
+        node.address(), node.port(), node.credential(), node.options(), node.sourceLink())
+
+    private fun temporarySlotKey(application: String) = "temp-slot:" + AppRoutes.normalize(application)
+
+    private fun temporarySlot(application: String, node: ProxyNode) = ProxyNode(temporarySlotKey(application), node.name(), node.protocol(),
         node.address(), node.port(), node.credential(), node.options(), node.sourceLink())
 
     /**
@@ -1922,7 +3119,7 @@ class PerRouteController @JvmOverloads constructor(
             val tun = prepared.tun
             validate(prepared)
             if (mode == ConnectionMode.NATIVE_PER_APP && killSwitch()) {
-                backend.applyPerApp(apps)
+                applyPerAppEngine(apps, prepared)
             }
             backend.stopGateway()
             backend.stop()
@@ -1936,7 +3133,7 @@ class PerRouteController @JvmOverloads constructor(
                 if (mode == ConnectionMode.SYSTEM_PROXY) {
                     backend.applySystemProxy()
                 } else if (mode == ConnectionMode.NATIVE_PER_APP && !killSwitch()) {
-                    backend.applyPerApp(apps)
+                    applyPerAppEngine(apps, prepared)
                 }
             }
             activeMode = mode
@@ -1947,6 +3144,7 @@ class PerRouteController @JvmOverloads constructor(
             activate(prepared)
             startTelemetry(mode, apps)
             stateListeners.forEach { it(true) }
+            snapshotLater(app.perroute.netstate.NetworkSnapshot.Reason.CONNECTED, 2_500)
             val customs = prepared.routes.count { !it.main }
             log("Connected to ${cleanName(node.name())}" + if (customs == 0) "." else " with $customs custom ${if (customs == 1) "server" else "servers"}.")
             ActionResult(true, if (mode == ConnectionMode.BROWSER_PROXY)
@@ -2161,6 +3359,7 @@ class PerRouteController @JvmOverloads constructor(
         phase = ConnectionPhase.DISCONNECTED
         stopTelemetry()
         stateListeners.forEach { it(false) }
+        snapshotLater(app.perroute.netstate.NetworkSnapshot.Reason.AFTER_DISCONNECT, 800)
         return if (cleanupError == null) {
             log("Disconnected.")
             ActionResult(true, "Disconnected.")
@@ -2329,6 +3528,16 @@ class PerRouteController @JvmOverloads constructor(
                         Thread.ofVirtual().name("perroute-network-recheck").start {
                             try { Thread.sleep(1_500) } catch (_: InterruptedException) { return@start }
                             if (!desiredConnected || !isConnected()) return@start
+                            // Moving between a trusted and an untrusted network changes what local traffic may do,
+                            // and that is part of the running config.
+                            if (localPolicy.untrusted().isNotEmpty()) {
+                                val blocked = localPolicy.rules(localNetworks(refresh = true)).blocked()
+                                if (blocked != appliedLocalBlocking) {
+                                    if (autoReconnect()) { log("You joined a network with a different trust setting; reconnecting to apply it."); backend.stop() }
+                                    else log("You joined a network with a different trust setting. Reconnect to apply it.")
+                                    return@start
+                                }
+                            }
                             if (routeMonitoring() && activeRoutes.size > 1) {
                                 // Every route is checked and recovered on its own. Only when none of them
                                 // answers is the core itself assumed stuck and restarted.
@@ -2397,11 +3606,25 @@ class PerRouteController @JvmOverloads constructor(
         runCatching { backend.stopGateway() }
         phase = ConnectionPhase.DISCONNECTED
         recovery.close()
+        // Workspace windows that stay open lose their route with PerRoute: they fail closed, never direct.
+        runningWorkspaces.values.forEach { runCatching { it.tunnel.close() } }
+        runningWorkspaces.clear()
+        runCatching { markStartupHealthy() }
         runCatching { quality.close() }
         history.close()
         saveExecutor.shutdown()
         runCatching { saveExecutor.awaitTermination(20, TimeUnit.SECONDS) }
         saveNow()
+    }
+
+    // Kotlin runs initializers in the order they are written, so the 3.5 background work starts here, after
+    // every property above has been set up.
+    init {
+        backend.addLogListener(Consumer { line -> rememberCoreLine(line) })
+        startTemporaryExpiry()
+        // The settings as PerRoute finds them, after any crash recovery: the baseline for a later restore.
+        snapshotLater(app.perroute.netstate.NetworkSnapshot.Reason.STARTUP, 4_000)
+        Thread.ofVirtual().name("perroute-workspace-reattach").start { runCatching { reattachWorkspaces() } }
     }
 
     /** How a backed-up preference is validated before it is written back. */
@@ -2421,6 +3644,10 @@ class PerRouteController @JvmOverloads constructor(
         const val UI_STYLE_SIMPLE = "simple"
         /** How often applications in Auto mode are re-decided while connected. */
         const val AUTO_INTERVAL_MILLIS = 60_000L
+        /** First loopback port of the browser workspaces; each has a fixed one, clear of every connection port. */
+        val WORKSPACE_PORT_BASE = 19700 + app.perroute.service.PortOffset.VALUE
+        /** Sites a comparison uses when the route's apps were not seen visiting any. */
+        val DEFAULT_SHADOW_DESTINATIONS = listOf("www.google.com", "www.cloudflare.com", "www.microsoft.com", "github.com", "www.wikipedia.org")
 
         /** The preferences a backup carries. Anything else (window state, caches) stays on this computer. */
         private val BACKUP_PREFERENCES = linkedMapOf(

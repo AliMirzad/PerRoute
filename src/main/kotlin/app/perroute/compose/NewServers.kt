@@ -23,6 +23,7 @@ import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.rounded.ArrowBack
 import androidx.compose.material.icons.rounded.Add
 import androidx.compose.material.icons.rounded.ContentCopy
+import androidx.compose.material.icons.rounded.Info
 import androidx.compose.material.icons.rounded.DeleteOutline
 import androidx.compose.material.icons.rounded.Download
 import androidx.compose.material.icons.rounded.KeyboardArrowDown
@@ -96,6 +97,8 @@ internal fun NewServersPage(shell: Shell) {
                 if (model.hideUnavailable) { Spacer(Modifier.width(8.dp)); Badge("Failed hidden", Amber) }
                 Spacer(Modifier.weight(1f))
                 if (model.sourceFilter in model.subscriptions()) {
+                    SubscriptionAlert(shell, model.sourceFilter)
+                    IconAction(Icons.Rounded.Info, "Subscription details: usage, expiry and changes", size = 28.dp, bordered = false) { showSubscriptionDialog(shell, model.sourceFilter) }
                     IconAction(Icons.Rounded.ContentCopy, "Copy this subscription URL", size = 28.dp, bordered = false) {
                         clipboard.setText(AnnotatedString(model.sourceFilter))
                         shell.notify(ActionResult(true, "Subscription URL copied."))
@@ -227,6 +230,7 @@ private fun ColumnScope.NewServerPanel(shell: Shell, model: ServersModel, node: 
         val (speed, _) = speedText(model.speeds[node.key()], model.speedTestingKey == node.key())
         QualityMetricList(score, speed)
     }
+    GamingSummary(shell, node)
     NewPanelSection("Used by") {
         val users = model.usedBy(node, rows)
         if (users.isEmpty()) Text(if (shell.perApp) "No selected app uses this server." else "Used by ${modeLabel(shell.mode)} when it is the main server.",

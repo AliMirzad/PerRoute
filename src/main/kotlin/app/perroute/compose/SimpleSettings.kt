@@ -107,6 +107,8 @@ internal fun SimpleSettingsPage(shell: Shell) {
                         SettingsCategory.Updates -> SimpleUpdates(shell)
                         SettingsCategory.Components -> SimpleComponents(shell)
                         SettingsCategory.Backup -> SimpleBackup(shell, backup!!)
+                        SettingsCategory.LocalNetwork -> LocalNetworkSettings(shell)
+                        SettingsCategory.Recovery -> RecoverySettings(shell)
                         SettingsCategory.ActivityLog -> SimpleActivityLog(shell)
                     }
                 }
@@ -131,7 +133,7 @@ private fun SimpleGeneral(shell: Shell) {
         Text("About", color = White, fontSize = 15.sp, fontWeight = FontWeight.SemiBold)
         Spacer(Modifier.height(14.dp))
         Row(verticalAlignment = Alignment.CenterVertically) {
-            SimpleMark(64.dp)
+            BrandMark(64.dp)
             Spacer(Modifier.width(20.dp))
             Column {
                 Text("PerRoute ${app.perroute.service.SecureUpdateService.CURRENT_VERSION}", color = White, fontSize = 22.sp, fontWeight = FontWeight.Bold)
@@ -262,6 +264,7 @@ private fun SimpleUpdates(shell: Shell) {
     if (model.downloading) { Spacer(Modifier.height(12.dp)); ProgressBar(model.progress / 100f, Violet, Modifier.fillMaxWidth(), 8.dp) }
     Spacer(Modifier.height(12.dp))
     Text(model.statusLine, color = if (model.downloading) Cyan else Muted, fontSize = 13.sp, lineHeight = 18.sp)
+    RollbackNote(shell)
     Spacer(Modifier.height(18.dp))
     FieldLabel("Signed update feed")
     TextInput(model.feed, { model.changeFeed(it) }, "Signed HTTPS manifest URL", height = 46.dp)

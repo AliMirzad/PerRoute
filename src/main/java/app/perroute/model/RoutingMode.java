@@ -1,8 +1,8 @@
 package app.perroute.model;
 
 public enum RoutingMode {
-    INCLUDE_SELECTED("فقط برنامه‌های انتخاب‌شده از VPN عبور کنند"),
-    EXCLUDE_SELECTED("همه به‌جز برنامه‌های انتخاب‌شده از VPN عبور کنند");
+    INCLUDE_SELECTED("Only the selected apps use the tunnel"),
+    EXCLUDE_SELECTED("Everything except the selected apps uses the tunnel");
 
     private final String label;
 

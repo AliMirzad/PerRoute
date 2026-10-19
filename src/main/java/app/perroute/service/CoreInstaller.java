@@ -38,14 +38,14 @@ public final class CoreInstaller {
     public CoreInfo install(Consumer<String> progress) throws IOException, InterruptedException {
         Path target = AppDirectories.coreDirectory();
         Files.createDirectories(target);
-        progress.accept("در حال پیدا کردن آخرین نسخه رسمی Xray…");
+        progress.accept("Looking up the latest official Xray release…");
         Map<String, Object> release = Json.object(getText(RELEASE_API, "application/vnd.github+json"));
         URI xrayZip = findWindowsAsset(release);
         String version = String.valueOf(release.getOrDefault("tag_name", "latest"));
 
-        progress.accept("در حال دریافت Xray " + version + "…");
+        progress.accept("Downloading Xray " + version + "…");
         byte[] xrayBytes = getBytes(xrayZip, "application/octet-stream");
-        progress.accept("در حال دریافت Wintun…");
+        progress.accept("Downloading Wintun…");
         byte[] wintunBytes = getBytes(WINTUN_ZIP, "application/zip");
 
         Path stage = Files.createTempDirectory(target, ".install-");
@@ -64,7 +64,7 @@ public final class CoreInstaller {
         } finally {
             deleteTree(stage);
         }
-        progress.accept("هسته آماده است: " + version);
+        progress.accept("The core is ready: " + version);
         return inspect();
     }
 

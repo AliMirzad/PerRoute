@@ -35,6 +35,8 @@ import androidx.compose.material.icons.rounded.MonitorHeart
 import androidx.compose.material.icons.rounded.Settings
 import androidx.compose.material.icons.rounded.Storage
 import androidx.compose.material.icons.rounded.Link
+import androidx.compose.material.icons.rounded.HealthAndSafety
+import androidx.compose.material.icons.rounded.Web
 import androidx.compose.material3.Icon
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
@@ -123,18 +125,23 @@ internal const val SloganSubtitle = "Choose a route for each app. Keep the rest 
 internal const val Credit = "Created By Vexor"
 private const val WindowCornerRadius = 16.0
 
-/** The eight destinations of the main window. New groups Rules, Profiles, Diagnostics and Traffic under Tools. */
+/**
+ * The destinations of the main window. New groups everything from Rules to Traffic under Tools; Simple lists
+ * them all in its menu.
+ */
 internal enum class Tab(val label: String, val icon: ImageVector) {
     Connection("Connection", Icons.Rounded.Link),
     Apps("Apps", Icons.Rounded.Apps),
     Servers("Servers", Icons.Rounded.Storage),
     Rules("Rules", Icons.Rounded.Description),
     Profiles("Profiles", Icons.Rounded.Folder),
+    Workspaces("Workspaces", Icons.Rounded.Web),
     Diagnostics("Diagnostics", Icons.Rounded.MonitorHeart),
+    Health("Health", Icons.Rounded.HealthAndSafety),
     Traffic("Traffic", Icons.Rounded.BarChart),
     Settings("Settings", Icons.Rounded.Settings);
 
-    val isTool: Boolean get() = this == Rules || this == Profiles || this == Diagnostics || this == Traffic
+    val isTool: Boolean get() = this != Connection && this != Apps && this != Servers && this != Settings
 }
 
 /** A modal dialog currently shown over the window, and what closing it does. */
@@ -430,6 +437,9 @@ fun main(args: Array<String>) {
         lock.close()
         return
     }
+    // Recorded before anything else can fail, so a version that cannot start is noticed (see StartupHealth).
+    runCatching { app.perroute.update.StartupHealth(dataDirectory.resolve("startup-health.json"))
+        .beginStart(app.perroute.service.SecureUpdateService.CURRENT_VERSION, System.currentTimeMillis()) }
     val store = AppStateStore(dataDirectory.resolve("state.bin"))
     val stateLoader = java.util.concurrent.CompletableFuture.supplyAsync {
         runCatching { store.load() }
@@ -463,6 +473,8 @@ fun main(args: Array<String>) {
         var trayTraffic by remember { mutableStateOf(controller.trafficSnapshot()) }
         var trayPlan by remember { mutableStateOf(controller.routePlan()) }
         var trayChecks by remember { mutableStateOf(controller.routeChecks()) }
+        var trayTemporaries by remember { mutableStateOf(controller.temporaryRoutes()) }
+        var trayApps by remember { mutableStateOf(controller.applications()) }
         val shellHolder = remember { arrayOfNulls<Shell>(1) }
         val trayScope = rememberCoroutineScope()
         val (initialWidth, initialHeight) = remember { initialWindowSize() }
@@ -499,6 +511,12 @@ fun main(args: Array<String>) {
             trayTraffic = controller.trafficSnapshot()
             trayPlan = controller.routePlan()
             trayChecks = controller.routeChecks()
+            trayTemporaries = controller.temporaryRoutes()
+            trayApps = controller.applications()
+        }
+        /** The outcome of a Quick Access action as a notification, since the panel has no message area of its own. */
+        fun trayToast(result: ActionResult) {
+            runCatching { nativeTrayIcon?.displayMessage("PerRoute", result.message, if (result.ok) TrayIcon.MessageType.INFO else TrayIcon.MessageType.WARNING) }
         }
         DisposableEffect(Unit) {
             controller.onConnectionChanged { value ->
@@ -652,7 +670,12 @@ fun main(args: Array<String>) {
                     onFastest = { trayAction { controller.switchToFastest() } },
                     onServer = { key -> trayAction { controller.switchNode(key) } },
                     onOpen = { quickVisible = false; windowVisible = true },
-                    onExit = { quickVisible = false; exitPerRoute() }
+                    onExit = { quickVisible = false; exitPerRoute() },
+                    temporaries = trayTemporaries,
+                    apps = trayApps,
+                    perApp = controller.connectionMode() == app.perroute.model.ConnectionMode.NATIVE_PER_APP,
+                    onTemporary = { path, key, minutes -> trayAction { controller.setTemporaryRoute(path, key, minutes).also { result -> trayToast(result) } } },
+                    onEndTemporary = { path -> trayAction { controller.cancelTemporaryRoute(path) } }
                 )
             }
         }
@@ -723,6 +746,19 @@ internal fun PerRouteWindow(
         Perf.mark("bench.done")
     }
 
+    LaunchedEffect(Unit) {
+        if (hostWindow == null) return@LaunchedEffect
+        val status = withContext(Dispatchers.IO) { controller.startupHealth() }
+        val rollback = withContext(Dispatchers.IO) { controller.rollbackVersion() }
+        if (status.struggling() && rollback != null) offerRollback(shell, status, rollback)
+        else if (status.updatedFrom().isNotBlank() && System.currentTimeMillis() - status.updatedAt() < 120_000 && rollback != null) {
+            shell.notify(ActionResult(true, "Updated from ${status.updatedFrom()}. If something does not work, Settings > Recovery can go back to $rollback."))
+        }
+        // The window has been up for a while: this version starts properly.
+        delay(10_000)
+        withContext(Dispatchers.IO) { runCatching { controller.markStartupHealthy() } }
+    }
+
     LaunchedEffect(shell.toast, shell.toastError) {
         val visibleMessage = shell.toast ?: return@LaunchedEffect
         delay(if (shell.toastError) 8_000 else 4_000)
@@ -787,6 +823,23 @@ internal fun PerRouteWindow(
             }
 
             Toast(shell, Modifier.align(Alignment.BottomCenter).padding(bottom = 22.dp))
+        }
+    }
+}
+
+/** After this version failed to start properly more than once, offers to go back to the one the installer kept. */
+private fun offerRollback(shell: Shell, status: app.perroute.update.StartupHealth.Status, version: String) {
+    shell.showDialog {
+        DialogCard("PerRoute did not start properly", "PerRoute ${status.version()} did not finish starting ${status.failedStarts()} times in a row.", shell::closeDialog, width = 480.dp,
+            actions = {
+                SecondaryButton("Keep this version") { shell.closeDialog() }
+                PrimaryButton("Go back to $version") {
+                    shell.closeDialog()
+                    shell.run(done = { result -> if (result.ok) shell.exitApp() }) { shell.controller.rollBack() }
+                }
+            }) {
+            DialogText("The previous version, $version, is still on this computer. Going back keeps your servers, apps and settings. Windows asks for Administrator approval, PerRoute closes, and $version opens when it is done.")
+            DialogText("If this message came after you closed PerRoute quickly, keep this version.", Muted)
         }
     }
 }

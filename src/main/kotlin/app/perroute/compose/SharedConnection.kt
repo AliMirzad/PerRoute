@@ -68,7 +68,10 @@ internal fun rememberNow(): State<Long> = produceState(System.currentTimeMillis(
  * the apps on one server; every app in Auto mode has a route of its own. [id] is what checks are stored under.
  */
 internal class RouteRow(val node: ProxyNode, val main: Boolean, val applications: List<String>, val id: String = node.key(), val auto: Boolean = false) {
+    /** An app on a server for a limited time. */
+    val temporary: Boolean get() = id.startsWith(app.perroute.service.RoutePlanner.TEMPORARY_ROUTE_PREFIX)
     val kind: RouteKindLabel get() = when {
+        temporary -> RouteKindLabel.TEMPORARY
         auto -> RouteKindLabel.AUTO
         main -> RouteKindLabel.MAIN
         else -> RouteKindLabel.CUSTOM

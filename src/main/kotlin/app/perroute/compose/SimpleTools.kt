@@ -225,6 +225,8 @@ internal fun SimpleProfilesPage(shell: Shell) {
         }
         Spacer(Modifier.height(12.dp))
         Text("Profiles include apps, routes, rules and connection settings.", color = Muted, fontSize = 13.sp)
+        Spacer(Modifier.height(12.dp))
+        SimpleCard { RecipesSection(shell, first = true) }
     }
 }
 

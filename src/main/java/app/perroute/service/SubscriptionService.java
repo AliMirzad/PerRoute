@@ -18,7 +18,23 @@ public final class SubscriptionService {
             .build();
     private final SubscriptionParser parser = new SubscriptionParser();
 
+    /**
+     * A fetched subscription with the provider's usage, expiry and title headers. Header names are lower case
+     * and only the first value of each is kept.
+     */
+    public record Fetched(ParseResult result, java.util.Map<String, String> headers) {
+        public app.perroute.subscription.SubscriptionUserInfo userInfo() {
+            return app.perroute.subscription.SubscriptionUserInfo.parse(headers.get("subscription-userinfo"));
+        }
+        public String title() { return app.perroute.subscription.SubscriptionUserInfo.title(headers.get("profile-title")); }
+        public int updateIntervalHours() { return app.perroute.subscription.SubscriptionUserInfo.updateIntervalHours(headers.get("profile-update-interval")); }
+    }
+
     public ParseResult fetch(String url) throws IOException, InterruptedException {
+        return fetchDetailed(url).result();
+    }
+
+    public Fetched fetchDetailed(String url) throws IOException, InterruptedException {
         URI uri;
         try { uri = URI.create(url.strip()); }
         catch (RuntimeException e) { throw new IOException("Subscription URL is invalid", e); }
@@ -42,7 +58,11 @@ public final class SubscriptionService {
             throw new IOException("Subscription server returned HTTP " + status);
         }
         if (response.body().length > MAX_SUBSCRIPTION_BYTES) throw new IOException("Subscription is larger than 10 MB");
-        return parser.parse(new String(response.body(), java.nio.charset.StandardCharsets.UTF_8));
+        java.util.Map<String, String> headers = new java.util.LinkedHashMap<>();
+        for (String name : java.util.List.of("subscription-userinfo", "profile-title", "profile-update-interval")) {
+            response.headers().firstValue(name).ifPresent(value -> headers.put(name, value));
+        }
+        return new Fetched(parser.parse(new String(response.body(), java.nio.charset.StandardCharsets.UTF_8)), headers);
     }
 
     public ParseResult parsePasted(String content) {

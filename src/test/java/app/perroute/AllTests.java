@@ -83,8 +83,10 @@ public final class AllTests {
         ControllerTests.runAll();
         V3ControllerTests.runAll();
         UiStyleSwitchTests.runAll();
+        V35Tests.runAll();
         RealCoreIntegrationTests.runAll();
-        System.out.println("All tests passed (" + (assertions + V3DomainTests.assertions() + ControllerTests.assertions() + V3ControllerTests.assertions() + UiStyleSwitchTests.assertions() + RealCoreIntegrationTests.assertions()) + " assertions)");
+        System.out.println("All tests passed (" + (assertions + V3DomainTests.assertions() + ControllerTests.assertions() + V3ControllerTests.assertions() + UiStyleSwitchTests.assertions()
+                + V35Tests.assertions() + RealCoreIntegrationTests.assertions()) + " assertions)");
         System.exit(0);
     }
 

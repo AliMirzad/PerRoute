@@ -159,6 +159,52 @@ public final class XrayProcessManager implements AutoCloseable {
         }
     }
 
+    /**
+     * Changes the layout of the running core: new inbounds and outbounds are added, the rule list is swapped in one
+     * step, and only then is everything that is no longer used removed. If adding or swapping fails, whatever was
+     * added is removed again, so the core keeps working exactly as it was.
+     */
+    public synchronized void applyRuntimePlan(XrayConfigGenerator.RuntimePlan plan) throws IOException, InterruptedException {
+        if (!isRunning()) throw new IOException("The connection core is not running");
+        Path data = AppDirectories.dataDirectory();
+        Files.createDirectories(data);
+        // Like current-config.json these files can hold credentials; they are removed right away.
+        Path inboundFile = data.resolve("runtime-inbounds.json");
+        Path outboundFile = data.resolve("runtime-outbounds.json");
+        Path routingFile = data.resolve("runtime-routing.json");
+        java.util.List<String> addedInbounds = new java.util.ArrayList<>();
+        java.util.List<String> addedOutbounds = new java.util.ArrayList<>();
+        try {
+            if (plan.inbounds() != null) {
+                Files.writeString(inboundFile, plan.inbounds(), StandardCharsets.UTF_8);
+                api("adi", inboundFile.toString());
+                addedInbounds.addAll(plan.addedInboundTags());
+            }
+            if (plan.outbounds() != null) {
+                Files.writeString(outboundFile, plan.outbounds(), StandardCharsets.UTF_8);
+                api("ado", outboundFile.toString());
+                addedOutbounds.addAll(plan.addedOutboundTags());
+            }
+            Files.writeString(routingFile, plan.routing(), StandardCharsets.UTF_8);
+            api("adrules", routingFile.toString());
+        } catch (IOException failed) {
+            for (String tag : addedOutbounds) { try { api("rmo", tag); } catch (IOException ignored) { } }
+            for (String tag : addedInbounds) { try { api("rmi", tag); } catch (IOException ignored) { } }
+            throw failed;
+        } finally {
+            Files.deleteIfExists(inboundFile);
+            Files.deleteIfExists(outboundFile);
+            Files.deleteIfExists(routingFile);
+        }
+        for (String tag : plan.removeOutbounds()) {
+            try { api("rmo", tag); } catch (IOException stale) { fireLog("The unused outbound " + tag + " could not be removed and stays idle: " + stale.getMessage()); }
+        }
+        for (String tag : plan.removeInbounds()) {
+            try { api("rmi", tag); } catch (IOException stale) { fireLog("The unused inbound " + tag + " could not be removed and stays idle: " + stale.getMessage()); }
+        }
+        Files.writeString(data.resolve("current-config.json"), plan.config(), StandardCharsets.UTF_8);
+    }
+
     private String api(String command, String argument) throws IOException, InterruptedException {
         Path coreDir = AppDirectories.coreDirectory();
         Process process = new ProcessBuilder(coreDir.resolve("xray.exe").toString(), "api", command,
@@ -176,6 +222,17 @@ public final class XrayProcessManager implements AutoCloseable {
         String text = output.toString(StandardCharsets.UTF_8).strip();
         if (process.exitValue() != 0) throw new IOException("Xray refused " + command + ": " + (text.isBlank() ? "exit " + process.exitValue() : text));
         return text;
+    }
+
+    /** Xray processes of PerRoute's core folder that this process did not start: leftovers of an earlier session. */
+    public int orphanCount() {
+        String executable = AppDirectories.coreDirectory().resolve("xray.exe").toString();
+        java.util.Set<Long> own = ProcessHandle.current().descendants()
+                .map(ProcessHandle::pid).collect(java.util.stream.Collectors.toSet());
+        return (int) ProcessHandle.allProcesses()
+                .filter(handle -> !own.contains(handle.pid()))
+                .filter(handle -> handle.info().command().map(executable::equalsIgnoreCase).orElse(false))
+                .count();
     }
 
     public void stopOrphan() {

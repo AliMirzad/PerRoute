@@ -216,6 +216,7 @@ private fun ColumnScope.NewAppPanel(shell: Shell, path: String) {
         NewPanelSection("Current decision") { DecisionSummary(shell, path) }
     }
     NewPanelSection { BandwidthEditor(shell, path) }
+    if (shell.apps.any { it.equals(path, true) }) NewPanelSection("For a while") { TemporaryAppAction(shell, path) }
     if (selected) {
         Spacer(Modifier.height(16.dp))
         LinkAction("Remove from selection", arrow = false, enabled = !locked, color = Red, fontSize = 12.5.sp) {

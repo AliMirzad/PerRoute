@@ -98,6 +98,8 @@ internal fun NewSettingsPage(shell: Shell) {
                 SettingsCategory.Updates -> NewUpdates(shell)
                 SettingsCategory.Components -> NewComponents(shell)
                 SettingsCategory.Backup -> NewBackup(shell, backup!!)
+                SettingsCategory.LocalNetwork -> LocalNetworkSettings(shell)
+                SettingsCategory.Recovery -> RecoverySettings(shell)
                 SettingsCategory.ActivityLog -> NewActivityLog(shell)
             }
             Spacer(Modifier.height(24.dp))
@@ -199,7 +201,7 @@ private fun NewGeneral(shell: Shell) {
     SettingBlock("About", "Version and application information.") {
         Spacer(Modifier.height(14.dp))
         Row(verticalAlignment = Alignment.Top) {
-            NewMark(44.dp, if (IsDark) NewColors.Lime else Color(0xFFA9C41E))
+            BrandMark(44.dp)
             Spacer(Modifier.width(16.dp))
             Column {
                 Text("PerRoute", color = White, fontSize = 22.sp, fontWeight = FontWeight.Bold)
@@ -338,6 +340,7 @@ private fun NewUpdates(shell: Shell) {
         Note("Only signed HTTPS updates are accepted. Every download is checked by size and SHA-256 before it can be installed.")
         Spacer(Modifier.height(6.dp))
         Text(model.statusLine, color = if (model.downloading) Cyan else Muted, fontSize = 12.5.sp, lineHeight = 17.sp)
+        RollbackNote(shell)
     }
     SettingBlock("Signed update feed") {
         Spacer(Modifier.height(10.dp))

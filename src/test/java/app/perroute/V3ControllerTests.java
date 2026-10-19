@@ -571,11 +571,15 @@ final class V3ControllerTests {
         check(((List<?>) block.get("inboundTag")).contains("perroute-app-1"), "Block rules cover Auto apps too");
     }
 
-    private static void testRemovedAutoServer(Fixture f) {
+    private static void testRemovedAutoServer(Fixture f) throws InterruptedException {
         f.good(f.second, 15);
         f.setup(Map.of(), Set.of(f.telegram));
         check(f.controller.connect().getOk(), "Connect");
         equal("second", f.autoRoute(f.telegram).getNode().key());
+        // The first check of every route is what gives the main server its quality evidence; it runs in the
+        // background, so the test waits for it instead of depending on how fast this machine is.
+        waitFor(() -> f.controller.routeHealth().stream().allMatch(view -> view.getHealth() != null
+                && view.getHealth().state() == app.perroute.routing.RouteHealthTracker.State.HEALTHY));
         f.controller.disconnect();
         check(f.controller.removeNode("second").getOk(), "Remove the server");
         check(f.controller.routePlan(false).ready(), "Auto never blocks on a removed server");
