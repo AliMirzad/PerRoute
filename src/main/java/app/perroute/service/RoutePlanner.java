@@ -19,6 +19,8 @@ public final class RoutePlanner {
 
     /** Prefix of the route id of an application in Auto mode; the rest is its normalized path. */
     public static final String AUTO_ROUTE_PREFIX = "auto:";
+    /** Prefix of the route id of an application on a temporary server; the rest is its normalized path. */
+    public static final String TEMPORARY_ROUTE_PREFIX = "temp:";
 
     /**
      * One route in use, with the applications that follow it. Main and Manual routes are shared by every
@@ -29,6 +31,9 @@ public final class RoutePlanner {
         public Route(ProxyNode node, boolean main, List<String> applications) {
             this(node, main, applications, false, node.key());
         }
+
+        /** A temporary route: one application on a server for a limited time, on a route of its own. */
+        public boolean temporary() { return id.startsWith(TEMPORARY_ROUTE_PREFIX); }
     }
 
     /** An assignment that is in effect but cannot be honoured. */
@@ -76,6 +81,19 @@ public final class RoutePlanner {
     public static Plan plan(List<ProxyNode> nodes, String mainKey, List<String> applications,
                             boolean advancedRouting, Map<String, String> appRoutes,
                             Map<String, String> labels, ConnectionMode mode, Map<String, String> autoChoices) {
+        return plan(nodes, mainKey, applications, advancedRouting, appRoutes, labels, mode, autoChoices, Map.of());
+    }
+
+    /**
+     * @param temporary a server chosen for a limited time, by normalized path. It applies in Smart per-app mode
+     *                  whether or not Advanced routing is on, takes precedence over the app's own mode and gives
+     *                  the app a route of its own. A temporary server that no longer exists is ignored: the app
+     *                  simply keeps its usual route, and nothing is blocked.
+     */
+    public static Plan plan(List<ProxyNode> nodes, String mainKey, List<String> applications,
+                            boolean advancedRouting, Map<String, String> appRoutes,
+                            Map<String, String> labels, ConnectionMode mode, Map<String, String> autoChoices,
+                            Map<String, String> temporary) {
         List<ProxyNode> servers = nodes == null ? List.of() : nodes;
         List<String> apps = applications == null ? List.of() : List.copyOf(applications);
         ProxyNode main = servers.stream().filter(node -> node.key().equals(mainKey)).findFirst()
@@ -91,8 +109,17 @@ public final class RoutePlanner {
         Map<String, List<String>> customApplications = new LinkedHashMap<>();
         Map<String, ProxyNode> customNodes = new LinkedHashMap<>();
         List<Route> autoRoutes = new ArrayList<>();
+        Map<String, String> temporaries = new LinkedHashMap<>();
+        if (mode == ConnectionMode.NATIVE_PER_APP && temporary != null) temporary.forEach((path, key) -> temporaries.put(AppRoutes.normalize(path), key));
         for (String app : apps) {
             String normalized = AppRoutes.normalize(app);
+            String temporaryKey = temporaries.get(normalized);
+            ProxyNode temporaryNode = temporaryKey == null ? null : servers.stream().filter(n -> n.key().equals(temporaryKey)).findFirst().orElse(null);
+            if (temporaryNode != null) {
+                applicationNodes.add(temporaryNode);
+                autoRoutes.add(new Route(temporaryNode, false, List.of(app), false, TEMPORARY_ROUTE_PREFIX + normalized));
+                continue;
+            }
             if (auto.containsKey(normalized)) {
                 String chosen = auto.get(normalized);
                 ProxyNode node = chosen.isBlank() ? null : servers.stream().filter(n -> n.key().equals(chosen)).findFirst().orElse(null);

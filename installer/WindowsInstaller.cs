@@ -15,8 +15,8 @@ using Microsoft.Win32;
 [assembly: AssemblyDescription("Complete system installer for PerRoute")]
 [assembly: AssemblyCompany("Ali Mirzad")]
 [assembly: AssemblyProduct("PerRoute")]
-[assembly: AssemblyVersion("3.0.0.0")]
-[assembly: AssemblyFileVersion("3.0.0.0")]
+[assembly: AssemblyVersion("3.5.0.0")]
+[assembly: AssemblyFileVersion("3.5.0.0")]
 
 namespace PerRouteSetup
 {
@@ -51,7 +51,7 @@ namespace PerRouteSetup
 
     internal sealed class InstallerForm : Form
     {
-        private const string Version = "3.0.0";
+        private const string Version = "3.5.0";
         private const string ResourceName = "PerRoute.Payload";
         private const string ProxiFyreResourceName = "PerRoute.ProxiFyreSetup";
         private const string VisualCppResourceName = "PerRoute.VisualCppRuntime";
@@ -91,12 +91,11 @@ namespace PerRouteSetup
             Panel accent = new Panel { BackColor = violet, Location = new Point(0, 0), Size = new Size(590, 5) };
             Controls.Add(accent);
 
-            Label logo = new Label {
-                Text = "P", TextAlign = ContentAlignment.MiddleCenter,
-                Font = new Font("Segoe UI", 20F, FontStyle.Bold),
-                BackColor = violet, ForeColor = Color.White,
-                Location = new Point(34, 34), Size = new Size(54, 54)
+            // PerRoute's logo, taken from this installer's own icon so it always matches the application.
+            PictureBox logo = new PictureBox {
+                Location = new Point(34, 34), Size = new Size(54, 54), SizeMode = PictureBoxSizeMode.Zoom, BackColor = Color.Transparent
             };
+            try { logo.Image = new Icon(Icon, new Size(256, 256)).ToBitmap(); } catch { }
             Controls.Add(logo);
 
             Label title = new Label {
@@ -250,7 +249,9 @@ namespace PerRouteSetup
                 statusLabel.Text = "PerRoute was installed successfully.";
                 UseWaitCursor = false;
                 ResetStateKeyPermissions();
-                if (launchAfterInstall.Checked && !result.RestartRequired) Process.Start(result.Executable);
+                // Through Explorer, so PerRoute runs as the signed-in user instead of inheriting this installer's
+                // Administrator rights (which would also give its files Administrator-only permissions).
+                if (launchAfterInstall.Checked && !result.RestartRequired) Process.Start("explorer.exe", "\"" + result.Executable + "\"");
                 string completion = "PerRoute " + Version + " and its per-app engine are ready to use.";
                 if (result.RestartRequired) completion += "\r\n\r\nWindows must be restarted before Smart per-app mode can be used.";
                 MessageBox.Show(this, completion, "Installation complete",
@@ -316,6 +317,8 @@ namespace PerRouteSetup
                 RemoveDependencyShortcuts();
 
                 progress.Report(new InstallProgress(88, "Installing PerRoute for all users…"));
+                string rollback = target + ".rollback";
+                string previousVersion = InstalledVersion(target);
                 if (Directory.Exists(backup)) Directory.Delete(backup, true);
                 bool backedUp = false;
                 try
@@ -325,18 +328,37 @@ namespace PerRouteSetup
                         backedUp = true;
                     }
                     Directory.Move(extracted, target);
-                    if (backedUp && Directory.Exists(backup)) Directory.Delete(backup, true);
+                    File.WriteAllText(Path.Combine(target, "perroute-version.txt"), Version);
                 }
                 catch
                 {
                     if (!Directory.Exists(target) && Directory.Exists(backup)) Directory.Move(backup, target);
                     throw;
                 }
+                // The version that was replaced is kept for a rollback (only the latest one), unless it is this
+                // same version being installed again.
+                if (backedUp && Directory.Exists(backup))
+                {
+                    try
+                    {
+                        if (previousVersion.Length > 0 && previousVersion != Version && File.Exists(Path.Combine(backup, "PerRoute.exe")))
+                        {
+                            if (Directory.Exists(rollback)) Directory.Delete(rollback, true);
+                            File.WriteAllText(Path.Combine(backup, "perroute-version.txt"), previousVersion);
+                            Directory.Move(backup, rollback);
+                        }
+                        else Directory.Delete(backup, true);
+                    }
+                    catch { try { if (Directory.Exists(backup)) Directory.Delete(backup, true); } catch { } }
+                }
 
                 progress.Report(new InstallProgress(91, "Creating shortcuts…"));
                 string executable = Path.Combine(target, "PerRoute.exe");
                 CreateShortcut(Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.CommonStartMenu),
                     "Programs", "PerRoute.lnk"), executable);
+                string recovery = Path.Combine(target, "PerRouteRecovery.exe");
+                if (File.Exists(recovery)) CreateShortcut(Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.CommonStartMenu),
+                    "Programs", "PerRoute Recovery.lnk"), recovery);
                 string desktopLink = Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.CommonDesktopDirectory), "PerRoute.lnk");
                 if (createDesktopShortcut) CreateShortcut(desktopLink, executable);
                 else if (File.Exists(desktopLink)) File.Delete(desktopLink);
@@ -488,6 +510,30 @@ namespace PerRouteSetup
                 key.SetValue("NoModify", 1, RegistryValueKind.DWord);
                 key.SetValue("NoRepair", 1, RegistryValueKind.DWord);
             }
+        }
+
+        /// <summary>
+        /// The version installed in a folder: its version file, or for installations from before 3.5 the version
+        /// Windows lists for PerRoute. Empty when nothing is installed there.
+        /// </summary>
+        private static string InstalledVersion(string folder)
+        {
+            if (!File.Exists(Path.Combine(folder, "PerRoute.exe"))) return "";
+            try
+            {
+                string file = Path.Combine(folder, "perroute-version.txt");
+                if (File.Exists(file)) return File.ReadAllText(file).Trim();
+                using (RegistryKey machine = RegistryKey.OpenBaseKey(RegistryHive.LocalMachine, RegistryView.Registry64))
+                using (RegistryKey key = machine.OpenSubKey(@"Software\Microsoft\Windows\CurrentVersion\Uninstall\PerRoute"))
+                {
+                    object listed = key == null ? null : key.GetValue("DisplayVersion");
+                    object location = key == null ? null : key.GetValue("InstallLocation");
+                    if (listed != null && location != null && String.Equals(location.ToString().TrimEnd('\\'), folder.TrimEnd('\\'), StringComparison.OrdinalIgnoreCase))
+                        return listed.ToString().Trim();
+                }
+            }
+            catch { }
+            return "";
         }
 
         private static string DefaultInstallDirectory()

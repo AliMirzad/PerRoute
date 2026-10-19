@@ -9,7 +9,7 @@
 A modern Windows client for VLESS, VMess, Trojan and Shadowsocks, built on [Xray-core](https://github.com/XTLS/Xray-core).
 
 ![Platform](https://img.shields.io/badge/platform-Windows%2010%20%7C%2011%20x64-0078D6)
-![Version](https://img.shields.io/badge/version-3.0.0-6B57D9)
+![Version](https://img.shields.io/badge/version-3.5.0-6B57D9)
 ![Built with](https://img.shields.io/badge/built%20with-Kotlin%20%2B%20Compose%20Desktop-7F52FF)
 ![Core](https://img.shields.io/badge/core-Xray-0B9B83)
 ![License](https://img.shields.io/badge/license-GPL--3.0-blue)
@@ -40,6 +40,16 @@ When you do want everything proxied, System proxy and Local proxy modes are one 
 | **Per-app bandwidth limits** *(3.0)* | Download and upload limits per application, shared by all of its connections (TCP and UDP), enforced by PerRoute's traffic gateway. |
 | **Connection inspector** *(3.0)* | Each selected app's live connections with destination, protocol, route, matched rule and traffic. What is configured, what the core was observed doing, and what a route check verified are always shown apart. |
 | **Backup and restore** *(3.0)* | Portable backups, optionally encrypted with a password, with a preview, path remapping for other computers, Merge or Replace, a rollback snapshot and Undo. |
+| **Network Time Machine** *(3.5)* | Snapshots of the network settings PerRoute touches, a comparison that says who changed what, and a restore that undoes only PerRoute's own leftovers. **PerRoute Recovery** does the same even when PerRoute does not open. |
+| **Safe update and rollback** *(3.5)* | The installer keeps the version it replaces; a version that cannot start is noticed and you can go back without a download. |
+| **Temporary servers** *(3.5)* | One app on another server for a while, from the app, the Connection screen, a server or the tray. It goes back by itself; nothing permanent changes. |
+| **Compare with a live route** *(3.5)* | A candidate server and a live route open the same sites side by side, without touching the route. |
+| **Routing recipes** *(3.5)* | Share rules and app routes as a file or a line of text, without servers, links, passwords or folders. Import with a full preview and Undo. |
+| **Browser workspaces** *(3.5)* | Separate browser profiles, each on a route of its own, with DNS, QUIC and WebRTC kept inside it. |
+| **Local network** *(3.5)* | See your networks and devices, keep local names local, and block local devices for routed apps on networks you do not trust. |
+| **Connection Doctor and Safety Center** *(3.5)* | Why something does not connect, with repairs you confirm; and real tests that protection works as configured. |
+| **Subscription intelligence** *(3.5)* | Usage, quota, expiry and update history of every subscription, with warnings for expired, exhausted, failing or suddenly changed ones. |
+| **Gaming test** *(3.5)* | Steady latency, jitter, packet loss and UDP support per server, and a score built for games. |
 | **Three connection modes** | Smart per-app, System proxy, and Local proxy (SOCKS5 + HTTP). |
 | **Subscriptions** | Import by URL, pasted share links, Xray JSON, or QR code (image, clipboard, or camera). Updates keep your favorites, tags and selection. |
 | **Latency and speed tests** | Endpoint ping, a real tunnel test, and a download speed test per server, with sorting and filtering. |
@@ -62,15 +72,15 @@ Get the latest build from the [Releases](https://github.com/AliMirzad/PerRoute/r
 
 | Package | Use it when |
 |---|---|
-| `PerRoute-Setup-3.0.0.exe` | You want everything, including Smart per-app mode. The installer asks for Administrator approval once and installs PerRoute together with the per-app engine. |
-| `PerRoute-Portable-3.0.0.zip` | You want a no-install build. Extract the folder and run `PerRoute.exe`. System proxy and Local proxy work out of the box; Smart per-app works only if the per-app engine is already installed. |
+| `PerRoute-Setup-3.5.0.exe` | You want everything, including Smart per-app mode. The installer asks for Administrator approval once and installs PerRoute together with the per-app engine. |
+| `PerRoute-Portable-3.5.0.zip` | You want a no-install build. Extract the folder and run `PerRoute.exe`. System proxy and Local proxy work out of the box; Smart per-app works only if the per-app engine is already installed. |
 
 **Requirements:** Windows 10 or 11, 64-bit. The Java runtime and Xray core are bundled; nothing else needs to be installed.
 
 Verify a download against the SHA-256 values published with each release:
 
 ```powershell
-Get-FileHash .\PerRoute-Setup-3.0.0.exe -Algorithm SHA256
+Get-FileHash .\PerRoute-Setup-3.5.0.exe -Algorithm SHA256
 ```
 
 ## Quick start
@@ -203,9 +213,25 @@ Grouped into General (theme and reset), Connection (mode and Advanced routing), 
 
 ### Quick Access
 
-Closing or minimizing the main window keeps PerRoute in the notification area. Clicking the tray icon opens Quick Access, where you can connect, switch the main server, and reopen the main window. The list starts with the servers in use (the main server, then any custom servers), followed by your favorites and then the rest. Jumping to the fastest server and quitting are in its overflow menu. With Advanced routing on it shows how many applications and servers are involved; app routes themselves are edited in the main window.
+Closing or minimizing the main window keeps PerRoute in the notification area. Clicking the tray icon opens Quick Access, where you can connect, switch the main server, and reopen the main window. The list starts with the servers in use (the main server, then any custom servers), followed by your favorites and then the rest. Jumping to the fastest server, **Use a server for a while** (one app on another server, for a limited time) and quitting are in its overflow menu; apps on a temporary server are listed with the time left and an End link. With Advanced routing on it shows how many applications and servers are involved; app routes themselves are edited in the main window.
 
 <p align="center"><img src="docs/screenshots/quick-access.png" width="360" alt="Quick Access tray panel"></p>
+
+### New in 3.5: where to find it
+
+| Feature | Where |
+|---|---|
+| Temporary servers | An app's panel in Apps, the Connection screen, a server's menu in Servers, Quick Access |
+| Compare with a live route | A server's menu in Servers, the Connection screen |
+| Gaming test, Best for gaming | Servers: Test servers menu, a server's menu and its details, the sort menu |
+| Subscription details | Servers: select a subscription, then the details button next to it |
+| Recipes | Profiles > Recipes |
+| Browser workspaces | Tools > Workspaces |
+| Connection Doctor, Safety Center | Tools > Health |
+| Local network | Settings > Local network |
+| Network Time Machine, rollback | Settings > Recovery; **PerRoute Recovery** in the Start menu |
+
+See [docs/releases/v3.5.0.md](docs/releases/v3.5.0.md) for how each works and its limits.
 
 ## Connection modes
 
@@ -309,9 +335,9 @@ This produces the following in `dist/`:
 
 | Output | Description |
 |---|---|
-| `PerRoute-Setup-3.0.0.exe` | Offline installer with the per-app engine |
-| `PerRoute-Portable-3.0.0.zip` | Self-contained portable build |
-| `PerRoute-3.0.0/` | Unpacked application image |
+| `PerRoute-Setup-3.5.0.exe` | Offline installer with the per-app engine |
+| `PerRoute-Portable-3.5.0.zip` | Self-contained portable build |
+| `PerRoute-3.5.0/` | Unpacked application image |
 
 The installer dependencies are downloaded on first use and verified against pinned SHA-256 digests.
 
@@ -328,6 +354,15 @@ src/main/java/app/perroute/routing     Route modes, Auto server selection, route
 src/main/java/app/perroute/gateway     Traffic gateway and rate limiting
 src/main/java/app/perroute/inspector   Core log parsing and the in-memory connection table
 src/main/java/app/perroute/backup      Backup format, encryption, preview and restore planning
+src/main/java/app/perroute/netstate    Network snapshots, comparison and safe restore plans
+src/main/java/app/perroute/update      Startup health and the installation kept for a rollback
+src/main/java/app/perroute/subscription Subscription usage, expiry and change history
+src/main/java/app/perroute/gaming      Gaming probe and score
+src/main/java/app/perroute/shadow      Side-by-side comparison of a route and a candidate
+src/main/java/app/perroute/recipe      Shareable recipes: format, validation and import plans
+src/main/java/app/perroute/workspace   Browser workspaces
+src/main/java/app/perroute/localnet    Local networks, devices and the trust policy
+installer/WindowsRecovery.cs           PerRoute Recovery, the standalone network restore and rollback tool
 src/main/java/app/perroute/persistence Encrypted state storage
 src/test/java/app/perroute             Test suite
 installer/                             Windows installer and uninstaller (C#)
@@ -340,7 +375,7 @@ docs/screenshots/                      Images used in this document
 Updates are distributed as a signed manifest next to the installer. Keep the private key outside the repository.
 
 ```powershell
-java tools\update\UpdateManifestTool.java sign 3.0.0 dist\PerRoute-Setup-3.0.0.exe https://github.com/AliMirzad/PerRoute/releases/download/v3.0.0/PerRoute-Setup-3.0.0.exe release-secrets\perroute-update-private.pk8 dist\update.json
+java tools\update\UpdateManifestTool.java sign 3.5.0 dist\PerRoute-Setup-3.5.0.exe https://github.com/AliMirzad/PerRoute/releases/download/v3.5.0/PerRoute-Setup-3.5.0.exe release-secrets\perroute-update-private.pk8 dist\update.json
 ```
 
 Attach `update.json` to the release. Users enable updates by entering this feed once in *Settings > Updates*:

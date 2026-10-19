@@ -57,6 +57,9 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import app.perroute.model.ProxyNode
 import app.perroute.quality.QualityScore
+import androidx.compose.material.icons.rounded.CompareArrows
+import androidx.compose.material.icons.rounded.SportsEsports
+import androidx.compose.material.icons.rounded.Timer
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.delay
@@ -67,7 +70,7 @@ import java.awt.FileDialog
 import java.nio.file.Path
 
 /** How the server list is ordered. */
-internal enum class ServerSort(val label: String) { DEFAULT("Default order"), QUALITY("Quality"), FASTEST("Lowest latency"), SLOWEST("Highest latency") }
+internal enum class ServerSort(val label: String) { DEFAULT("Default order"), QUALITY("Quality"), GAMING("Best for gaming"), FASTEST("Lowest latency"), SLOWEST("Highest latency") }
 private const val AutoSpeedTestLimit = 10
 
 /** What the list needs to know about a server besides the server itself. */
@@ -250,6 +253,12 @@ internal class ServersModel(private val shell: Shell) {
             MenuEntry("Use as main server", Icons.Rounded.CheckCircle, enabled = !isMain && !shell.busy) { useAsMain(node) },
             MenuEntry("Retest this server", Icons.Rounded.Speed, "Real tunnel test of this server", enabled = retestingKey == null) { retest(node) },
             MenuEntry("Speed test", Icons.Rounded.Download, "Bounded download through this server", enabled = !speedRunning) { runSpeedTest(listOf(node)) },
+            MenuEntry("Gaming test", Icons.Rounded.SportsEsports, "Steady latency, jitter, loss and UDP") { showGamingDialog(shell, listOf(node)) },
+            MenuEntry("Compare with a live route…", Icons.Rounded.CompareArrows, "Side by side, without changing the route", enabled = !isMain || !shell.connected) {
+                showShadowDialog(shell, node)
+            },
+            MenuEntry("Use for an app for a while…", Icons.Rounded.Timer, if (shell.perApp) "One app, back to normal afterwards" else "Needs Smart per-app mode",
+                enabled = shell.perApp && shell.apps.isNotEmpty()) { showTemporaryDialog(shell, server = node.key()) },
             MenuEntry("Copy config", Icons.Rounded.ContentCopy) { copyConfig(node, clipboard) },
             MenuEntry(if (tag.isBlank()) "Add a tag…" else "Change tag (#$tag)…", Icons.Rounded.Label) { editTag(node, tags) },
             MenuEntry("Remove server", Icons.Rounded.DeleteOutline, if (locked) "Disconnect first" else "", enabled = !locked, danger = true) { removeServer(node) }
@@ -260,6 +269,7 @@ internal class ServersModel(private val shell: Shell) {
     fun testMenu(): List<MenuEntry> = listOf(
         MenuEntry("Ping all servers", Icons.Rounded.Schedule, "TCP latency to every endpoint", enabled = !pinging) { pingAll() },
         MenuEntry("Real tunnel test", Icons.Rounded.Speed, "Starts an isolated core per server", enabled = !pinging) { realTestAll() },
+        MenuEntry("Gaming test", Icons.Rounded.SportsEsports, "The main server, favorites and the best by quality") { showGamingDialog(shell, gamingCandidates(shell)) },
         if (speedRunning) MenuEntry("Stop speed test", Icons.Rounded.Stop, "Keeps the results measured so far") { stopSpeedTest() }
         else MenuEntry("Speed test listed servers", Icons.Rounded.Download, "One at a time, bounded download") {
             runSpeedTest(visible.filter { (latencies[it.key()] ?: 0L) >= 0L })
@@ -291,6 +301,10 @@ internal class ServersModel(private val shell: Shell) {
                 compareByDescending<ProxyNode> { scores[it.key()]?.usable() == true }
                     .thenByDescending { scores[it.key()]?.score() ?: -1 }
                     .thenByDescending { scores[it.key()]?.confidence() ?: 0.0 })
+            // Tested servers first, best first; a server that was never tested for games is not ranked.
+            ServerSort.GAMING -> controller.gamingScores().let { gaming ->
+                matching.sortedWith(compareByDescending<ProxyNode> { (gaming[it.key()]?.score() ?: -1) > 0 }.thenByDescending { gaming[it.key()]?.score() ?: -1 })
+            }
             ServerSort.FASTEST -> matching.sortedWith(
                 compareBy<ProxyNode> { (latencies[it.key()] ?: -1L) < 0L }
                     .thenBy { latencies[it.key()]?.takeIf { value -> value >= 0L } ?: Long.MAX_VALUE })

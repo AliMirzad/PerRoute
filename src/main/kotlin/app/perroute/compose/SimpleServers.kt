@@ -22,6 +22,7 @@ import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.rounded.Add
 import androidx.compose.material.icons.rounded.ChevronRight
 import androidx.compose.material.icons.rounded.ContentCopy
+import androidx.compose.material.icons.rounded.Info
 import androidx.compose.material.icons.rounded.DeleteOutline
 import androidx.compose.material.icons.rounded.Download
 import androidx.compose.material.icons.rounded.KeyboardArrowDown
@@ -95,6 +96,8 @@ internal fun SimpleServersPage(shell: Shell) {
             Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(10.dp)) {
                 TextInput(model.query, { model.query = it }, "Search servers", Modifier.weight(1f), Icons.Rounded.Search, height = 44.dp)
                 if (model.sourceFilter in model.subscriptions()) {
+                    SubscriptionAlert(shell, model.sourceFilter)
+                    IconAction(Icons.Rounded.Info, "Subscription details: usage, expiry and changes", size = 40.dp) { showSubscriptionDialog(shell, model.sourceFilter) }
                     IconAction(Icons.Rounded.ContentCopy, "Copy this subscription URL", size = 40.dp) {
                         clipboard.setText(AnnotatedString(model.sourceFilter)); shell.notify(ActionResult(true, "Subscription URL copied."))
                     }
@@ -214,6 +217,7 @@ private fun SimpleServerRow(shell: Shell, model: ServersModel, node: ProxyNode, 
         Spacer(Modifier.height(10.dp))
         val (speed, _) = speedText(model.speeds[node.key()], model.speedTestingKey == node.key())
         QualityMetricList(score, speed, columns = 3, labelWidth = 100.dp)
+        GamingSummary(shell, node)
         Spacer(Modifier.height(10.dp))
         val users = model.usedBy(node, rows)
         Text(if (users.isEmpty()) "Not used by a selected app." else "Used by ${joinNames(users.map(::appName), 4)}", color = Muted, fontSize = 13.sp)

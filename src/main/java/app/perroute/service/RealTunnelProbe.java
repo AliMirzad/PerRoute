@@ -3,27 +3,22 @@ package app.perroute.service;
 import app.perroute.model.ProxyNode;
 
 import java.io.IOException;
-import java.nio.charset.StandardCharsets;
-import java.nio.file.Files;
-import java.nio.file.Path;
 import java.time.Duration;
-import java.util.UUID;
-import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicInteger;
 
+/** End-to-end tests of one server through an {@link IsolatedCore}, so the running connection is never involved. */
 public final class RealTunnelProbe {
     private static final AtomicInteger NEXT_PORT = new AtomicInteger(22000);
-    private final XrayConfigGenerator generator = new XrayConfigGenerator();
     private final ProxyHealthCheck healthCheck = new ProxyHealthCheck();
     private final TunnelSpeedTest speedTest = new TunnelSpeedTest();
 
     public Result probe(ProxyNode node) {
         try {
-            return withTunnel(node, (process, socksPort) -> {
+            return withTunnel(node, (core, socksPort) -> {
                 long started = System.nanoTime();
                 ProxyHealthCheck.Result health = healthCheck.check("127.0.0.1", socksPort);
                 long elapsed = Math.max(1L, Duration.ofNanos(System.nanoTime() - started).toMillis());
-                if (!process.isAlive()) return new Result(false, -1, "Xray rejected this server");
+                if (!core.alive()) return new Result(false, -1, "Xray rejected this server");
                 return new Result(health.success(), health.success() ? elapsed : -1L, health.detail());
             });
         } catch (Exception error) {
@@ -33,9 +28,9 @@ public final class RealTunnelProbe {
 
     public TunnelSpeedTest.Result speed(ProxyNode node) {
         try {
-            return withTunnel(node, (process, socksPort) -> {
+            return withTunnel(node, (core, socksPort) -> {
                 ProxyHealthCheck.Result health = healthCheck.check("127.0.0.1", socksPort);
-                if (!process.isAlive()) return new TunnelSpeedTest.Result(false, -1L, 0L, "Xray rejected this server");
+                if (!core.alive()) return new TunnelSpeedTest.Result(false, -1L, 0L, "Xray rejected this server");
                 if (!health.success()) return new TunnelSpeedTest.Result(false, -1L, 0L, health.detail());
                 return speedTest.measure(TunnelHttp.Route.socks(socksPort));
             });
@@ -44,34 +39,14 @@ public final class RealTunnelProbe {
         }
     }
 
+    /** What a probe does with the isolated core's SOCKS port while the core runs. */
     @FunctionalInterface
-    private interface TunnelTask<T> { T run(Process process, int socksPort) throws Exception; }
+    public interface TunnelTask<T> { T run(IsolatedCore core, int socksPort) throws Exception; }
 
-    private <T> T withTunnel(ProxyNode node, TunnelTask<T> task) throws Exception {
-        int socksPort = reservePort();
-        int apiPort = reservePort();
-        Path config = AppDirectories.dataDirectory().resolve("probes").resolve("probe-" + UUID.randomUUID() + ".json");
-        Process process = null;
-        try {
-            Path executable = AppDirectories.coreDirectory().resolve("xray.exe");
-            if (!Files.isRegularFile(executable)) throw new IOException("Xray is not installed");
-            Files.createDirectories(config.getParent());
-            Files.writeString(config, generator.generateProbe(node, socksPort, apiPort), StandardCharsets.UTF_8);
-            process = new ProcessBuilder(executable.toString(), "run", "-config", config.toString())
-                    .directory(AppDirectories.coreDirectory().toFile()).redirectErrorStream(true).start();
-            Process running = process;
-            Thread.ofVirtual().start(() -> {
-                try { running.getInputStream().transferTo(java.io.OutputStream.nullOutputStream()); }
-                catch (IOException ignored) {}
-            });
-            return task.run(process, socksPort);
-        } finally {
-            if (process != null) {
-                process.destroy();
-                try { if (!process.waitFor(2, TimeUnit.SECONDS)) process.destroyForcibly(); }
-                catch (InterruptedException error) { Thread.currentThread().interrupt(); process.destroyForcibly(); }
-            }
-            try { Files.deleteIfExists(config); } catch (IOException ignored) {}
+    /** Runs {@code task} against an isolated core for {@code node}; the core is stopped afterwards whatever happens. */
+    public <T> T withTunnel(ProxyNode node, TunnelTask<T> task) throws Exception {
+        try (IsolatedCore core = IsolatedCore.forNode(node)) {
+            return task.run(core, core.socksPort());
         }
     }
 
@@ -79,10 +54,26 @@ public final class RealTunnelProbe {
         return error.getMessage() == null ? error.getClass().getSimpleName() : error.getMessage();
     }
 
-    private static int reservePort() {
-        int value = NEXT_PORT.getAndIncrement();
-        if (value > 30000) { NEXT_PORT.compareAndSet(value + 1, 22000); return 22000; }
-        return value;
+    /**
+     * A loopback port for an isolated core. Ports are handed out in turn from 22000 to 30000 so concurrent probes
+     * never share one, and a port another program already listens on is skipped.
+     */
+    public static int reservePort() {
+        for (int attempt = 0; attempt < 200; attempt++) {
+            int value = NEXT_PORT.getAndUpdate(current -> current >= 30000 ? 22000 : current + 1);
+            if (portFree(value)) return value;
+        }
+        throw new IllegalStateException("No free loopback port was found for an isolated test");
+    }
+
+    private static boolean portFree(int port) {
+        try (java.net.ServerSocket socket = new java.net.ServerSocket()) {
+            socket.setReuseAddress(false);
+            socket.bind(new java.net.InetSocketAddress(java.net.InetAddress.getLoopbackAddress(), port));
+            return true;
+        } catch (IOException taken) {
+            return false;
+        }
     }
 
     public record Result(boolean reachable, long milliseconds, String detail) {}

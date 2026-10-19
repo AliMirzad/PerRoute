@@ -48,6 +48,14 @@ public final class ProxiFyreManager {
     }
 
     public String generateConfig(List<String> applicationPaths) {
+        return generateConfig(applicationPaths, true);
+    }
+
+    /**
+     * @param bypassLan when false, the selected apps' local-network traffic is also sent to the core, so it can be
+     *                  blocked on networks that are not trusted; the core still sends trusted local traffic direct
+     */
+    public String generateConfig(List<String> applicationPaths, boolean bypassLan) {
         if (applicationPaths == null || applicationPaths.isEmpty()) {
             throw new IllegalArgumentException("At least one application must be selected");
         }
@@ -74,17 +82,21 @@ public final class ProxiFyreManager {
 
         Map<String, Object> root = new LinkedHashMap<>();
         root.put("logLevel", "Info");
-        root.put("bypassLan", true);
+        root.put("bypassLan", bypassLan);
         root.put("proxies", rules);
         root.put("excludes", List.of("xray.exe", "PerRoute.exe", "java.exe", "javaw.exe", "ProxiFyre.exe"));
         return Json.stringify(root) + System.lineSeparator();
     }
 
     public synchronized void applyAndStart(List<String> applicationPaths) throws IOException, InterruptedException {
+        applyAndStart(applicationPaths, true);
+    }
+
+    public synchronized void applyAndStart(List<String> applicationPaths, boolean bypassLan) throws IOException, InterruptedException {
         Inspection inspection = inspect();
         if (!inspection.ready()) throw new IOException("ProxiFyre is not installed. Install the per-app engine first.");
         if (!AdminCheck.isElevated()) {
-            startLimited(inspection, applicationPaths);
+            startLimited(inspection, applicationPaths, bypassLan);
             return;
         }
         Path directory = inspection.executable().getParent();
@@ -97,7 +109,7 @@ public final class ProxiFyreManager {
             if (Files.isRegularFile(config)) Files.copy(config, backup, StandardCopyOption.COPY_ATTRIBUTES);
             else Files.writeString(noConfigMarker, "PerRoute\n", StandardCharsets.US_ASCII);
         }
-        writeAtomically(config, generateConfig(applicationPaths));
+        writeAtomically(config, generateConfig(applicationPaths, bypassLan));
         runScChecked("start");
         waitForState(4, Duration.ofSeconds(20));
     }
@@ -124,12 +136,71 @@ public final class ProxiFyreManager {
         stopLimited();
     }
 
-    private void startLimited(Inspection inspection, List<String> applicationPaths) throws IOException, InterruptedException {
+    /** "running", "stopped" or "not installed", read from the service manager. */
+    public String serviceState() {
+        try {
+            Process process = new ProcessBuilder("sc.exe", "query", SERVICE_NAME).redirectErrorStream(true).start();
+            if (!process.waitFor(5, TimeUnit.SECONDS)) { process.destroyForcibly(); return "stopped"; }
+            if (process.exitValue() != 0) return "not installed";
+            Matcher matcher = SERVICE_STATE.matcher(new String(process.getInputStream().readAllBytes(), StandardCharsets.UTF_8));
+            return matcher.find() && Integer.parseInt(matcher.group(1)) == 4 ? "running" : "stopped";
+        } catch (Exception unknown) {
+            return "stopped";
+        }
+    }
+
+    /**
+     * Whose app list the engine uses: "perroute" while PerRoute's list is in place (PerRoute keeps the previous
+     * list, or a marker that there was none, exactly as long as its own list is installed), "other" when an app
+     * list exists that PerRoute did not write, "none" otherwise.
+     */
+    public String configOwner() {
+        Path directory = inspect().executable().getParent();
+        if (directory == null) return "none";
+        if (Files.exists(directory.resolve("app-config.perroute-backup.json")) || Files.exists(directory.resolve("app-config.perroute-was-missing"))) return "perroute";
+        return Files.isRegularFile(directory.resolve("app-config.json")) ? "other" : "none";
+    }
+
+    /** Whether PerRoute's saved copy of the engine's previous settings is waiting to be put back. */
+    public boolean backupPending() {
+        Path directory = inspect().executable().getParent();
+        return directory != null && Files.exists(directory.resolve("app-config.perroute-backup.json"));
+    }
+
+    /** How many apps the engine's current list redirects. */
+    public int configuredApps() {
+        Path directory = inspect().executable().getParent();
+        try {
+            Path config = directory == null ? null : directory.resolve("app-config.json");
+            if (config == null || !Files.isRegularFile(config)) return 0;
+            Object proxies = Json.object(Files.readString(config, StandardCharsets.UTF_8)).get("proxies");
+            return proxies instanceof List<?> list ? list.size() : 0;
+        } catch (IOException | RuntimeException unreadable) {
+            return 0;
+        }
+    }
+
+    /** Whether PerRoute's own copy of the engine (used without Administrator rights) is still running. */
+    public boolean limitedRunning() {
+        Path runtime = AppDirectories.dataDirectory().resolve("proxifyre-limited");
+        Path pidFile = runtime.resolve("perroute.pid");
+        try {
+            if (!Files.isRegularFile(pidFile)) return false;
+            long pid = Long.parseLong(Files.readString(pidFile, StandardCharsets.US_ASCII).strip());
+            return ProcessHandle.of(pid).filter(ProcessHandle::isAlive)
+                    .map(handle -> handle.info().command().orElse("").equalsIgnoreCase(runtime.resolve("ProxiFyre.exe").toString()))
+                    .orElse(false);
+        } catch (IOException | RuntimeException unreadable) {
+            return false;
+        }
+    }
+
+    private void startLimited(Inspection inspection, List<String> applicationPaths, boolean bypassLan) throws IOException, InterruptedException {
         Path runtime = AppDirectories.dataDirectory().resolve("proxifyre-limited");
         Files.createDirectories(runtime);
         stopOrphanedLimitedProcess(runtime);
         stageLimitedRuntime(inspection.executable().getParent(), runtime);
-        writeAtomically(runtime.resolve("app-config.json"), generateConfig(applicationPaths));
+        writeAtomically(runtime.resolve("app-config.json"), generateConfig(applicationPaths, bypassLan));
 
         Path executable = runtime.resolve("ProxiFyre.exe");
         Path consoleLog = runtime.resolve("perroute-console.log");
@@ -145,8 +216,8 @@ public final class ProxiFyreManager {
             limitedProcess = null;
             Files.deleteIfExists(runtime.resolve("perroute.pid"));
             String detail = tail(consoleLog, 3_000);
-            throw new IOException("ProxiFyre بدون Administrator اجرا نشد" +
-                    (detail.isBlank() ? ". یک‌بار PerRoute را با Run as administrator امتحان کنید." : ": " + detail));
+            throw new IOException("The per-app engine could not start without Administrator rights" +
+                    (detail.isBlank() ? ". Reinstall PerRoute with the Full Installer, or start it once with Run as administrator." : ": " + detail));
         }
     }
 
@@ -209,7 +280,7 @@ public final class ProxiFyreManager {
         Path downloads = AppDirectories.dataDirectory().resolve("downloads");
         Files.createDirectories(downloads);
         Path setup = downloads.resolve(SETUP_NAME);
-        progress.accept("دریافت checksum رسمی موتور per-app…");
+        progress.accept("Downloading the official checksum of the per-app engine…");
         String checksumText = new String(download(CHECKSUM_URI, 64 * 1024), StandardCharsets.UTF_8);
         Matcher matcher = SHA256.matcher(checksumText);
         if (!matcher.find()) throw new IOException("Official ProxiFyre checksum is invalid");
@@ -219,21 +290,21 @@ public final class ProxiFyreManager {
             throw new IOException("ProxiFyre sidecar does not match the pinned release checksum");
         }
 
-        progress.accept("دریافت ProxiFyre " + VERSION + " از GitHub…");
+        progress.accept("Downloading ProxiFyre " + VERSION + " from GitHub…");
         byte[] payload = download(SETUP_URI, MAX_SETUP_BYTES);
         String actual = sha256(payload);
         if (!MessageDigest.isEqual(EXPECTED_SETUP_SHA256.getBytes(StandardCharsets.US_ASCII), actual.getBytes(StandardCharsets.US_ASCII))) {
             throw new IOException("ProxiFyre installer checksum mismatch");
         }
         Files.write(setup, payload);
-        progress.accept("checksum تأیید شد؛ نصب‌کننده با دسترسی Administrator باز می‌شود.");
+        progress.accept("Checksum verified. The installer opens with an Administrator prompt.");
         Process installer = new ProcessBuilder(setup.toString()).start();
         int exit = installer.waitFor();
         if (exit != 0 && exit != 1641 && exit != 3010) {
             throw new IOException("ProxiFyre setup exited with code " + exit);
         }
-        if (!inspect().ready()) throw new IOException("نصب تمام شد اما سرویس ProxiFyre پیدا نشد؛ ممکن است Restart ویندوز لازم باشد.");
-        progress.accept("موتور per-app با موفقیت نصب شد.");
+        if (!inspect().ready()) throw new IOException("Setup finished, but the ProxiFyre service was not found. Windows may need a restart.");
+        progress.accept("The per-app engine is installed.");
     }
 
     private byte[] download(URI uri, int limit) throws IOException, InterruptedException {

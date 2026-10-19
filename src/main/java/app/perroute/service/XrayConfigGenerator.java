@@ -28,6 +28,37 @@ public final class XrayConfigGenerator {
 
     private final int appPortBase;
     private final boolean runtimeControl;
+    /** Local network handling (see {@link #withLocalNetwork}); off unless the controller asks for it. */
+    private boolean localNamesDirect;
+    private List<String> localAllowed = List.of();
+    private List<String> localBlocked = List.of();
+
+    /**
+     * Sends local names straight to the local network, and blocks the ranges of networks that are not trusted
+     * except {@code allowed} (their router and DNS servers). Returns this generator.
+     */
+    public XrayConfigGenerator withLocalNetwork(boolean namesDirect, List<String> allowed, List<String> blocked) {
+        this.localNamesDirect = namesDirect;
+        this.localAllowed = allowed == null ? List.of() : List.copyOf(allowed);
+        this.localBlocked = blocked == null ? List.of() : List.copyOf(blocked);
+        return this;
+    }
+
+    /**
+     * The rules that come before everything else: the router and DNS servers of an untrusted network stay
+     * reachable, the rest of that network is blocked, private addresses stay direct, and so do local names.
+     */
+    private List<Object> localRules(String directTag, String blockTag) {
+        List<Object> rules = new ArrayList<>();
+        if (!localBlocked.isEmpty()) {
+            if (!localAllowed.isEmpty()) rules.add(Map.of("type", "field", "ip", localAllowed, "outboundTag", directTag, "ruleTag", "perroute-local-allowed"));
+            rules.add(Map.of("type", "field", "ip", localBlocked, "outboundTag", blockTag, "ruleTag", "perroute-local-blocked"));
+        }
+        rules.add(Map.of("type", "field", "ip", List.of("geoip:private"), "outboundTag", directTag, "ruleTag", "perroute-private-direct"));
+        if (localNamesDirect) rules.add(Map.of("type", "field", "domain", app.perroute.localnet.LocalNetworkPolicy.LOCAL_NAME_RULES,
+                "outboundTag", directTag, "ruleTag", "perroute-local-names"));
+        return rules;
+    }
 
     public XrayConfigGenerator() { this(PER_APP_PORT_BASE, false); }
 
@@ -85,9 +116,7 @@ public final class XrayConfigGenerator {
         List<RouteGroup> groups = layout.groups(apps, new Target("outboundTag", "proxy"),
                 customs.stream().map(CustomRoute::target).toList());
 
-        List<Object> rules = new ArrayList<>();
-        rules.add(Map.of("type", "field", "ip", List.of("geoip:private"), "outboundTag", "direct",
-                "ruleTag", "perroute-private-direct"));
+        List<Object> rules = new ArrayList<>(localRules("direct", "block"));
         rules.addAll(customProfileRules(customs, groups));
         rules.addAll(customRules(apps, routeRules, "direct", groups, "block"));
         rules.addAll(applicationRules(groups));
@@ -137,6 +166,138 @@ public final class XrayConfigGenerator {
     public record RuntimeChange(String outbounds, String routing) {}
 
     /**
+     * A layout change for a running core: routes that appear get their inbound and outbound added, the complete
+     * rule list is swapped in one step, and only then are the inbounds and outbounds of routes that went away
+     * removed. Routes that exist before and after keep their outbound and their open connections.
+     *
+     * @param inbounds  {"inbounds":[…]} to add, or null
+     * @param outbounds {"outbounds":[…]} to add, or null
+     * @param routing   {"routing":{"rules":[…]}}, the complete new rule list
+     * @param config    the complete config the core corresponds to afterwards
+     */
+    public record RuntimePlan(String inbounds, String outbounds, String routing, List<String> removeOutbounds,
+                              List<String> removeInbounds, List<String> addedInboundTags, List<String> addedOutboundTags, String config) {}
+
+    /**
+     * Works out how a running core with config {@code running} becomes {@code next} without a restart, or returns
+     * null when it cannot: balancers or embedded profiles on either side, outbounds that are neither a route nor
+     * identical, or an inbound that would have to change in place. {@code keep} maps the planned outbound tag of
+     * every route that exists on both sides to its tag in the running core.
+     */
+    @SuppressWarnings("unchecked")
+    public static RuntimePlan runtimePlan(String running, String next, Map<String, String> keep) {
+        Map<String, Object> live = Json.object(running);
+        Map<String, Object> planned = Json.object(next);
+        for (Map<String, Object> root : List.of(live, planned)) {
+            if (root.get("routing") instanceof Map<?, ?> routing && routing.get("balancers") instanceof List<?> balancers && !balancers.isEmpty()) return null;
+            if (root.containsKey("observatory") || root.containsKey("burstObservatory")) return null;
+        }
+        Map<String, Map<String, Object>> liveOutbounds = byTag(live.get("outbounds"));
+        Map<String, Map<String, Object>> liveInbounds = byTag(live.get("inbounds"));
+        if (liveOutbounds == null || liveInbounds == null) return null;
+        // Planned route outbounds are first moved out of the way, then given their live tag or a fresh one, so a
+        // route that changed index cannot collide with another route's tag.
+        String candidate = next;
+        Map<String, Map<String, Object>> plannedOutbounds = byTag(planned.get("outbounds"));
+        if (plannedOutbounds == null) return null;
+        Map<String, String> placeholders = new LinkedHashMap<>();
+        int counter = 0;
+        for (String tag : plannedOutbounds.keySet()) {
+            if (!isRouteOutbound(tag)) continue;
+            String placeholder = "~perroute-pending-" + counter++;
+            placeholders.put(tag, placeholder);
+            candidate = renameOutbound(candidate, tag, placeholder);
+        }
+        java.util.Set<String> taken = new java.util.HashSet<>(liveOutbounds.keySet());
+        for (Map.Entry<String, String> entry : placeholders.entrySet()) {
+            String liveTag = keep.get(entry.getKey());
+            String target;
+            if (liveTag != null && liveOutbounds.containsKey(liveTag)) target = liveTag;
+            else {
+                String base = entry.getKey().replaceFirst("~\\d+$", "");
+                target = base;
+                int suffix = 1;
+                while (taken.contains(target)) target = base + "~" + suffix++;
+                taken.add(target);
+            }
+            candidate = renameOutbound(candidate, entry.getValue(), target);
+        }
+        Map<String, Object> result = Json.object(candidate);
+        Map<String, Map<String, Object>> nextOutbounds = byTag(result.get("outbounds"));
+        Map<String, Map<String, Object>> nextInbounds = byTag(result.get("inbounds"));
+        if (nextOutbounds == null || nextInbounds == null) return null;
+        List<Object> addOutbounds = new ArrayList<>();
+        List<String> addedOutboundTags = new ArrayList<>();
+        for (Map.Entry<String, Map<String, Object>> entry : nextOutbounds.entrySet()) {
+            Map<String, Object> before = liveOutbounds.get(entry.getKey());
+            if (before == null) {
+                if (!isRouteOutbound(entry.getKey())) return null;
+                String protocol = objectString(entry.getValue().get("protocol")).toLowerCase(Locale.ROOT);
+                if (!List.of("vless", "vmess", "trojan", "shadowsocks").contains(protocol) || entry.getValue().containsKey("proxySettings")) return null;
+                addOutbounds.add(entry.getValue());
+                addedOutboundTags.add(entry.getKey());
+            } else if (!Json.stringify(before).equals(Json.stringify(entry.getValue()))) {
+                return null;
+            }
+        }
+        List<String> removeOutbounds = new ArrayList<>();
+        for (String tag : liveOutbounds.keySet()) {
+            if (nextOutbounds.containsKey(tag)) continue;
+            if (!isRouteOutbound(tag)) return null;
+            removeOutbounds.add(tag);
+        }
+        List<Object> addInbounds = new ArrayList<>();
+        List<String> addedInboundTags = new ArrayList<>();
+        for (Map.Entry<String, Map<String, Object>> entry : nextInbounds.entrySet()) {
+            Map<String, Object> before = liveInbounds.get(entry.getKey());
+            if (before == null) {
+                if (!entry.getKey().startsWith("perroute-check-")) return null;
+                addInbounds.add(entry.getValue());
+                addedInboundTags.add(entry.getKey());
+            } else if (!Json.stringify(before).equals(Json.stringify(entry.getValue()))) {
+                return null;
+            }
+        }
+        List<String> removeInbounds = new ArrayList<>();
+        for (String tag : liveInbounds.keySet()) {
+            if (nextInbounds.containsKey(tag)) continue;
+            if (!tag.startsWith("perroute-check-")) return null;
+            removeInbounds.add(tag);
+        }
+        // Everything outside inbounds, outbounds and the rule list must already match, or a restart is needed.
+        for (String section : List.of("api", "stats", "policy", "dns", "log", "fakedns")) {
+            if (!Json.stringify(live.get(section)).equals(Json.stringify(result.get(section)))) return null;
+        }
+        if (!(result.get("routing") instanceof Map<?, ?> routing) || !(routing.get("rules") instanceof List<?> rules)) return null;
+        if (live.get("routing") instanceof Map<?, ?> liveRouting
+                && !objectString(liveRouting.get("domainStrategy")).equals(objectString(routing.get("domainStrategy")))) return null;
+        return new RuntimePlan(
+                addInbounds.isEmpty() ? null : Json.stringify(Map.of("inbounds", addInbounds)) + System.lineSeparator(),
+                addOutbounds.isEmpty() ? null : Json.stringify(Map.of("outbounds", addOutbounds)) + System.lineSeparator(),
+                Json.stringify(Map.of("routing", Map.of("rules", rules))) + System.lineSeparator(),
+                List.copyOf(removeOutbounds), List.copyOf(removeInbounds), List.copyOf(addedInboundTags), List.copyOf(addedOutboundTags),
+                Json.stringify(result) + System.lineSeparator());
+    }
+
+    /** The main route's outbound and every custom route's outbound, including tags a runtime change renamed. */
+    private static boolean isRouteOutbound(String tag) {
+        return tag.equals(MAIN_OUTBOUND_TAG) || tag.startsWith(MAIN_OUTBOUND_TAG + "~") || tag.startsWith("perroute-route-");
+    }
+
+    @SuppressWarnings("unchecked")
+    private static Map<String, Map<String, Object>> byTag(Object raw) {
+        if (!(raw instanceof List<?> list)) return null;
+        Map<String, Map<String, Object>> result = new LinkedHashMap<>();
+        for (Object item : list) {
+            if (!(item instanceof Map<?, ?> map)) return null;
+            String tag = objectString(map.get("tag"));
+            if (tag.isBlank() || result.containsKey(tag)) return null;
+            result.put(tag, (Map<String, Object>) map);
+        }
+        return result;
+    }
+
+    /**
      * Builds the runtime change for outbound {@code tag} of {@code config}, or returns null when the change
      * cannot be applied to a running core: the outbound is missing, is not a plain proxy outbound, or the
      * config uses balancers (which the rule swap would have to rebuild as well).
@@ -175,9 +336,20 @@ public final class XrayConfigGenerator {
         return Json.stringify(root) + System.lineSeparator();
     }
 
-    @SuppressWarnings("unchecked")
     public String generateProbe(ProxyNode node, int socksPort, int apiPort) {
-        Map<String, Object> root = Json.object(generateApplicationProxy(node));
+        return generateIsolated(node, socksPort, apiPort, List.of());
+    }
+
+    /**
+     * A config for a core of its own (a test, a comparison or a browser workspace): one SOCKS port that leads to
+     * {@code node}, with the user's rules that apply to every app, and nothing else. It shares no port with the
+     * running connection.
+     */
+    @SuppressWarnings("unchecked")
+    public String generateIsolated(ProxyNode node, int socksPort, int apiPort, List<app.perroute.model.RouteRule> globalRules) {
+        List<app.perroute.model.RouteRule> rules = globalRules == null ? List.of()
+                : globalRules.stream().filter(rule -> rule != null && rule.applicationPath().isBlank()).toList();
+        Map<String, Object> root = Json.object(generateApplicationProxy(node, List.of(), rules));
         List<Object> inbounds = (List<Object>)root.get("inbounds");
         inbounds.removeIf(value -> value instanceof Map<?, ?> map && "perroute-http".equals(map.get("tag")));
         for (Object value : inbounds) {
@@ -670,9 +842,7 @@ public final class XrayConfigGenerator {
         root.put("inbounds", inbounds);
         List<RouteGroup> groups = layout.groups(applicationPaths, profileTarget,
                 customs.stream().map(CustomRoute::target).toList());
-        List<Object> rules = new ArrayList<>();
-        rules.add(Map.of("type", "field", "ip", List.of("geoip:private"), "outboundTag", directTag,
-                "ruleTag", "perroute-private-direct"));
+        List<Object> rules = new ArrayList<>(localRules(directTag, blockTag));
         for (Object value : originalRules) {
             if (!(value instanceof Map<?, ?> rawRule)) continue;
             Map<String, Object> rule = new LinkedHashMap<>();

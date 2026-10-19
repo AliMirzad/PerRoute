@@ -183,6 +183,8 @@ private fun NewRoutesArea(shell: Shell, view: ConnectionView, state: ConnectView
                     PrimaryButton("Add servers") { shell.addServersRequested = true; shell.navigate(Tab.Servers) }
                 }
             }
+            TemporaryRoutesCard(shell)
+            ConnectionTools(shell)
             view.rows.forEachIndexed { index, row ->
                 val health = view.health(row)
                 val affected = shell.connected && view.monitoring && health?.affected() == true

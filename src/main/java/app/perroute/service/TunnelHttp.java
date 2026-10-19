@@ -46,6 +46,38 @@ public final class TunnelHttp {
         }
     }
 
+    /**
+     * Time until an HTTPS server answers a HEAD request through {@code route}: the TCP connection through the
+     * tunnel, the TLS handshake and the response head together, which is what a page load waits for first.
+     * Any HTTP status counts as an answer.
+     */
+    public static long timeHead(Route route, String host, int timeoutMillis) throws IOException {
+        long started = System.nanoTime();
+        Socket raw = new Socket();
+        try {
+            if (route.proxied()) {
+                raw.connect(new InetSocketAddress(route.proxyHost(), route.proxyPort()), 2_000);
+                raw.setSoTimeout(timeoutMillis);
+                socksConnect(raw, host, 443);
+            } else {
+                raw.connect(new InetSocketAddress(host, 443), timeoutMillis);
+                raw.setSoTimeout(timeoutMillis);
+            }
+            try (SSLSocket tls = (SSLSocket) ((SSLSocketFactory) SSLSocketFactory.getDefault()).createSocket(raw, host, 443, true)) {
+                tls.setSoTimeout(timeoutMillis);
+                tls.startHandshake();
+                String request = "HEAD / HTTP/1.1\r\nHost: " + host + "\r\nUser-Agent: PerRoute\r\nAccept: */*\r\nConnection: close\r\n\r\n";
+                tls.getOutputStream().write(request.getBytes(StandardCharsets.US_ASCII));
+                tls.getOutputStream().flush();
+                readHeaders(tls.getInputStream());
+                return Math.max(1L, (System.nanoTime() - started) / 1_000_000L);
+            }
+        } catch (IOException | RuntimeException error) {
+            try { raw.close(); } catch (IOException ignored) {}
+            throw error;
+        }
+    }
+
     public static String getText(Route route, String host, String path, int timeoutMillis) throws IOException {
         try (Socket socket = openGet(route, host, path, timeoutMillis)) {
             InputStream input = socket.getInputStream();

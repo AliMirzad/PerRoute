@@ -28,11 +28,15 @@ import androidx.compose.material.icons.rounded.Schedule
 import androidx.compose.material.icons.rounded.Speed
 import androidx.compose.material.icons.rounded.Star
 import androidx.compose.material.icons.rounded.StarBorder
+import androidx.compose.material.icons.rounded.Timer
 import androidx.compose.material.icons.rounded.WarningAmber
 import androidx.compose.material3.Icon
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.remember
+import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.alpha
@@ -64,10 +68,19 @@ internal class QuickAccessState(
     val onFastest: () -> Unit,
     val onServer: (String) -> Unit,
     val onOpen: () -> Unit,
-    val onExit: () -> Unit
+    val onExit: () -> Unit,
+    /** Apps on a temporary server, the selected apps, and starting or ending a temporary server. */
+    val temporaries: List<TemporaryRoute> = emptyList(),
+    val apps: List<String> = emptyList(),
+    val perApp: Boolean = false,
+    val onTemporary: (String, String, Int) -> Unit = { _, _, _ -> },
+    val onEndTemporary: (String) -> Unit = {},
+    val onShowTemporary: () -> Unit = {}
 ) {
     /** Servers in use lead the list: the main server, then custom and Auto servers, then favorites. */
-    val inUse: Map<String, RouteKindLabel> = plan.routes().filter { !it.main() }.associate { it.node().key() to if (it.auto()) RouteKindLabel.AUTO else RouteKindLabel.CUSTOM }
+    val inUse: Map<String, RouteKindLabel> = plan.routes().filter { !it.main() }.associate {
+        it.node().key() to when { it.temporary() -> RouteKindLabel.TEMPORARY; it.auto() -> RouteKindLabel.AUTO; else -> RouteKindLabel.CUSTOM }
+    }
     val ordered: List<ProxyNode> = nodes.sortedWith(compareBy<ProxyNode> {
         when {
             it.key() == main?.key() -> 0
@@ -95,6 +108,8 @@ internal class QuickAccessState(
 
     fun menu(): List<MenuEntry> = listOf(
         MenuEntry("Switch to the fastest main server", Icons.Rounded.Speed, "Tests reachable servers first", enabled = nodes.size > 1 && !working, onClick = onFastest),
+        MenuEntry("Use a server for a while…", Icons.Rounded.Timer, if (perApp) "One app, for a limited time" else "Needs Smart per-app mode",
+            enabled = perApp && apps.isNotEmpty() && nodes.size > 1 && !working, onClick = onShowTemporary),
         MenuEntry("Quit PerRoute", Icons.Rounded.PowerSettingsNew, "Disconnects and closes the app", danger = true, onClick = onExit)
     )
 
@@ -133,17 +148,38 @@ internal fun QuickAccessWindow(
     onFastest: () -> Unit,
     onServer: (String) -> Unit,
     onOpen: () -> Unit,
-    onExit: () -> Unit
+    onExit: () -> Unit,
+    temporaries: List<TemporaryRoute> = emptyList(),
+    apps: List<String> = emptyList(),
+    perApp: Boolean = false,
+    onTemporary: (String, String, Int) -> Unit = { _, _, _ -> },
+    onEndTemporary: (String) -> Unit = {}
 ) {
-    val state = QuickAccessState(connected, busy, working, main, nodes, favorites, traffic, plan, mainCheck, onToggle, onFastest, onServer, onOpen, onExit)
+    var showTemporary by remember { mutableStateOf(false) }
+    val state = QuickAccessState(connected, busy, working, main, nodes, favorites, traffic, plan, mainCheck, onToggle, onFastest, onServer, onOpen, onExit,
+        temporaries, apps, perApp, { app, key, minutes -> showTemporary = false; onTemporary(app, key, minutes) }, onEndTemporary, { showTemporary = true })
     when (Tok.style) {
-        UiStyle.NEW -> NewQuickAccess(state)
-        UiStyle.SIMPLE -> SimpleQuickAccess(state)
+        UiStyle.NEW -> NewQuickAccess(state, showTemporary) { showTemporary = false }
+        UiStyle.SIMPLE -> SimpleQuickAccess(state, showTemporary) { showTemporary = false }
+    }
+}
+
+/** The apps on a temporary server, one line each, with the time left and End. */
+@Composable
+private fun QuickTemporaries(state: QuickAccessState, now: Long) {
+    state.temporaries.forEach { route ->
+        Row(Modifier.fillMaxWidth().padding(top = 6.dp), verticalAlignment = Alignment.CenterVertically) {
+            Icon(Icons.Rounded.Timer, null, tint = Amber, modifier = Modifier.size(15.dp))
+            Spacer(Modifier.width(7.dp))
+            EllipsisText("${appName(route.application)} · ${state.nodes.firstOrNull { it.key() == route.nodeKey }?.let(::serverName) ?: "server"} · ${formatRemaining(route.remainingMillis(now))}",
+                White.copy(.9f), 11.5.sp, Modifier.weight(1f))
+            LinkAction("End", arrow = false, enabled = !state.working, fontSize = 11.5.sp) { state.onEndTemporary(route.application) }
+        }
     }
 }
 
 @Composable
-private fun NewQuickAccess(state: QuickAccessState) {
+private fun NewQuickAccess(state: QuickAccessState, temporary: Boolean, closeTemporary: () -> Unit) {
     val now by rememberNow()
     Column(Modifier.fillMaxSize().background(Ink)) {
         CharcoalColors {
@@ -205,6 +241,7 @@ private fun NewQuickAccess(state: QuickAccessState) {
                 Divider()
                 Spacer(Modifier.height(10.dp))
                 Text(state.summary, color = White.copy(.85f), fontSize = 12.5.sp)
+                QuickTemporaries(state, now)
                 if (state.missing > 0) {
                     Spacer(Modifier.height(6.dp))
                     Text("${plural(state.missing, "app")} ${if (state.missing == 1) "needs" else "need"} a replacement server. Open PerRoute to fix it.",
@@ -213,6 +250,11 @@ private fun NewQuickAccess(state: QuickAccessState) {
             }
         }
         Column(Modifier.weight(1f).fillMaxWidth().padding(horizontal = 22.dp, vertical = 14.dp)) {
+            if (temporary) {
+                QuickTemporaryPanel(state.apps, state.ordered, state.main?.key(), state.working, state.onTemporary, closeTemporary)
+                Spacer(Modifier.weight(1f))
+                return@Column
+            }
             Text("Main server choices", color = White, fontSize = 17.sp, fontWeight = FontWeight.Bold)
             Text("Other app routes stay unchanged.", color = Muted, fontSize = 12.5.sp)
             Spacer(Modifier.height(8.dp))
@@ -262,11 +304,11 @@ internal fun QuickServerRow(state: QuickAccessState, node: ProxyNode) {
 
 /** Simple's tray panel: one light (or dark) card with the status, the main server, live speed and the choices. */
 @Composable
-internal fun SimpleQuickAccess(state: QuickAccessState) {
+internal fun SimpleQuickAccess(state: QuickAccessState, temporary: Boolean = false, closeTemporary: () -> Unit = {}) {
     val now by rememberNow()
     Column(Modifier.fillMaxSize().background(Surface).padding(horizontal = 22.dp, vertical = 18.dp)) {
         Row(verticalAlignment = Alignment.CenterVertically) {
-            SimpleMark(30.dp)
+            BrandMark(30.dp)
             Spacer(Modifier.width(10.dp))
             Text("PerRoute", color = White, fontSize = 19.sp, fontWeight = FontWeight.Bold)
             Spacer(Modifier.width(10.dp))
@@ -315,9 +357,15 @@ internal fun SimpleQuickAccess(state: QuickAccessState) {
         Text(state.summary, color = White, fontSize = 13.sp)
         Text(if (state.missing > 0) "${plural(state.missing, "app")} ${if (state.missing == 1) "needs" else "need"} a replacement server. Open PerRoute to fix it." else "Other app routes stay unchanged.",
             color = if (state.missing > 0) Amber else Muted, fontSize = 12.sp)
+        QuickTemporaries(state, now)
         Spacer(Modifier.height(10.dp))
         Divider()
         Spacer(Modifier.height(10.dp))
+        if (temporary) {
+            QuickTemporaryPanel(state.apps, state.ordered, state.main?.key(), state.working, state.onTemporary, closeTemporary)
+            Spacer(Modifier.weight(1f))
+            return@Column
+        }
         Text("Main server choices", color = White, fontSize = 15.sp, fontWeight = FontWeight.SemiBold)
         if (state.nodes.isEmpty()) Text("No servers yet. Open PerRoute to add one.", color = Muted, fontSize = 12.sp, modifier = Modifier.weight(1f))
         else LazyColumn(Modifier.weight(1f)) { items(state.ordered, key = { it.key() }) { node -> QuickServerRow(state, node) } }

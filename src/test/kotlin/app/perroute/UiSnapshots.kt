@@ -146,6 +146,18 @@ private class DemoBackend(private val perAppDriver: Boolean = true) : Connection
     )
     override fun runningApplications() = listOf(
         ProcessDiscovery.RunningApplication("chrome.exe", CHROME), ProcessDiscovery.RunningApplication("Telegram.exe", TELEGRAM))
+    override fun localNetworks(resolveNames: Boolean) = listOf(app.perroute.localnet.LocalNetwork("home-net", "Wi-Fi", "192.168.1.20", "192.168.1.0/24", 24,
+        "192.168.1.1", "aa-bb-cc-dd-ee-ff", listOf("192.168.1.1"), listOf(
+            app.perroute.localnet.LocalNetwork.Device("192.168.1.1", "aa-bb-cc-dd-ee-ff", "router.home", true),
+            app.perroute.localnet.LocalNetwork.Device("192.168.1.40", "11-22-33-44-55-66", "nas.home", false),
+            app.perroute.localnet.LocalNetwork.Device("192.168.1.77", "22-33-44-55-66-77", "", false))))
+    /** A computer where PerRoute stopped while connected: its proxy, a start-up entry and the engine's list are left. */
+    override fun networkState(): Map<String, String> = mapOf(
+        "wininet.ProxyEnable" to "0x1", "wininet.ProxyServer" to app.perroute.service.WindowsSystemProxyManager.perRouteProxyServer(),
+        "wininet.ProxyOverride" to "<local>;localhost;127.*;[::1]", "wininet.backupPending" to "yes", "startup.recoveryEntry" to "yes",
+        "engine.installed" to "yes", "engine.service" to "running", "engine.config" to "perroute", "engine.configApps" to "4", "engine.backupPending" to "yes",
+        "engine.limited" to "stopped", "core.processes" to "0", "perroute.session" to "yes", "context.winhttpProxy" to "Direct",
+        "context.dnsServers" to "192.0.2.53", "context.gateways" to "192.168.1.1", "context.adapters" to "Wi-Fi 192.168.1.20/24")
 }
 
 private class Demo(
@@ -269,7 +281,9 @@ private class Scene(
     val clicks: List<Pair<Int, Int>> = emptyList(),
     val tabs: Int = 0,
     val prepare: (Shell) -> Unit = {},
-    val quick: Boolean = false
+    val quick: Boolean = false,
+    /** Runs on the controller before anything is drawn, for scenes without a main window. */
+    val setup: (PerRouteController) -> Unit = {}
 )
 
 @OptIn(ExperimentalComposeUiApi::class, androidx.compose.ui.InternalComposeUiApi::class)
@@ -295,6 +309,7 @@ private fun render(scene: Scene, output: Path) {
         emitDemoConnections(backend)
     }
     if (scene.runChecks) controller.checkRoutes()
+    scene.setup(controller)
     val dispatcher = QueueDispatcher()
     val content: @Composable () -> Unit = {
         if (scene.quick) app.perroute.compose.PerRouteTheme(scene.demo.style, scene.demo.dark) {
@@ -304,7 +319,8 @@ private fun render(scene: Scene, output: Path) {
                 main = nodes.firstOrNull { it.key() == controller.selectedNodeKey() }, nodes = nodes,
                 favorites = nodes.filter { controller.isFavorite(it.key()) }.mapTo(hashSetOf()) { it.key() },
                 traffic = controller.trafficSnapshot(), plan = controller.routePlan(), mainCheck = controller.routeChecks()[controller.selectedNodeKey()],
-                onToggle = {}, onFastest = {}, onServer = {}, onOpen = {}, onExit = {}
+                onToggle = {}, onFastest = {}, onServer = {}, onOpen = {}, onExit = {},
+                temporaries = controller.temporaryRoutes(), apps = controller.applications(), perApp = true
             )
         } else PerRouteWindow(controller, null, exitApp = {}, initialTab = scene.tab, prepare = scene.prepare)
     }
@@ -431,7 +447,31 @@ fun main(args: Array<String>) {
             Scene("$p-96-dark-apps", d(advanced = true, auto = true, dark = true), tab = Tab.Apps, settleMillis = 3_000, prepare = { it.draft.focused = TELEGRAM }),
             Scene("$p-97-dark-servers", d(advanced = true, dark = true), tab = Tab.Servers, settleMillis = 2_500),
             Scene("$p-98-dark-settings", d(dark = true), tab = Tab.Settings),
-            Scene("$p-99-keyboard-focus", advanced, tab = Tab.Rules, tabs = 6)
+            Scene("$p-99-keyboard-focus", advanced, tab = Tab.Rules, tabs = 6),
+            // 3.5
+            Scene("$p-A0-workspaces", advanced, tab = Tab.Workspaces, settleMillis = 2_000, prepare = { shell ->
+                val browser = Files.writeString(Path.of(System.getProperty("perroute.data")).resolve("chrome.exe"), "x").toString()
+                shell.controller.createWorkspace("Work", browser, "")
+                shell.controller.createWorkspace("Personal", browser, "nl-1")
+            }),
+            Scene("$p-A1-health-doctor", advancedOn, tab = Tab.Health, settleMillis = 2_000, prepare = { shell ->
+                app.perroute.compose.healthModel(shell).let { it.app = TELEGRAM; it.doctor = shell.controller.diagnose(TELEGRAM, "web.telegram.org"); it.selected = it.doctor?.cause?.id }
+            }),
+            Scene("$p-A2-health-safety", advancedOn, tab = Tab.Health, settleMillis = 2_000, prepare = { shell ->
+                app.perroute.compose.healthModel(shell).let { it.tab = app.perroute.compose.HealthTab.Safety; it.safety = shell.controller.safetyCheck(); it.selected = it.safety?.cause?.id }
+            }),
+            Scene("$p-A3-settings-local-network", d(), tab = Tab.Settings, settleMillis = 2_000, prepare = { it.settingsCategory = SettingsCategory.LocalNetwork }),
+            Scene("$p-A4-settings-recovery", d(), tab = Tab.Settings, settleMillis = 2_500, prepare = { shell ->
+                shell.controller.takeNetworkSnapshot(app.perroute.netstate.NetworkSnapshot.Reason.CONNECTED)
+                shell.settingsCategory = SettingsCategory.Recovery
+            }),
+            Scene("$p-A5-connection-temporary", advancedOn, settleMillis = 2_000, prepare = { shell -> shell.controller.setTemporaryRoute(SPOTIFY, "de-2", 30); shell.refresh() }),
+            Scene("$p-A6-temporary-dialog", advancedOn, tab = Tab.Apps, settleMillis = 2_500, prepare = { shell -> app.perroute.compose.showTemporaryDialog(shell, TELEGRAM, "nl-1") }),
+            Scene("$p-A7-recipe-share", advanced, tab = Tab.Profiles, prepare = { shell -> app.perroute.compose.showRecipeExport(shell) }),
+            Scene("$p-A8-profiles-recipes", advanced, tab = Tab.Profiles, prepare = { shell ->
+                shell.controller.saveProfile("Gaming night")
+            }),
+            Scene("$p-A9-quick-temporary", advancedOn, 390, 640, quick = true, setup = { controller -> controller.setTemporaryRoute(SPOTIFY, "de-2", 45) })
         )
     }
     val all = scenes(UiStyle.NEW) + scenes(UiStyle.SIMPLE)
