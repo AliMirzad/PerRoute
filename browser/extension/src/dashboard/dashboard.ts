@@ -1,12 +1,12 @@
-// The full PerRoute page: everything the desktop app offers, for this browser.
+// The full PerRoute page: everything the desktop app offers that applies to a browser.
 import type { NativeEvent } from '../../../protocol/types';
 import { dismissNotices, retryNative, subscribe } from '../shared/client';
-import { $, clear, h } from '../shared/dom';
+import { $, clear, h, region } from '../shared/dom';
 import { icon } from '../shared/icons';
 import { applyTheme } from '../shared/theme';
 import { deriveView } from '../shared/view';
 import { ctx, dispatchEvent, isReady, refreshList, refreshRules } from './context';
-import type { Section } from './section';
+import type { Mounted, Section } from './section';
 import { connectSection } from './sections/connect';
 import { doctorSection } from './sections/doctor';
 import { profilesSection } from './sections/profiles';
@@ -18,44 +18,35 @@ import { trafficSection } from './sections/traffic';
 const SECTIONS: Section[] = [connectSection, serversSection, rulesSection, profilesSection, trafficSection, doctorSection, settingsSection];
 
 let current: Section = SECTIONS[0];
-let mounted: { update(): void; unmount?(): void } | null = null;
+let mounted: Mounted | null = null;
 
 function sectionFromHash(): Section {
   const id = location.hash.replace(/^#/, '');
   return SECTIONS.find((s) => s.id === id) ?? SECTIONS[0];
 }
 
-function renderRail() {
-  const rail = $('rail');
-  clear(
-    rail,
-    h('div', { class: 'brand' }, h('img', { attrs: { src: 'icons/icon-48.png', alt: '' } }), 'PerRoute'),
-    ...SECTIONS.map((s) =>
-      h(
-        'button',
-        { attrs: s === current ? { 'aria-current': 'page' } : {}, on: { click: () => (location.hash = s.id) } },
-        icon(s.icon, 18),
-        s.title,
-      ),
+const rail = region($('rail'), () => [
+  h('div', { class: 'brand' }, h('img', { attrs: { src: 'icons/icon-48.png', alt: '' } }), 'PerRoute'),
+  ...SECTIONS.map((s) =>
+    h(
+      'a',
+      { class: 'rail-item', attrs: { href: `#${s.id}`, ...(s === current ? { 'aria-current': 'page' } : {}) } },
+      icon(s.icon, 18),
+      h('span', { text: s.title }),
     ),
-    h('div', { class: 'foot', text: `Extension ${ctx.app?.extensionVersion ?? ''}` }),
-  );
-}
+  ),
+  h('div', { class: 'foot', text: `Extension ${ctx.app?.extensionVersion ?? ''}` }),
+], () => [current.id, ctx.app?.extensionVersion]);
 
-function renderBar() {
-  $('section-title').textContent = current.title;
-  $('section-sub').textContent = current.subtitle;
-  const bar = $('bar-status');
-  if (!ctx.app) return clear(bar);
+const bar = region($('bar-status'), () => {
+  if (!ctx.app) return [];
   const v = deriveView(ctx.app);
-  const blocking = ctx.app.blocking;
-  clear(bar, h('span', { class: `dot ${blocking ? 'error' : v.tone}` }), h('span', { class: 'small', text: blocking ? 'Kill switch active' : v.label }));
-}
+  return [h('span', { class: `dot ${v.tone}` }), h('span', { class: 'small', text: v.label })];
+}, () => (ctx.app ? deriveView(ctx.app) : null));
 
-function renderNotices() {
-  const el = $('notices');
+const notices = region($('notices'), () => {
   const app = ctx.app;
-  if (!app) return clear(el);
+  if (!app) return [];
   const items: HTMLElement[] = [];
   if (!isReady()) {
     const v = deriveView(app);
@@ -79,14 +70,16 @@ function renderNotices() {
       ),
     );
   }
-  clear(el, ...items);
-}
+  return items;
+}, () => [ctx.app?.runtime, ctx.app?.proxyError, ctx.app?.notices[0]]);
 
 function mount() {
   mounted?.unmount?.();
   current = sectionFromHash();
-  renderRail();
-  renderBar();
+  document.title = `${current.title} · PerRoute`;
+  rail.render();
+  $('section-title').textContent = current.title;
+  $('section-sub').textContent = current.subtitle;
   const el = $('section');
   clear(el);
   mounted = current.mount(el);
@@ -94,8 +87,8 @@ function mount() {
 }
 
 ctx.rerender = () => {
-  renderBar();
-  renderNotices();
+  bar.render();
+  notices.render();
   mounted?.update();
 };
 
@@ -114,7 +107,7 @@ async function main() {
         void refreshRules();
       }
       wasReady = ready;
-      renderRail();
+      rail.render();
       ctx.rerender();
     },
     (e: NativeEvent) => {

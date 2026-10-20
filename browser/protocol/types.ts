@@ -134,12 +134,18 @@ export interface QualityScore {
   sampleCount: number;
   headline: string;
   explanation: string;
+  /** Measurements and their 0-100 part scores (higher is better). */
   components: {
     latencyMs: number | null;
+    latencyScore?: number | null;
     jitterMs: number | null;
+    jitterScore?: number | null;
+    /** 0..1 */
     successRate: number | null;
+    successScore?: number | null;
     stabilityScore: number | null;
     setupMs: number | null;
+    setupScore?: number | null;
     recoveryPenalty: number;
     recentFailures: number;
   };
@@ -221,6 +227,11 @@ export interface Scenario {
   autoFailover: boolean;
   fastestOnConnect: boolean;
   rules: { name: string; match: RuleMatch; text: string; action: RuleAction }[];
+}
+
+export interface ProfileList {
+  profiles: ProfileSummary[];
+  activeProfileId: string | null;
 }
 
 export interface ProfileSummary {

@@ -12,10 +12,15 @@ Extension (MV3) ──native messaging──▶ perroute-browser-host ──stdi
      └── chrome.proxy ──▶ http://127.0.0.1:<random port> (per-connection password) ──▶ Xray routing ──▶ tunnel / direct / block
 ```
 
-* **Extension** (`extension/`): the only user interface. The popup connects, switches servers and
-  decides where the current site goes (Tunnel / Direct / Block, optionally for a while). The
-  dashboard has everything else: servers and subscriptions, rules, presets and recipes, profiles,
-  traffic, the connection doctor, the request inspector and settings with backups.
+* **Extension** (`extension/`): the only user interface. The popup connects, switches servers,
+  reads a server QR code on the current page and decides where the current site goes (Tunnel /
+  Direct / Block, optionally for a while). The page's right-click menu and keyboard shortcuts
+  (connect, switch the current site, fastest server) do the same without opening anything. The
+  dashboard has everything else: servers and subscriptions (usage, expiry and change warnings,
+  tags, score breakdowns, camera QR), trying a server for a while, comparing a server with the
+  live route, rules with a site tester and a warning for rules that never apply, presets with a
+  preview, recipes with Undo, profiles, traffic, the connection doctor and Safety Center, the
+  request inspector and settings with backups.
 * **Runtime** (`helper/`, Rust): started by the browser, no window. It validates imports, stores
   servers encrypted (key in Windows Credential Manager), generates the Xray configuration, runs and
   supervises Xray, applies rule changes to the live tunnel, tests servers in separate Xray instances,

@@ -1,5 +1,5 @@
 export interface Mounted {
-  /** Called when the shared state changed (status, servers, rules). */
+  /** Called when the shared state changed (status, servers, rules). Rebuild only what changed. */
   update(): void;
   unmount?(): void;
 }

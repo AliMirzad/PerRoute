@@ -25,6 +25,15 @@ export function clearInspector(tabId: number): Promise<unknown> {
   return chrome.runtime.sendMessage({ type: 'clearInspector', tabId });
 }
 
+/** Connects to a server for a while, then back to the one used before. */
+export function tryServer(serverId: string, minutes: number): Promise<NativeResponse> {
+  return chrome.runtime.sendMessage({ type: 'tryServer', serverId, minutes }) as Promise<NativeResponse>;
+}
+
+export function endTrial(): Promise<unknown> {
+  return chrome.runtime.sendMessage({ type: 'endTrial' });
+}
+
 export function dismissNotices(): Promise<unknown> {
   return chrome.runtime.sendMessage({ type: 'dismissNotices' });
 }

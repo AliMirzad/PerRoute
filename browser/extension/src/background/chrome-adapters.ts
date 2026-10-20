@@ -1,5 +1,5 @@
 // Real implementations of the Controller dependencies on top of chrome.* APIs.
-import { CLOSED_PORT, type BlockPlan, type KeyValue, type ProxyControl, type WebRtcControl } from './controller';
+import { type BlockPlan, type KeyValue, type ProxyControl, type WebRtcControl } from './controller';
 
 /** Destinations that never go through the tunnel (mirrors helper/src/core/xray_config.rs PRIVATE_CIDRS). */
 export const BYPASS_LIST = [
@@ -30,11 +30,10 @@ export function proxyConfig(port: number): chrome.proxy.ProxyConfig {
 
 /** Kill switch: tunnel traffic goes to a closed loopback port, so it fails instead of going direct. */
 export function blockConfig(plan: BlockPlan): chrome.proxy.ProxyConfig {
-  if (plan.mode === 'pac') return { mode: 'pac_script', pacScript: { data: plan.script, mandatory: true } };
-  return { mode: 'fixed_servers', rules: { singleProxy: { scheme: 'http', host: '127.0.0.1', port: CLOSED_PORT }, bypassList: BYPASS_LIST } };
+  return { mode: 'pac_script', pacScript: { data: plan.script, mandatory: true } };
 }
 
-type LevelOfControl ='not_controllable' | 'controlled_by_other_extensions' | 'controllable_by_this_extension' | 'controlled_by_this_extension';
+type LevelOfControl = 'not_controllable' | 'controlled_by_other_extensions' | 'controllable_by_this_extension' | 'controlled_by_this_extension';
 
 export function controlProblem(level: LevelOfControl | string): string | null {
   switch (level) {

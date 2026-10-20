@@ -2,7 +2,8 @@ import { describe, expect, it } from 'vitest';
 import type { SiteRule } from '../../protocol/types';
 import { Inspector } from '../src/background/inspector';
 import { decodeRecipe, encodeRecipe } from '../src/shared/recipe';
-import { isLocal, matchRule, outcomeFor } from '../src/shared/rules-eval';
+import { isLocal, matchRule, outcomeFor, shadowedRules, siteRuleFor, siteRuleValue } from '../src/shared/rules-eval';
+import { connectedFor, subscriptionHealth } from '../src/shared/view';
 import { hostOfUrl, siteOf } from '../src/shared/site';
 
 const rule = (values: string[], action: SiteRule['action'], extra: Partial<SiteRule> = {}): SiteRule => ({
@@ -117,5 +118,60 @@ describe('request inspector', () => {
     expect(i.list(1)).toEqual([]);
     i.completed(-1, 'x.com', 'other', 200, 5);
     expect(i.list(-1)).toEqual([]);
+  });
+});
+
+describe('ports, regular expressions and rules that never apply', () => {
+  it('port rules need the port, regexp rules are evaluated', () => {
+    const rules = [rule(['8000-8100'], 'direct', { match: 'port' }), rule(['regexp:^cdn[0-9]+\.'], 'block')];
+    expect(matchRule(rules, 'example.com', 0)).toBeNull();
+    expect(matchRule(rules, 'example.com', 0, 8080)?.action).toBe('direct');
+    expect(matchRule(rules, 'example.com', 0, 443)).toBeNull();
+    expect(matchRule(rules, 'cdn7.example.com', 0, 443)?.action).toBe('block');
+    expect(outcomeFor('example.com', rules, 'all', true, 0, 8001).outcome).toBe('direct');
+  });
+
+  it('finds rules that an earlier one always decides first', () => {
+    const a = rule(['example.com'], 'proxy');
+    const b = rule(['www.example.com', 'full:api.example.com'], 'direct');
+    const c = rule(['example.org'], 'direct');
+    const d = rule(['keyword:track'], 'block');
+    const e = rule(['tracker.example.net'], 'direct');
+    const f = rule(['10.0.0.0/8'], 'direct', { match: 'ip' });
+    const g = rule(['10.1.0.0/16', '10.2.3.4'], 'proxy', { match: 'ip' });
+    const off = rule(['example.org'], 'block', { enabled: false });
+    const s = shadowedRules([a, b, c, off, d, e, f, g], 0);
+    expect(s.map((x) => [x.rule, x.by])).toEqual([
+      [b, a],
+      [e, d],
+      [g, f],
+    ]);
+  });
+
+  it('one-click rules are named like the helper names them', () => {
+    expect(siteRuleValue('WWW.Example.com.')).toBe('example.com');
+    expect(siteRuleValue('www.com')).toBe('www.com');
+    const own = rule(['example.com'], 'direct');
+    expect(siteRuleFor([rule(['example.com', 'x.org'], 'block'), own], 'www.example.com')).toBe(own);
+    expect(siteRuleFor([rule(['example.com'], 'block', { scenario: 'work' })], 'example.com')).toBeNull();
+  });
+});
+
+describe('subscription intelligence', () => {
+  const sub = (x: object) => ({ id: 's', name: 'S', host: 'h', lastUpdated: 1000, lastError: null, serverCount: 10, usage: null, history: [], ...x });
+  it('flags expired, used up, failing, expiring, nearly used up and suddenly changed', () => {
+    const now = 10_000;
+    expect(subscriptionHealth(sub({ usage: { upload: 0, download: 0, total: null, expire: 9_000 } }), now).label).toBe('Expired');
+    expect(subscriptionHealth(sub({ usage: { upload: 5, download: 5, total: 10, expire: null } }), now).label).toBe('Used up');
+    expect(subscriptionHealth(sub({ lastError: 'HTTP 403' }), now)).toMatchObject({ tone: 'fail', label: 'Failing' });
+    expect(subscriptionHealth(sub({ usage: { upload: 0, download: 0, total: null, expire: now + 86400 } }), now).label).toBe('Expires soon');
+    expect(subscriptionHealth(sub({ usage: { upload: 0, download: 95, total: 100, expire: null } }), now).label).toBe('Almost used up');
+    expect(subscriptionHealth(sub({ serverCount: 4, history: [{ at: 1, added: 0, updated: 0, removed: 8, rejected: 0, error: null }] }), now).label).toBe('Changed a lot');
+    expect(subscriptionHealth(sub({}), now).tone).toBe('ok');
+  });
+  it('connection time', () => {
+    expect(connectedFor(100, 100_000 + 30_000)).toBe('under a minute');
+    expect(connectedFor(0)).toBeNull();
+    expect(connectedFor(1000, (1000 + 3 * 3600 + 5 * 60) * 1000)).toBe('3 h 05 min');
   });
 });

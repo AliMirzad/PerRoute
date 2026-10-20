@@ -3,13 +3,20 @@
 import type { NativeEvent, RulesState, ServerList, ServerSummary, TestResult } from '../../../protocol/types';
 import type { AppState } from '../shared/app-state';
 import { request } from '../shared/client';
+import { sortedServers as sorted } from '../shared/view';
+
+export type TestKind = 'tcp' | 'real';
 
 export interface Ctx {
   app: AppState | null;
   list: ServerList;
   rules: RulesState | null;
-  /** Latest test result per server (from progress events). */
-  tests: Map<string, TestResult & { kind: 'tcp' | 'real' | 'speed'; at: number; bps?: number }>;
+  /** Latest test result per server (from test answers and progress events). */
+  tests: Map<string, TestResult & { kind: TestKind; at: number }>;
+  /** Kind of the test currently running per server. */
+  running: Map<string, TestKind>;
+  /** Measured download speed per server (bytes per second), or an error. */
+  speeds: Map<string, { bps: number | null; error?: string; at: number } | 'measuring'>;
   rerender(): void;
 }
 
@@ -18,6 +25,8 @@ export const ctx: Ctx = {
   list: { servers: [], subscriptions: [], selectedServerId: null },
   rules: null,
   tests: new Map(),
+  running: new Map(),
+  speeds: new Map(),
   rerender: () => undefined,
 };
 
@@ -33,10 +42,7 @@ export function serverName(id: string | null | undefined): string {
   return ctx.list.servers.find((s) => s.id === id)?.name ?? 'Removed server';
 }
 
-export function sortedServers(): ServerSummary[] {
-  const fav = new Set(ctx.list.favorites ?? []);
-  return [...ctx.list.servers].sort((a, b) => Number(fav.has(b.id)) - Number(fav.has(a.id)));
-}
+export const sortedServers = (): ServerSummary[] => sorted(ctx.list);
 
 export async function refreshList() {
   if (!isReady()) return;
@@ -61,8 +67,8 @@ export function onEvent(fn: (e: NativeEvent) => void): () => void {
 export function dispatchEvent(e: NativeEvent) {
   if (e.event === 'progress') {
     const v = e.progress.value;
-    const prev = ctx.tests.get(v.serverId);
-    ctx.tests.set(v.serverId, { ...v, kind: prev?.kind === 'tcp' || prev?.kind === 'real' ? prev.kind : 'real', at: Date.now() });
+    ctx.tests.set(v.serverId, { ...v, kind: ctx.running.get(v.serverId) ?? 'real', at: Date.now() });
+    ctx.running.delete(v.serverId);
   }
   for (const fn of eventListeners) fn(e);
 }

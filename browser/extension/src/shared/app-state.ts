@@ -25,7 +25,16 @@ export interface AppState {
   rules: RulesState | null;
   /** Recent notices (failover, expired rules), newest first. */
   notices: (Notice & { at: number })[];
+  /** A server tried for a while ("Try for 30 min"): the browser goes back to `previousId` at `until`. */
+  trial: Trial | null;
   extensionVersion: string;
+}
+
+export interface Trial {
+  serverId: string;
+  previousId: string | null;
+  /** Unix milliseconds. */
+  until: number;
 }
 
 export const EXTENSION_PROTOCOL_VERSION = 4;
@@ -49,7 +58,9 @@ export type UiMessage =
   | { type: 'getState' }
   | { type: 'inspector'; tabId: number }
   | { type: 'clearInspector'; tabId: number }
-  | { type: 'dismissNotices' };
+  | { type: 'dismissNotices' }
+  | { type: 'tryServer'; serverId: string; minutes: number }
+  | { type: 'endTrial' };
 
 /** Messages pushed from the service worker to open extension pages. */
 export type SwPush = { type: 'state'; state: AppState } | { type: 'event'; event: NativeEvent };

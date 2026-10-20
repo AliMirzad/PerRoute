@@ -1,5 +1,8 @@
+html,
 body {
   width: 360px;
+}
+body {
   min-height: 200px;
 }
 
@@ -19,6 +22,9 @@ body {
   font-size: 15px;
   letter-spacing: -0.01em;
 }
+.top .row {
+  gap: 6px;
+}
 
 main {
   display: flex;
@@ -26,26 +32,55 @@ main {
   gap: 10px;
   padding: 0 12px 12px;
 }
+main > div:empty {
+  display: none;
+}
 
 .conn {
   display: flex;
   flex-direction: column;
   gap: 10px;
 }
+.conn-head {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 8px;
+}
 .conn .state {
   font-size: 22px;
   font-weight: 700;
   letter-spacing: -0.02em;
+  line-height: 1.15;
 }
 .conn .detail {
   color: var(--muted);
   font-size: 12px;
+  margin-top: -6px;
+  overflow-wrap: anywhere;
 }
 .conn[data-tone='ok'] .state {
   color: var(--ok);
 }
 .conn[data-tone='error'] .state {
   color: var(--danger);
+}
+.conn[data-tone='busy'] .state {
+  color: var(--warn);
+}
+
+.trial {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 6px 10px;
+  border-radius: var(--radius-s);
+  background: var(--selection);
+  font-size: 12px;
+}
+.trial svg {
+  flex: none;
+  color: var(--primary-strong);
 }
 
 .server-pick {
@@ -58,15 +93,31 @@ main {
 
 .live {
   display: flex;
-  gap: 12px;
+  align-items: center;
+  gap: 14px;
   font-size: 12px;
   color: var(--muted);
+}
+.live:empty {
+  display: none;
+}
+.live span {
+  display: inline-flex;
+  align-items: center;
+  gap: 3px;
 }
 .live b {
   color: var(--fg);
   font-weight: 600;
+  font-variant-numeric: tabular-nums;
+}
+.live .right {
+  justify-content: flex-end;
 }
 
+.site .row select {
+  min-width: 0;
+}
 .site-host {
   font-weight: 650;
   font-size: 14px;
@@ -80,11 +131,15 @@ main {
   border: 1px solid var(--line);
   background: transparent;
   border-radius: 999px;
-  height: 22px;
-  padding: 0 9px;
+  height: 24px;
+  max-width: 100%;
+  padding: 0 10px;
   font-size: 11.5px;
   color: var(--muted);
   cursor: pointer;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 .site-scope button[aria-pressed='true'] {
   border-color: var(--primary-strong);
@@ -94,7 +149,7 @@ main {
 
 .footer {
   display: grid;
-  grid-template-columns: repeat(4, 1fr);
+  grid-template-columns: repeat(5, 1fr);
   gap: 6px;
 }
 .footer button {
@@ -106,10 +161,11 @@ main {
   border-radius: 10px;
   border: 1px solid var(--line);
   background: var(--surface);
-  font-size: 11.5px;
+  font-size: 11px;
   font-weight: 560;
   cursor: pointer;
   color: var(--fg);
+  white-space: nowrap;
 }
 .footer button:hover {
   border-color: color-mix(in srgb, var(--fg) 25%, var(--line));

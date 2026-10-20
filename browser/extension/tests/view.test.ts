@@ -15,6 +15,7 @@ const app = (status: Partial<NativeStatus> | null, extra: Partial<AppState> = {}
   settings: null,
   rules: null,
   notices: [],
+  trial: null,
   extensionVersion: '1.0.0',
   ...extra,
 });
