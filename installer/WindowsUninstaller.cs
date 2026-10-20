@@ -3,6 +3,8 @@ using System.Collections.Generic;
 using System.Diagnostics;
 using System.IO;
 using System.Reflection;
+using System.Runtime.InteropServices;
+using System.Security.Principal;
 using System.Windows.Forms;
 using Microsoft.Win32;
 
@@ -19,6 +21,9 @@ namespace PerRouteSetup
     {
         private const string UninstallKey = @"Software\Microsoft\Windows\CurrentVersion\Uninstall\PerRoute";
         private const string HostName = "com.perroute.browser";
+        private const string ExplorerMenuVerb = "PerRoute.Route";
+        private const string BridgeFirewallRule = "PerRoute LAN Bridge";
+        private static readonly string[] ExplorerMenuClasses = { "exefile", "lnkfile" };
         private static readonly string[] NativeMessagingKeys = {
             @"Software\Google\Chrome\NativeMessagingHosts",
             @"Software\Chromium\NativeMessagingHosts",
@@ -78,6 +83,8 @@ namespace PerRouteSetup
                 TryDelete(Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.CommonStartMenu), "Programs", "PerRoute.lnk"));
                 TryDelete(Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.CommonStartMenu), "Programs", "PerRoute Recovery.lnk"));
                 TryDelete(Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.CommonDesktopDirectory), "PerRoute.lnk"));
+                RemoveExplorerMenu();
+                RemoveBridgeFirewallRule();
                 folders.Add(appDirectory);
                 folders.Add(appDirectory + ".rollback");
             }
@@ -133,6 +140,61 @@ namespace PerRouteSetup
                     }
                     catch { }
                 }
+        }
+
+        private static void RemoveExplorerMenu()
+        {
+            foreach (string fileClass in ExplorerMenuClasses)
+                try { Registry.CurrentUser.DeleteSubKeyTree(@"Software\Classes\" + fileClass + @"\shell\" + ExplorerMenuVerb, false); } catch { }
+            string signedIn = SessionUserSid();
+            string current = null;
+            try { current = WindowsIdentity.GetCurrent().User.Value; } catch { }
+            if (signedIn == null || String.Equals(signedIn, current, StringComparison.OrdinalIgnoreCase)) return;
+            foreach (string fileClass in ExplorerMenuClasses)
+            {
+                try { Registry.Users.DeleteSubKeyTree(signedIn + @"_Classes\" + fileClass + @"\shell\" + ExplorerMenuVerb, false); } catch { }
+                try { Registry.Users.DeleteSubKeyTree(signedIn + @"\Software\Classes\" + fileClass + @"\shell\" + ExplorerMenuVerb, false); } catch { }
+            }
+        }
+
+        private static string SessionUserSid()
+        {
+            try
+            {
+                int session = Process.GetCurrentProcess().SessionId;
+                string user = SessionText(session, 5);
+                if (String.IsNullOrEmpty(user)) return null;
+                string domain = SessionText(session, 7);
+                NTAccount account = String.IsNullOrEmpty(domain) ? new NTAccount(user) : new NTAccount(domain, user);
+                return ((SecurityIdentifier)account.Translate(typeof(SecurityIdentifier))).Value;
+            }
+            catch { return null; }
+        }
+
+        private static string SessionText(int session, int infoClass)
+        {
+            IntPtr buffer;
+            int bytes;
+            if (!WTSQuerySessionInformation(IntPtr.Zero, session, infoClass, out buffer, out bytes)) return null;
+            try { return Marshal.PtrToStringUni(buffer); }
+            finally { WTSFreeMemory(buffer); }
+        }
+
+        [DllImport("wtsapi32.dll", CharSet = CharSet.Unicode, SetLastError = true)]
+        private static extern bool WTSQuerySessionInformation(IntPtr server, int session, int infoClass, out IntPtr buffer, out int bytes);
+
+        [DllImport("wtsapi32.dll")]
+        private static extern void WTSFreeMemory(IntPtr memory);
+
+        private static void RemoveBridgeFirewallRule()
+        {
+            try
+            {
+                string netsh = Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.System), "netsh.exe");
+                using (Process process = Process.Start(new ProcessStartInfo(netsh, "advfirewall firewall delete rule name=\"" + BridgeFirewallRule + "\"") { UseShellExecute = false, CreateNoWindow = true }))
+                    if (!process.WaitForExit(30000)) process.Kill();
+            }
+            catch { }
         }
 
         private static void TryDelete(string path)
