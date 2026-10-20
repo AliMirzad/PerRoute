@@ -1,5 +1,10 @@
 package app.perroute.compose
 
+import app.perroute.compose.controller.*
+import app.perroute.compose.ui.components.*
+import app.perroute.compose.inspector.*
+import app.perroute.compose.diagnostics.*
+import app.perroute.backend.api.IsolatedTunnel
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.layout.Arrangement
@@ -376,11 +381,11 @@ private fun NewComponents(shell: Shell) {
             Divider()
             ComponentRow("Xray core", state.coreReady, "Powers the proxy connections.", if (state.coreReady) null else "Install", model.canInstall, model) { model.installCore() }
             Divider()
-            ComponentRow("Per-app driver (ProxiFyre)", state.perAppReady, "Required for Smart per-app mode. The Full Installer sets it up with one Administrator approval.", null, false, model) {}
+            ComponentRow(model.routingName, state.perAppReady, model.routingDetail, null, false, model) {}
         }
         if (model.progress.isNotBlank()) { Spacer(Modifier.height(8.dp)); Text(model.progress, color = Amber, fontSize = 12.5.sp) }
     }
-    Note("Smart per-app needs both the core and the per-app driver. Other connection modes use only the core.")
+    Note(model.routingNote)
 }
 
 @Composable

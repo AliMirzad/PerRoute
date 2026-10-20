@@ -1,15 +1,15 @@
 package app.perroute;
 
-import app.perroute.compose.ActionResult;
+import app.perroute.compose.controller.ActionResult;
 import app.perroute.compose.CheckStatus;
 import app.perroute.compose.CoreLogHints;
 import app.perroute.compose.HealthFinding;
 import app.perroute.compose.HealthReport;
-import app.perroute.compose.PerRouteController;
-import app.perroute.compose.RecipeDraft;
+import app.perroute.compose.controller.PerRouteController;
+import app.perroute.compose.controller.RecipeDraft;
 import app.perroute.compose.Repair;
 import app.perroute.compose.RuleAnalysis;
-import app.perroute.compose.TemporaryRoute;
+import app.perroute.compose.controller.TemporaryRoute;
 import app.perroute.gaming.GamingProbe;
 import app.perroute.gaming.GamingScore;
 import app.perroute.localnet.LocalNetwork;

@@ -1,5 +1,7 @@
 package app.perroute.service;
 
+import app.perroute.model.ApplicationIdentity;
+
 import app.perroute.model.Protocol;
 import app.perroute.model.ProxyNode;
 import app.perroute.model.RoutingMode;
@@ -843,7 +845,7 @@ public final class XrayConfigGenerator {
             if (rule.applicationPath().isBlank()) inboundTags.addAll(proxyInboundTags(applications));
             else {
                 for (int i = 0; i < applications.size(); i++) {
-                    if (applications.get(i).equalsIgnoreCase(rule.applicationPath())) inboundTags.add(perAppTag(i));
+                    if (ApplicationIdentity.same(applications.get(i), rule.applicationPath())) inboundTags.add(perAppTag(i));
                 }
             }
             if (inboundTags.isEmpty()) continue;

@@ -1,5 +1,10 @@
 package app.perroute.compose
 
+import app.perroute.compose.controller.*
+import app.perroute.compose.ui.components.*
+import app.perroute.compose.inspector.*
+import app.perroute.compose.diagnostics.*
+import app.perroute.backend.api.IsolatedTunnel
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.layout.Arrangement
@@ -289,14 +294,14 @@ private fun SimpleComponents(shell: Shell) {
         if (state.coreReady) Badge("Installed", Cyan, icon = Icons.Rounded.CheckCircle)
         else PrimaryButton("Install", icon = Icons.Rounded.Download, enabled = model.canInstall) { model.installCore() }
     }
-    SimpleSettingRow("Per-app driver (ProxiFyre)", "Routes applications in Smart per-app mode. The Full Installer sets it up with one Administrator approval.") {
+    SimpleSettingRow(model.routingName, model.routingDetail) {
         Badge(if (state.perAppReady) "Installed" else "Not installed", if (state.perAppReady) Cyan else Amber, icon = if (state.perAppReady) Icons.Rounded.CheckCircle else Icons.Rounded.WarningAmber)
     }
     if (model.progress.isNotBlank()) Text(model.progress, color = Amber, fontSize = 13.sp, modifier = Modifier.padding(top = 10.dp))
     Spacer(Modifier.height(16.dp))
     SecondaryButton(if (model.loading) "Checking…" else "Check again", icon = Icons.Rounded.Refresh, enabled = !model.loading) { model.reload() }
     Spacer(Modifier.height(14.dp))
-    Note("Smart per-app needs both the core and the per-app driver. Other connection modes use only the core.")
+    Note(model.routingNote)
 }
 
 @Composable

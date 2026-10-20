@@ -1,5 +1,10 @@
 package app.perroute.compose
 
+import app.perroute.compose.controller.*
+import app.perroute.compose.ui.components.*
+import app.perroute.compose.inspector.*
+import app.perroute.compose.diagnostics.*
+import app.perroute.backend.api.IsolatedTunnel
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.rounded.Article
 import androidx.compose.material.icons.rounded.AltRoute
@@ -58,7 +63,7 @@ internal fun modeTitle(mode: ConnectionMode): String = modeLabel(mode)
 internal fun modeChoiceDetail(mode: ConnectionMode): String = when (mode) {
     ConnectionMode.NATIVE_PER_APP -> "Only selected apps use the proxy."
     ConnectionMode.BROWSER_PROXY -> "Configure the proxy endpoints inside your apps."
-    ConnectionMode.SYSTEM_PROXY -> "Apps using Windows proxy settings."
+    ConnectionMode.SYSTEM_PROXY -> "Apps using the system proxy settings."
     ConnectionMode.TUN_COMPATIBILITY -> "Broad compatibility; requires Administrator."
 }
 
@@ -68,7 +73,7 @@ internal class ConnectionSettingsModel(private val shell: Shell) {
         environment = withContext(Dispatchers.IO) { runCatching { shell.controller.environment() }.getOrDefault(EnvironmentState(false, false, false)) }
     }
     fun driverMissing(mode: ConnectionMode) = mode == ConnectionMode.NATIVE_PER_APP && environment?.perAppReady == false
-    fun canChoose(mode: ConnectionMode) = !shell.locked && !driverMissing(mode) && !shell.busy
+    fun canChoose(mode: ConnectionMode) = shell.controller.capabilities().supports(mode) && !shell.locked && !driverMissing(mode) && !shell.busy
     fun choose(mode: ConnectionMode) { if (!canChoose(mode)) return; shell.controller.setMode(mode); shell.refresh() }
     fun setAdvanced(enabled: Boolean) {
         val result = shell.controller.setAdvancedRouting(enabled)
@@ -153,7 +158,10 @@ internal class AutomationSettingsModel(private val shell: Shell) {
         Option("Fastest main server on connect", "Measure reachable servers and use the lowest latency as the main server when connecting.", fastestOnConnect) { fastestOnConnect = it; controller.setFastestOnConnect(it) },
         Option("Automatic speed tests", "After pinging, measure the download speed of the 10 best servers (up to 10 MB each).", autoSpeedTest) { autoSpeedTest = it; controller.setAutoSpeedTest(it) },
         Option("Save resources on battery and metered networks", AdaptiveResourcesDetail + resourceNow(), adaptive) { adaptive = it; shell.notify(controller.setAdaptiveResources(it)) }
-    )
+    ).filter { option ->
+        (option.title != "Per-app killswitch" || controller.perAppKillSwitchSupported()) &&
+            (option.title != "Save resources on battery and metered networks" || controller.capabilities().networkRecovery())
+    }
 
     private fun resourceNow(): String {
         val now = controller.resourceConditions()
@@ -253,7 +261,11 @@ internal class ComponentSettingsModel(private val shell: Shell) {
         }
     }
 
-    val canInstall: Boolean get() = !shell.busy && !shell.locked
+    private val mac: Boolean get() = System.getProperty("os.name") == "Mac OS X"
+    val routingName: String get() = if (mac) "Per-app routing helper" else "Per-app driver (ProxiFyre)"
+    val routingDetail: String get() = if (mac) "Routes explicitly selected executable paths. Setup may require administrator approval." else "Required for Smart per-app mode. The Full Installer sets it up with one Administrator approval."
+    val routingNote: String get() = if (mac) "Per-app routing currently supports IPv4 TCP. Safari shared WebKit, UDP and IPv6 need separate support." else "Smart per-app needs both the core and the per-app driver. Other connection modes use only the core."
+    val canInstall: Boolean get() = shell.controller.capabilities().coreInstallation() && !shell.busy && !shell.locked
 }
 
 internal fun confirmReset(shell: Shell) {
