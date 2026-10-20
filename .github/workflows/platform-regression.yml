@@ -21,4 +21,4 @@ jobs:
           java-version: '21'
       - name: Compile and run Windows regression suites
         shell: pwsh
-        run: .\gradlew.bat --no-daemon runAllTests runPlatformBoundaryTests
+        run: .\gradlew.bat --no-daemon -PofficialRepositories=true runAllTests runPlatformBoundaryTests

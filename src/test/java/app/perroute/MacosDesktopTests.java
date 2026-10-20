@@ -134,10 +134,12 @@ public final class MacosDesktopTests {
     }
     static String request() throws Exception {
         try (Socket socket = new Socket(new java.net.Proxy(java.net.Proxy.Type.SOCKS, new InetSocketAddress("127.0.0.1", AppProxyLauncher.SOCKS_PORT)))) {
-            // Both controlled VLESS servers redirect this destination to their local HTTP origins.
+            // The controlled VLESS servers redirect this public destination to local origins.
+            // Reserved test ranges match upstream geoip:private and would bypass the proxy.
+            // A dotted Host avoids the upstream rule that sends single-label LAN names directly.
             socket.connect(new InetSocketAddress("1.1.1.1", 80), 3_000);
             socket.setSoTimeout(5_000);
-            socket.getOutputStream().write("GET / HTTP/1.1\r\nHost: local-test\r\nConnection: close\r\n\r\n".getBytes(StandardCharsets.US_ASCII));
+            socket.getOutputStream().write("GET / HTTP/1.1\r\nHost: integration.test\r\nConnection: close\r\n\r\n".getBytes(StandardCharsets.US_ASCII));
             var input = socket.getInputStream();
             var header = new java.io.ByteArrayOutputStream();
             int matched = 0;
