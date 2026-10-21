@@ -1,5 +1,5 @@
 // Pure mapping from service-worker state to what the popup shows. Unit-tested.
-import type { ApiError, ServerList, ServerSummary } from '../../../protocol/types';
+import type { ApiError, ServerList, ServerSummary, SubscriptionSummary } from '../../../protocol/types';
 import type { AppState } from './app-state';
 
 export type Tone = 'ok' | 'busy' | 'idle' | 'error';
@@ -70,6 +70,16 @@ export function deriveView(s: AppState): View {
   }
   const st = s.status;
   if (!st) return { label: 'Starting…', tone: 'busy', detail: null, action: 'none', hint: null, interactive: true };
+  if (s.blocking) {
+    return {
+      label: 'Tunnel down',
+      tone: 'error',
+      detail: 'Kill switch: sites that use the tunnel stay offline until it is back. Disconnect to browse without it.',
+      action: 'disconnect',
+      hint: null,
+      interactive: true,
+    };
+  }
   if (s.proxyError) {
     return { label: 'Browser proxy blocked', tone: 'error', detail: s.proxyError, action: 'connect', hint: null, interactive: true };
   }
@@ -89,6 +99,69 @@ export function deriveView(s: AppState): View {
     default:
       return { label: 'Disconnected', tone: 'idle', detail: null, action: 'connect', hint: null, interactive: true };
   }
+}
+
+/** Text of the main connect button. */
+export function primaryLabel(a: PrimaryAction): string {
+  return a === 'connect' ? 'Connect' : a === 'disconnect' ? 'Disconnect' : a === 'cancel' ? 'Cancel' : a === 'retry' ? 'Retry' : 'Please wait…';
+}
+
+/** "12 min", "3 h 05 min" since a Unix time in seconds. */
+export function connectedFor(sinceSec: number | undefined, nowMs = Date.now()): string | null {
+  if (!sinceSec) return null;
+  const d = Math.max(0, Math.floor(nowMs / 1000 - sinceSec));
+  if (d < 60) return 'under a minute';
+  const m = Math.floor(d / 60);
+  if (m < 60) return `${m} min`;
+  const hours = Math.floor(m / 60);
+  if (hours < 48) return `${hours} h ${String(m % 60).padStart(2, '0')} min`;
+  return `${Math.floor(hours / 24)} days`;
+}
+
+export interface SubscriptionHealth {
+  tone: 'ok' | 'warn' | 'fail';
+  label: string;
+  detail: string;
+}
+
+/**
+ * Subscription intelligence: expired, used up, failing, about to run out or suddenly changed.
+ * Mirrors the desktop app's SubscriptionHealth.
+ */
+export function subscriptionHealth(s: SubscriptionSummary, nowSec = Date.now() / 1000): SubscriptionHealth {
+  const u = s.usage;
+  const used = (u?.upload ?? 0) + (u?.download ?? 0);
+  const share = u?.total ? used / u.total : null;
+  const expire = u?.expire ?? null;
+  if (expire && expire <= nowSec) return { tone: 'fail', label: 'Expired', detail: 'The subscription has expired. Renew it with your provider.' };
+  if (share !== null && share >= 1) return { tone: 'fail', label: 'Used up', detail: 'All data of this subscription is used up.' };
+  if (s.lastError) return { tone: 'fail', label: 'Failing', detail: `The last update failed: ${s.lastError}` };
+  if (expire && expire - nowSec < 3 * 86400) {
+    const days = Math.max(1, Math.ceil((expire - nowSec) / 86400));
+    return { tone: 'warn', label: 'Expires soon', detail: `The subscription expires in ${days === 1 ? 'a day' : `${days} days`}.` };
+  }
+  if (share !== null && share >= 0.9) return { tone: 'warn', label: 'Almost used up', detail: `${Math.round(share * 100)}% of the data is used.` };
+  const last = s.history?.[s.history.length - 1];
+  if (last && !last.error) {
+    const before = s.serverCount - last.added + last.removed;
+    if (before >= 4 && last.removed >= Math.max(3, before * 0.5)) {
+      return { tone: 'warn', label: 'Changed a lot', detail: `The last update removed ${last.removed} of ${before} servers.` };
+    }
+  }
+  if (s.lastUpdated && nowSec - s.lastUpdated > 7 * 86400) return { tone: 'warn', label: 'Not updated', detail: 'Not updated for more than a week.' };
+  if (s.serverCount === 0) return { tone: 'warn', label: 'Empty', detail: 'The subscription has no usable servers.' };
+  return { tone: 'ok', label: 'OK', detail: 'Working.' };
+}
+
+/** All tags in use, sorted. */
+export function tagsInUse(list: ServerList): string[] {
+  return [...new Set(Object.values(list.tags ?? {}).filter(Boolean))].sort((a, b) => a.localeCompare(b));
+}
+
+/** Favorites first, then the original order. */
+export function sortedServers(list: ServerList): ServerSummary[] {
+  const fav = new Set(list.favorites ?? []);
+  return [...list.servers].sort((a, b) => Number(fav.has(b.id)) - Number(fav.has(a.id)));
 }
 
 export const PROTOCOL_NAMES: Record<ServerSummary['protocol'], string> = { vless: 'VLESS', vmess: 'VMess', trojan: 'Trojan', shadowsocks: 'Shadowsocks' };

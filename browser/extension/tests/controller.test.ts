@@ -392,7 +392,7 @@ describe('kill switch, reconnect and helper events', () => {
     e.log.length = 0;
     e.ports[0].deliver({ event: 'status', status: status({ state: 'error', error: { code: 'SERVER_UNREACHABLE', message: 'x' } }) });
     await e.c.idle();
-    expect(e.log).toEqual(['webrtc:false', 'block:all']);
+    expect(e.log.filter((l) => !l.includes('FindProxyForURL'))).toEqual(['webrtc:false', 'block:pac']);
     expect(e.c.state.blocking).toBe(true);
     expect(e.log).not.toContain('clear');
     // The helper itself dies: still blocked.
@@ -400,7 +400,7 @@ describe('kill switch, reconnect and helper events', () => {
     e.setLastError('Native host has exited.');
     e.ports[0].kill();
     await e.c.idle();
-    expect(e.log).toContain('block:all');
+    expect(e.log).toContain('block:pac');
     expect(e.log).not.toContain('clear');
     // Disconnect releases it, even while the runtime is restarting.
     await tick();
@@ -489,5 +489,109 @@ describe('classifyDisconnect', () => {
     expect(classifyDisconnect('Access to the specified native messaging host is forbidden.').kind).toBe('forbidden');
     expect(classifyDisconnect('Native host has exited.').kind).toBe('crashed');
     expect(classifyDisconnect(undefined).kind).toBe('crashed');
+  });
+});
+
+describe('kill switch follows every rule, settings apply at once, trials', () => {
+  const r = (values: string[], action: string, match = 'domain') => ({ id: values[0], name: values[0], match, values, action, serverId: null, enabled: true, expiresAt: null, scenario: null, createdAt: 0, active: true });
+
+  async function dropped(rules: { mode: 'all' | 'selected'; rules: any[] }) {
+    const e = setup({ settings: { killSwitch: true }, rules });
+    await e.c.start();
+    await tick();
+    await tick();
+    await e.c.request('connect', { serverId: 'a' });
+    e.ports[0].deliver({ event: 'status', status: connected() });
+    await e.c.idle();
+    e.log.length = 0;
+    e.ports[0].deliver({ event: 'status', status: status({ state: 'error', error: { code: 'XRAY_FAILED', message: 'x' } }) });
+    await e.c.idle();
+    const pac = e.log.find((l) => l.includes('FindProxyForURL'))!;
+    return new Function(`${pac}; return FindProxyForURL;`)() as (u: string, h: string) => string;
+  }
+
+  it('"everything" mode: tunnel sites are held, direct rules and local names keep working', async () => {
+    const find = await dropped({ mode: 'all', rules: [r(['bank.example'], 'direct'), r(['ads.example'], 'block'), r(['10.9.0.0/16'], 'direct', 'ip'), r(['8443'], 'direct', 'port')] });
+    expect(find('https://news.example/', 'news.example')).toBe('PROXY 127.0.0.1:1');
+    expect(find('https://www.bank.example/', 'www.bank.example')).toBe('DIRECT');
+    expect(find('https://ads.example/', 'ads.example')).toBe('PROXY 127.0.0.1:1');
+    expect(find('https://printer.local/', 'printer.local')).toBe('DIRECT');
+    expect(find('http://nas/', 'nas')).toBe('DIRECT');
+    expect(find('http://192.168.1.1/', '192.168.1.1')).toBe('DIRECT');
+    expect(find('http://8.8.8.8/', '8.8.8.8')).toBe('PROXY 127.0.0.1:1');
+    expect(find('https://other.example:8443/', 'other.example')).toBe('DIRECT');
+  });
+
+  it('first match wins in the kill switch too', async () => {
+    const find = await dropped({ mode: 'selected', rules: [r(['full:api.example.com'], 'direct'), r(['example.com'], 'proxy'), r(['regexp:^cdn[0-9]+\.'], 'proxy')] });
+    expect(find('https://api.example.com/', 'api.example.com')).toBe('DIRECT');
+    expect(find('https://www.example.com/', 'www.example.com')).toBe('PROXY 127.0.0.1:1');
+    expect(find('https://cdn12.other.net/', 'cdn12.other.net')).toBe('PROXY 127.0.0.1:1');
+    expect(find('https://other.net/', 'other.net')).toBe('DIRECT');
+  });
+
+  it('turning the kill switch on while the tunnel is down holds tunnel sites at once', async () => {
+    const e = setup();
+    const p = () => e.ports[0];
+    await e.c.start();
+    await tick();
+    await tick();
+    await e.c.request('connect', { serverId: 'a' });
+    p().deliver({ event: 'status', status: connected() });
+    await e.c.idle();
+    p().deliver({ event: 'status', status: status({ state: 'error', error: { code: 'XRAY_FAILED', message: 'x' } }) });
+    await e.c.idle();
+    expect(e.c.state.blocking).toBe(false);
+    p().auto = (m) => m.cmd === 'setSettings' && queueMicrotask(() => p().deliver({ id: m.id, ok: true, result: { ...baseSettings, killSwitch: true, reconnectRequired: false } }));
+    e.log.length = 0;
+    await e.c.request('setSettings', { killSwitch: true });
+    await e.c.idle();
+    expect(e.log).toContain('block:pac');
+    expect(e.c.state.blocking).toBe(true);
+  });
+
+  it('WebRTC protection follows the setting while connected', async () => {
+    const e = setup();
+    const p = () => e.ports[0];
+    await e.c.start();
+    await tick();
+    await tick();
+    await e.c.request('connect', { serverId: 'a' });
+    p().deliver({ event: 'status', status: connected() });
+    await e.c.idle();
+    p().auto = (m) => m.cmd === 'setSettings' && queueMicrotask(() => p().deliver({ id: m.id, ok: true, result: { ...baseSettings, webrtcProtection: false } }));
+    e.log.length = 0;
+    await e.c.request('setSettings', { webrtcProtection: false });
+    await e.c.idle();
+    expect(e.log).toEqual(['webrtc:false']);
+  });
+
+  it('a trial goes back to the previous server when it ends, and ends when the user picks a server', async () => {
+    const local = new MemStore();
+    const e = setup({ local });
+    const p = () => e.ports[0];
+    await e.c.start();
+    await tick();
+    await tick();
+    await e.c.request('connect', { serverId: 'a' });
+    p().deliver({ event: 'status', status: connected(5555, 'a') });
+    await e.c.idle();
+    const r = await e.c.tryServer('b', 30);
+    expect(r.ok).toBe(true);
+    expect(e.c.state.trial).toMatchObject({ serverId: 'b', previousId: 'a' });
+    expect(local.data.get('trial')).toMatchObject({ serverId: 'b' });
+    p().deliver({ event: 'status', status: connected(5556, 'b') });
+    await e.c.idle();
+    expect(e.c.state.trial).not.toBeNull();
+    p().sent.length = 0;
+    await e.c.endTrial();
+    expect(p().sent.find((m) => m.cmd === 'connect')?.args).toEqual({ serverId: 'a' });
+    expect(e.c.state.trial).toBeNull();
+    expect(e.notices.some((n) => n.kind === 'trialEnded')).toBe(true);
+    // The user's own choice ends a trial without switching back.
+    await e.c.tryServer('b', 30);
+    await e.c.request('connect', { serverId: 'c' });
+    expect(e.c.state.trial).toBeNull();
+    expect(await e.c.tryServer('b', 1)).toMatchObject({ ok: false });
   });
 });

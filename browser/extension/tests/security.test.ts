@@ -31,8 +31,9 @@ describe('manifest attack surface', () => {
     // challenge (Chromium delivers onAuthRequired only with host permissions), the per-tab badge
     // and the in-memory request inspector. The CSP below still forbids the extension from
     // contacting any origin.
-    // alarms: background subscription updates. notifications: failover and expired-rule notices.
-    expect([...manifest.permissions].sort()).toEqual(['activeTab', 'alarms', 'nativeMessaging', 'notifications', 'privacy', 'proxy', 'storage', 'webRequest', 'webRequestAuthProvider']);
+    // alarms: background subscription updates and trials. notifications: failover, expired-rule and
+    // subscription notices. contextMenus: the page's PerRoute menu (route this site).
+    expect([...manifest.permissions].sort()).toEqual(['activeTab', 'alarms', 'contextMenus', 'nativeMessaging', 'notifications', 'privacy', 'proxy', 'storage', 'webRequest', 'webRequestAuthProvider']);
     expect(manifest.optional_permissions).toBeUndefined();
     expect(manifest.host_permissions).toEqual(['<all_urls>']);
     expect(manifest.optional_host_permissions).toBeUndefined();
