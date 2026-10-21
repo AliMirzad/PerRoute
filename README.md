@@ -9,7 +9,7 @@
 A modern Windows client for VLESS, VMess, Trojan and Shadowsocks, built on [Xray-core](https://github.com/XTLS/Xray-core).
 
 ![Platform](https://img.shields.io/badge/platform-Windows%2010%20%7C%2011%20x64-0078D6)
-![Version](https://img.shields.io/badge/version-3.5.1-6B57D9)
+![Version](https://img.shields.io/badge/version-3.6.0-6B57D9)
 ![Built with](https://img.shields.io/badge/built%20with-Kotlin%20%2B%20Compose%20Desktop-7F52FF)
 ![Core](https://img.shields.io/badge/core-Xray-0B9B83)
 ![License](https://img.shields.io/badge/license-GPL--3.0-blue)
@@ -28,15 +28,15 @@ Most proxy clients are all-or-nothing: either the whole system goes through the 
 
 When you do want everything proxied, System proxy and Local proxy modes are one click away.
 
-## What's new in 3.5.1
+## What's new in 3.6.0
 
-- **Faster downloads and YouTube for routed apps.** The new **Block QUIC** setting (*Settings > Routing*, on by default) makes routed apps use HTTPS over TCP instead of QUIC, the same as behind a system proxy. QUIC carried inside a server's TCP connection was often much slower. See [Speed](#speed).
-- **Automatic updates.** PerRoute checks the official releases when it starts and every six hours, downloads and verifies a new version in the background, and asks once to restart. The installer then updates PerRoute in place and reopens it. No link needs to be entered; turn it off in *Settings > Updates*.
-- **Microsoft Store apps after an update.** Store apps move to a new folder on every Store update. PerRoute now finds the installed version, so they keep their route and their real icon, and are listed once.
-- **Dark logos stay visible** in the dark theme, and icons are sharper at 150% scaling.
-- **Layout fixes.** Long server and app names no longer run into the **Main** badge or the next column, and the title bar of the New design starts with the logo.
+- **Browser extension.** PerRoute now comes to Chrome, Edge, Brave and Vivaldi, with or without the app. Choose site by site what uses the tunnel, opens directly or is blocked, with a server per site, temporary rules, a kill switch, server tests, failover and a request inspector. The installer asks whether you want the app, the extension or both. See [Browser extension](#browser-extension).
+- **Quick Route.** Right-click a program or its shortcut in Explorer and choose **Route with PerRoute** to give it a route without opening Apps (turn it on in *Settings > General*).
+- **LAN Bridge.** Share this computer's connection with a phone, tablet or TV on the same Wi-Fi for an hour, four hours or until you stop (*Tools > LAN Bridge*).
+- **Resource saving.** On battery or a metered network, background server checks run less often, automatic speed tests pause and updates wait (*Settings > Automation*, on by default).
+- **A new installer** that lets you choose the app, the browser extension or both, and an uninstaller that also removes Quick Route and LAN Bridge leftovers.
 
-Full notes: [docs/releases/v3.5.1.md](docs/releases/v3.5.1.md).
+Full notes: [docs/releases/v3.6.0.md](docs/releases/v3.6.0.md).
 
 ## Features
 
@@ -62,10 +62,10 @@ Full notes: [docs/releases/v3.5.1.md](docs/releases/v3.5.1.md).
 | **Subscription intelligence** *(3.5)* | Usage, quota, expiry and update history of every subscription, with warnings for expired, exhausted, failing or suddenly changed ones. |
 | **Gaming test** *(3.5)* | Steady latency, jitter, packet loss and UDP support per server, and a score built for games. |
 | **Block QUIC** *(3.5.1)* | Routed apps use HTTPS over TCP instead of QUIC, which is usually much faster through a tunnel. On by default, one switch to turn off. |
-| **Browser extension** | PerRoute inside Chrome, Edge, Brave and Vivaldi, with or without the app: site-by-site routing (Tunnel, Direct, Block, a server per site, temporary rules), server tests and quality scores, failover, kill switch, traffic, presets, recipes, profiles, a connection doctor, a request inspector and encrypted backups. See [Browser extension](#browser-extension). |
-| **Quick Route** | Right-click a program or its shortcut in Explorer and choose **Route with PerRoute**: pick the main server, a server of its own or Auto, and save, without opening Apps. |
-| **LAN Bridge** | Share this computer's connection with your phone, tablet or TV on the same Wi-Fi, for an hour, four hours or until you stop. Each device gets its own port, password and setup code, and can be removed on its own. |
-| **Resource saving** | On battery or a metered network, background server checks run less often, automatic speed tests pause and updates wait. Routes, route recovery and the kill switch are never weakened. |
+| **Browser extension** *(3.6)* | PerRoute inside Chrome, Edge, Brave and Vivaldi, with or without the app: site-by-site routing (Tunnel, Direct, Block, a server per site, temporary rules), server tests and quality scores, failover, kill switch, traffic, presets, recipes, profiles, a connection doctor, a request inspector and encrypted backups. See [Browser extension](#browser-extension). |
+| **Quick Route** *(3.6)* | Right-click a program or its shortcut in Explorer and choose **Route with PerRoute**: pick the main server, a server of its own or Auto, and save, without opening Apps. |
+| **LAN Bridge** *(3.6)* | Share this computer's connection with your phone, tablet or TV on the same Wi-Fi, for an hour, four hours or until you stop. Each device gets its own port, password and setup code, and can be removed on its own. |
+| **Resource saving** *(3.6)* | On battery or a metered network, background server checks run less often, automatic speed tests pause and updates wait. Routes, route recovery and the kill switch are never weakened. |
 | **Three connection modes** | Smart per-app, System proxy, and Local proxy (SOCKS5 + HTTP). |
 | **Subscriptions** | Import by URL, pasted share links, Xray JSON, or QR code (image, clipboard, or camera). Updates keep your favorites, tags and selection. |
 | **Latency and speed tests** | Endpoint ping, a real tunnel test, and a download speed test per server, with sorting and filtering. |
@@ -87,15 +87,15 @@ Get the latest build from the [Releases](https://github.com/AliMirzad/PerRoute/r
 
 | Package | Use it when |
 |---|---|
-| `PerRoute-Setup-3.5.1.exe` | You want everything, including Smart per-app mode. The installer asks for Administrator approval once; choose the app, the browser extension or both. |
-| `PerRoute-Portable-3.5.1.zip` | You want a no-install build. Extract the folder and run `PerRoute.exe`. System proxy and Local proxy work out of the box; Smart per-app works only if the per-app engine is already installed. |
+| `PerRoute-Setup-3.6.0.exe` | You want everything, including Smart per-app mode. The installer asks for Administrator approval once; choose the app, the browser extension or both. |
+| `PerRoute-Portable-3.6.0.zip` | You want a no-install build. Extract the folder and run `PerRoute.exe`. System proxy and Local proxy work out of the box; Smart per-app works only if the per-app engine is already installed. |
 
 **Requirements:** Windows 10 or 11, 64-bit. The Java runtime and Xray core are bundled; nothing else needs to be installed.
 
 Verify a download against the SHA-256 values published with each release:
 
 ```powershell
-Get-FileHash .\PerRoute-Setup-3.5.1.exe -Algorithm SHA256
+Get-FileHash .\PerRoute-Setup-3.6.0.exe -Algorithm SHA256
 ```
 
 ## Quick start
@@ -301,7 +301,7 @@ The extension brings PerRoute into Chromium browsers. Where the app routes Windo
 - **Protection:** kill switch, WebRTC protection, automatic failover, and DNS resolved on the server for tunnel sites.
 - **Doctor:** checks the runtime, the server, the live route and the exit address, and shows every host a tab contacts.
 
-To install it, run `PerRoute-Setup-3.5.1.exe` and choose **Browser extension**. The installer puts the runtime in `C:\Program Files\PerRoute Browser`, registers it with your browsers and shows the last step: open the extensions page, turn on Developer mode and choose **Load unpacked** with the `extension` folder. Developer documentation is in [browser/README.md](browser/README.md).
+To install it, run `PerRoute-Setup-3.6.0.exe` and choose **Browser extension**. The installer puts the runtime in `C:\Program Files\PerRoute Browser`, registers it with your browsers and shows the last step: open the extensions page, turn on Developer mode and choose **Load unpacked** with the `extension` folder. Developer documentation is in [browser/README.md](browser/README.md).
 
 ## Connection modes
 
@@ -417,10 +417,10 @@ This produces the following in `dist/`:
 
 | Output | Description |
 |---|---|
-| `PerRoute-Setup-3.5.1.exe` | Offline installer with the per-app engine |
-| `PerRoute-Portable-3.5.1.zip` | Self-contained portable build |
-| `PerRoute-Browser-3.5.1.zip` | The browser runtime and extension (embedded in the installer) |
-| `PerRoute-3.5.1/` | Unpacked application image |
+| `PerRoute-Setup-3.6.0.exe` | Offline installer with the per-app engine |
+| `PerRoute-Portable-3.6.0.zip` | Self-contained portable build |
+| `PerRoute-Browser-3.6.0.zip` | The browser runtime and extension (embedded in the installer) |
+| `PerRoute-3.6.0/` | Unpacked application image |
 
 The installer dependencies are downloaded on first use and verified against pinned SHA-256 digests. Building the browser extension also needs Node.js and Rust; see [browser/README.md](browser/README.md).
 
@@ -459,7 +459,7 @@ docs/screenshots/                      Images used in this document
 Updates are distributed as a signed manifest next to the installer. Keep the private key outside the repository.
 
 ```powershell
-java tools\update\UpdateManifestTool.java sign 3.5.1 dist\PerRoute-Setup-3.5.1.exe https://github.com/AliMirzad/PerRoute/releases/download/v3.5.1/PerRoute-Setup-3.5.1.exe release-secrets\perroute-update-private.pk8 dist\update.json
+java tools\update\UpdateManifestTool.java sign 3.6.0 dist\PerRoute-Setup-3.6.0.exe https://github.com/AliMirzad/PerRoute/releases/download/v3.6.0/PerRoute-Setup-3.6.0.exe release-secrets\perroute-update-private.pk8 dist\update.json
 ```
 
 Attach `update.json` to **every** release. PerRoute reads it from the latest release by itself, at this address (built in as the default feed):
