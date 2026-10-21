@@ -12,8 +12,8 @@ using Microsoft.Win32;
 [assembly: AssemblyDescription("Uninstaller for PerRoute and the PerRoute browser extension")]
 [assembly: AssemblyCompany("Ali Mirzad")]
 [assembly: AssemblyProduct("PerRoute")]
-[assembly: AssemblyVersion("3.5.1.0")]
-[assembly: AssemblyFileVersion("3.5.1.0")]
+[assembly: AssemblyVersion("3.6.0.0")]
+[assembly: AssemblyFileVersion("3.6.0.0")]
 
 namespace PerRouteSetup
 {
