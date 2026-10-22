@@ -118,6 +118,7 @@ public final class MacPerAppBackendTests {
         try {
             var runtime = XrayRuntime.forPlatform(System.getProperty("os.name"),System.getProperty("os.arch"),Path.of(args[0]));
             runtime.requireExecutable(false);
+            MacPerAppDestinationTests.run(runtime,root);
             String first = executable(root,"SelectedOne"), second = executable(root,"SelectedTwo");
             Path marker = root.resolve("routing.pending");
             var peer = new Peer(); var proxy = new ProxyLifecycle();

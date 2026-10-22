@@ -759,7 +759,7 @@ tasks.register<JavaExec>("runMacosPerAppBackendTests") {
     dependsOn(tasks.named("testClasses"))
     classpath = sourceSets["test"].runtimeClasspath
     mainClass.set("app.perroute.platform.macos.MacPerAppBackendTests")
-    systemProperty("perroute.portOffset", "25000")
+    systemProperty("perroute.portOffset", "15000")
     args(layout.projectDirectory.dir("tools/xray").asFile.absolutePath)
     enableAssertions = true
 }
