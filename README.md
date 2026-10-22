@@ -6,15 +6,16 @@
 
 **Route only the applications you choose through your proxy. Everything else stays on your regular connection.**
 
-A modern Windows client for VLESS, VMess, Trojan and Shadowsocks, built on [Xray-core](https://github.com/XTLS/Xray-core).
+A Windows and macOS desktop client for VLESS, VMess, Trojan and Shadowsocks, built on [Xray-core](https://github.com/XTLS/Xray-core).
 
 ![Platform](https://img.shields.io/badge/platform-Windows%2010%20%7C%2011%20x64-0078D6)
+![macOS](https://img.shields.io/badge/macOS-13%2B%20preview-555555)
 ![Version](https://img.shields.io/badge/version-3.6.0-6B57D9)
 ![Built with](https://img.shields.io/badge/built%20with-Kotlin%20%2B%20Compose%20Desktop-7F52FF)
 ![Core](https://img.shields.io/badge/core-Xray-0B9B83)
 ![License](https://img.shields.io/badge/license-GPL--3.0-blue)
 
-[Download](#download) · [What's new](#whats-new-in-351) · [Features](#features) · [Tour](#tour) · [Speed](#speed) · [Build from source](#build-from-source)
+[Download](#download) · [macOS](#macos-version) · [What's new](#whats-new-in-360) · [Features](#features) · [Tour](#tour) · [Speed](#speed) · [Build from source](#build-from-source)
 
 <img src="docs/screenshots/connection.png" width="820" alt="PerRoute connected in Smart per-app mode, one row per route">
 
@@ -30,6 +31,8 @@ When you do want everything proxied, System proxy and Local proxy modes are one 
 
 ## What's new in 3.6.0
 
+The release notes below describe the Windows release. macOS is available as a [desktop preview](#macos-version).
+
 - **Browser extension.** PerRoute now comes to Chrome, Edge, Brave and Vivaldi, with or without the app. Choose site by site what uses the tunnel, opens directly or is blocked, with a server per site, temporary rules, a kill switch, server tests, failover and a request inspector. The installer asks whether you want the app, the extension or both. See [Browser extension](#browser-extension).
 - **Quick Route.** Right-click a program or its shortcut in Explorer and choose **Route with PerRoute** to give it a route without opening Apps (turn it on in *Settings > General*).
 - **LAN Bridge.** Share this computer's connection with a phone, tablet or TV on the same Wi-Fi for an hour, four hours or until you stop (*Tools > LAN Bridge*).
@@ -39,6 +42,8 @@ When you do want everything proxied, System proxy and Local proxy modes are one 
 Full notes: [docs/releases/v3.6.0.md](docs/releases/v3.6.0.md).
 
 ## Features
+
+This table describes Windows support. See [macOS version](#macos-version) for the supported Mac modes and limitations.
 
 | | |
 |---|---|
@@ -83,7 +88,7 @@ Full notes: [docs/releases/v3.6.0.md](docs/releases/v3.6.0.md).
 
 ## Download
 
-Get the latest build from the [Releases](https://github.com/AliMirzad/PerRoute/releases/latest) page.
+Get the latest Windows build from the [Releases](https://github.com/AliMirzad/PerRoute/releases/latest) page.
 
 | Package | Use it when |
 |---|---|
@@ -98,7 +103,59 @@ Verify a download against the SHA-256 values published with each release:
 Get-FileHash .\PerRoute-Setup-3.6.0.exe -Algorithm SHA256
 ```
 
+## macOS version
+
+The macOS preview reuses the Kotlin Compose Desktop interface, with New and Simple layouts and light/dark themes. It requires macOS 13 or newer. Apple Silicon installation and browsing have been tested; Intel requires a separate build and runtime acceptance. Linux is not supported yet.
+
+| Mode | macOS behavior |
+|---|---|
+| System proxy | Configures HTTP, HTTPS and SOCKS proxies for supported network services on Connect. Restores PerRoute's changes on Disconnect, with helper recovery after unexpected exits. Applications must follow macOS proxy settings. |
+| Smart per-app | Routes selected application families, including Chrome's helpers, through the native routing engine and traffic gateway. Current coverage is IPv4 TCP. Unselected applications retain their direct connection. |
+| Local proxy | Exposes local SOCKS5 and HTTP endpoints for applications you configure yourself. It does not change system proxy settings. |
+
+Per-app routing is a preview with explicit boundaries. Safari's shared networking processes are not supported reliably. UDP/QUIC, IPv6, comprehensive DNS interception and a per-app kill switch are not implemented. HTTP Host/TLS SNI recovery supports ordinary browser hostname routing; this does not establish ECH coverage or DNS leak protection. Explorer integration and Windows-only recovery, updater, LAN Bridge and browser workspace tools are unavailable on macOS.
+
+### Install on macOS
+
+A maintainer can build the DMG using the command below. This PR does not publish a macOS binary release; Windows release downloads are separate.
+
+1. Open the macOS DMG and drag **PerRoute.app** onto **Applications**.
+2. Eject the PerRoute disk, then open **Finder > Applications > PerRoute**.
+3. Import your server configuration and select a connection mode. For per-app routing, select the application's entry including helpers in **Apps**, then save.
+4. Click **Connect** and approve the administrator request to install the background helper. Approve Keychain access if requested. Normal Connect/Disconnect operations reuse the installed helper.
+5. Click **Disconnect** when finished to restore the network settings PerRoute changed.
+
+The preview is locally certificate-signed and is not Apple Developer ID signed or notarized. If macOS blocks first launch, follow [Apple's Open Anyway instructions](https://support.apple.com/102445) in **System Settings > Privacy & Security** after trying to open it. Java, Xray and the native helper/engine are bundled. Do not run the app directly from the mounted disk image.
+
+The Chrome extension is separate and is not included in the macOS DMG. Its macOS installation and end-to-end operation are not covered by the desktop acceptance.
+
+### Build the macOS DMG
+
+On a Mac of the target architecture, install JDK 21, Python 3 and Xcode Command Line Tools, and select JDK 21 through `JAVA_HOME`. The first build needs internet access for dependencies and pinned engine downloads.
+
+```sh
+sh gradlew --no-daemon packageMacosDmg
+cd build/macos-installer
+shasum -a 256 -c SHA256SUMS
+```
+
+The output includes an architecture-specific `PerRoute-3.6.0-macos-<arch>-preview.dmg`, `SHA256SUMS`, `BUILD.json`, the short `INSTALL.txt` and detailed `MAINTENANCE.txt`. The task checks native payloads and signatures, verifies the image, and mounts it read-only to validate its contents. It does not install the app or alter networking.
+
+The build creates or reuses a private local signing identity. Keep that identity for compatible helper upgrades and never distribute its private key. Intel builds need an Intel Mac and their own acceptance testing. Notarized releases and native-engine source-compliance verification remain separate release requirements.
+
+### Remove or upgrade the macOS preview
+
+Disconnect and fully Quit PerRoute. Before removing the old app or replacing it with a build signed by a different identity, run its helper removal command:
+
+```sh
+/Applications/PerRoute.app/Contents/MacOS/PerRoute --proxy-helper-unregister-interactive
+```
+
+Approve the macOS dialogs and wait for successful removal with `registered=false` and `pending=false`. Then remove the app from Applications or copy in the replacement. Stop if helper removal or recovery fails. Removing the app this way retains saved configurations and Keychain data. The generated `MAINTENANCE.txt` provides the detailed procedure.
+
 ## Quick start
+
+For macOS installation and mode-specific setup, follow [Install on macOS](#install-on-macos). The steps below describe the Windows per-app workflow.
 
 1. Open **Servers**, choose **Add servers**, and paste your subscription URL (or use **Paste links** or **QR code**). Review the list, then add it.
 2. Select a server and choose **Use as main server**. Latency appears automatically; the best servers are speed-tested in the background.
@@ -106,6 +163,8 @@ Get-FileHash .\PerRoute-Setup-3.6.0.exe -Algorithm SHA256
 4. Open **Connection** and press **Connect**.
 
 ## Tour
+
+The tour below covers Windows. The macOS UI hides unsupported platform actions; see [macOS version](#macos-version).
 
 PerRoute has two designs over the same app. **New** (the default) has a narrow rail with Connect, Apps and Servers, plus Tools (Rules, Profiles, Workspaces, Diagnostics, Health, Traffic) and Settings at the bottom; most pages have a detail panel on the right. **Simple** has a wide menu with every section. Both come in light and dark. Choose under *Settings > General > Interface style*. Switching only redraws the window: it does not disconnect or change any setting. The screenshots below show the New design unless noted.
 
@@ -293,7 +352,7 @@ See [docs/releases/v3.5.0.md](docs/releases/v3.5.0.md) for how each works and it
 
 ## Browser extension
 
-The extension brings PerRoute into Chromium browsers. Where the app routes Windows applications, the extension routes sites, and it works without the app.
+The extension brings PerRoute into Chromium browsers. Where the desktop app routes applications, the extension routes sites, and it works without the app.
 
 - **This site:** the toolbar button shows where the current site goes. One click sends it through the tunnel, directly or nowhere, for good or for 15 minutes to 4 hours, and through the main server or one of its own.
 - **Servers:** subscriptions (with usage, expiry and history), links, Xray JSON and QR codes. Real tests through each server, TCP ping, speed tests, the same quality score as the app, favorites and tags, and a side-by-side comparison with the live route.
@@ -301,9 +360,11 @@ The extension brings PerRoute into Chromium browsers. Where the app routes Windo
 - **Protection:** kill switch, WebRTC protection, automatic failover, and DNS resolved on the server for tunnel sites.
 - **Doctor:** checks the runtime, the server, the live route and the exit address, and shows every host a tab contacts.
 
-To install it, run `PerRoute-Setup-3.6.0.exe` and choose **Browser extension**. The installer puts the runtime in `C:\Program Files\PerRoute Browser`, registers it with your browsers and shows the last step: open the extensions page, turn on Developer mode and choose **Load unpacked** with the `extension` folder. Developer documentation is in [browser/README.md](browser/README.md).
+On Windows, to install it, run `PerRoute-Setup-3.6.0.exe` and choose **Browser extension**. The installer puts the runtime in `C:\Program Files\PerRoute Browser`, registers it with your browsers and shows the last step: open the extensions page, turn on Developer mode and choose **Load unpacked** with the `extension` folder. Developer documentation is in [browser/README.md](browser/README.md).
 
 ## Connection modes
+
+This table and the gateway details below describe Windows. The [macOS mode table](#macos-version) documents Mac behavior and transport limits.
 
 | Mode | What it routes | Administrator | Notes |
 |---|---|---|---|
@@ -358,6 +419,8 @@ The tunnel health check is stricter in 3.0: a route only passes when an HTTP req
 
 ## Security and privacy
 
+The platform-specific encryption, installer and recovery details below describe Windows. macOS uses Keychain for saved-state key custody and an authenticated privileged helper for network changes. Its preview signing and routing limits are described in [macOS version](#macos-version).
+
 - **Saved state is encrypted** with AES-256-GCM. The key is wrapped with Windows DPAPI for the signed-in account, so the state file cannot be opened from another Windows account or machine.
 - **No telemetry.** PerRoute talks only to your subscription URLs, your proxy servers, the endpoints used by the tests you start, and the update feed: the official GitHub releases, or the feed you enter. The update check is a plain HTTPS download of the signed manifest.
 - **Traffic history is local** and stores byte totals only, never destinations.
@@ -378,6 +441,8 @@ The tunnel health check is stricter in 3.0: a route only passes when an HTTP req
 | One route's server stops answering | Only the applications on that route are affected; they wait instead of falling back to the direct route. With route monitoring on, the route is retried with growing delays, rebuilt in place, and re-checked every two minutes until it answers; Auto apps move to another working server. |
 
 ## Build from source
+
+For macOS, use [Build the macOS DMG](#build-the-macos-dmg). The following instructions build Windows packages.
 
 **Prerequisites**
 
