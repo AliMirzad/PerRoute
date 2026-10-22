@@ -5,7 +5,7 @@ import plistlib
 import tempfile
 import unittest
 
-from macos_dmg import digest, instructions, validate
+from macos_dmg import digest, instructions, maintenance_instructions, validate
 
 
 class DmgValidationTests(unittest.TestCase):
@@ -80,7 +80,10 @@ class DmgValidationTests(unittest.TestCase):
         with self.assertRaisesRegex(ValueError, 'not executable'): self.validate()
 
     def test_instructions_do_not_claim_notarization_or_browser_install(self):
-        text = instructions('3.6.0', 'arm64')
+        guide = instructions('3.6.0', 'arm64')
+        self.assertLess(len(guide.split()), 120)
+        self.assertIn('Do not open PerRoute directly from this disk', guide)
+        text = maintenance_instructions('3.6.0', 'arm64')
         self.assertIn('NOT Apple Developer ID signed or notarized', text)
         self.assertIn('NOT installed by this DMG', text)
         self.assertIn('--proxy-helper-unregister-interactive', text)

@@ -96,6 +96,25 @@ def verify_signature(app):
 
 
 def instructions(version, architecture):
+    return f'''Install PerRoute {version}
+
+1. Drag PerRoute.app onto the Applications folder beside it.
+2. Eject the PerRoute disk.
+3. Open Finder > Applications > PerRoute.
+4. Import your server, choose a connection mode, then click Connect.
+5. Approve the administrator request to install PerRoute's helper.
+   Approve Keychain access if asked.
+
+Do not open PerRoute directly from this disk.
+
+If macOS blocks the app, go to System Settings > Privacy & Security >
+Open Anyway after trying to open it. This preview is not notarized.
+
+Requires macOS 13 or newer. Java is included.
+'''
+
+
+def maintenance_instructions(version, architecture):
     return f'''PerRoute {version} for macOS 13 or newer, {architecture}
 Account-free preview. Locally certificate-signed, NOT Apple Developer ID signed or notarized.
 
@@ -195,8 +214,8 @@ def package(app, output):
         run('/usr/bin/ditto', app, payload / 'PerRoute.app')
         verify_signature(payload / 'PerRoute.app')
         (payload / 'Applications').symlink_to('/Applications')
-        (payload / 'INSTALL.txt').write_text(instructions(version, architecture))
-        (payload / 'BUILD.json').write_text(json.dumps(metadata, indent=2) + '\n')
+        (payload / 'Install PerRoute.txt').write_text(instructions(version, architecture))
+        metadata_text = json.dumps(metadata, indent=2) + '\n'
         image = work / name
         run('/usr/bin/hdiutil', 'create', '-volname', f'PerRoute {version}', '-srcfolder', payload,
             '-fs', 'HFS+', '-format', 'UDZO', image)
@@ -210,13 +229,14 @@ def package(app, output):
                 raise ValueError('Mounted app signing identity changed')
             if os.readlink(mount / 'Applications') != '/Applications':
                 raise ValueError('Applications shortcut changed')
-            if json.loads((mount / 'BUILD.json').read_text()) != metadata:
-                raise ValueError('Mounted build metadata changed')
+            if (mount / 'Install PerRoute.txt').read_text() != instructions(version, architecture):
+                raise ValueError('Mounted installation guide changed')
         finally:
             run('/usr/bin/hdiutil', 'detach', mount)
         checksum = f'{digest(image)}  {name}\n'
-        for document in ('BUILD.json', 'INSTALL.txt'):
-            shutil.copyfile(payload / document, output / document)
+        shutil.copyfile(payload / 'Install PerRoute.txt', output / 'INSTALL.txt')
+        (output / 'BUILD.json').write_text(metadata_text)
+        (output / 'MAINTENANCE.txt').write_text(maintenance_instructions(version, architecture))
         image.replace(output / name)
         (output / 'SHA256SUMS').write_text(checksum)
     print(f'DMG verified: {output / name}')
