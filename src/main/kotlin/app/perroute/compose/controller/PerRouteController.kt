@@ -284,6 +284,12 @@ class PerRouteController @JvmOverloads constructor(
     private val failoverIntervalMillis = recoveryPolicy.backoffMaxMillis() * 2
 
     fun capabilities() = backend.capabilities()
+    fun explorerMenuSupported() = backend.supportsExplorerMenu()
+    fun lanBridgeSupported() = backend.supportsLanBridge()
+    fun workspacesSupported() = backend.supportsWorkspaces()
+    fun recipeImportSupported() = backend.supportsRecipeImport()
+    fun gatewayRequired() = backend.requiresPerAppGateway()
+
     private fun restoreSystemProxyIfSupported() {
         if (capabilities().supports(ConnectionMode.SYSTEM_PROXY)) backend.restoreSystemProxy()
     }

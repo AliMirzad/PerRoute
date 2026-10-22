@@ -47,7 +47,7 @@ internal enum class SettingsCategory(val label: String, val icon: ImageVector, v
     Routing("Routing", Icons.Rounded.AltRoute, "Measure quality and keep individual routes working."),
     Automation("Automation", Icons.Rounded.Sync, "Small automations for a more reliable connection."),
     Updates("Updates", Icons.Rounded.SystemUpdateAlt, "Keep the app current with signed releases."),
-    Components("Components", Icons.Rounded.Inventory2, "The core and driver behind your routes."),
+    Components("Components", Icons.Rounded.Inventory2, "The components behind your routes."),
     Backup("Backup & Restore", Icons.Rounded.Backup, "Keep a copy of your setup."),
     LocalNetwork("Local network", Icons.Rounded.Router, "Printers, NAS and other devices near you."),
     Recovery("Recovery", Icons.Rounded.SettingsBackupRestore, "Undo PerRoute's network changes, or go back a version."),
@@ -72,6 +72,12 @@ internal class ConnectionSettingsModel(private val shell: Shell) {
     suspend fun load() {
         environment = withContext(Dispatchers.IO) { runCatching { shell.controller.environment() }.getOrDefault(EnvironmentState(false, false, false)) }
     }
+    val missingRoutingDetail: String get() = if (shell.controller.capabilities().coreInstallation())
+        "Needs the per-app driver from the Full Installer. See Components."
+        else "Needs the matched routing helper and engine. See Components."
+    fun routingStatus(missing: Boolean): String = if (shell.controller.capabilities().coreInstallation())
+        if (missing) "Driver missing" else "Driver installed"
+        else if (missing) "Helper unavailable" else "Helper bundled"
     fun driverMissing(mode: ConnectionMode) = mode == ConnectionMode.NATIVE_PER_APP && environment?.perAppReady == false
     fun canChoose(mode: ConnectionMode) = shell.controller.capabilities().supports(mode) && !shell.locked && !driverMissing(mode) && !shell.busy
     fun choose(mode: ConnectionMode) { if (!canChoose(mode)) return; shell.controller.setMode(mode); shell.refresh() }
@@ -406,3 +412,14 @@ internal class RestoreSession(private val shell: Shell, val request: RestoreRequ
 }
 
 internal fun backupModel(shell: Shell): BackupModel = settingsModel(shell, SettingsCategory.Backup) { BackupModel(shell) }
+
+internal val IsMacDesktop: Boolean get() = app.perroute.platform.bootstrap.PlatformBootstrap.isMac(System.getProperty("os.name"))
+internal val CopyShortcut: String get() = if (IsMacDesktop) "⌘C" else "Ctrl+C"
+internal val WindowBehaviorDetail: String get() = if (IsMacDesktop)
+    "Closing the window keeps PerRoute running. Reopen it from the Dock. Use PerRoute → Quit PerRoute to exit and restore your connection settings."
+    else "Closing or minimizing keeps PerRoute in the notification area. Use Quick Access there to connect, switch the main server, or quit."
+
+@Composable
+internal fun UnavailableFeature(title: String, detail: String) {
+    InfoBanner("$title is not available on this platform yet. $detail")
+}

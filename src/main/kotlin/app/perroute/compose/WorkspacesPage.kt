@@ -119,6 +119,10 @@ internal fun workspacesModel(shell: Shell): WorkspacesModel = shell.screen("${Ta
 
 @Composable
 internal fun WorkspacesPage(shell: Shell) {
+    if (!shell.controller.workspacesSupported()) {
+        UnavailableFeature("Browser workspaces", "Isolated browser launch and profile routing have not been ported.")
+        return
+    }
     val model = workspacesModel(shell)
     LaunchedEffect(Unit) {
         model.loadBrowsers()

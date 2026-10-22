@@ -43,6 +43,10 @@ import java.nio.file.Path
 
 @Composable
 internal fun RecipesSection(shell: Shell, first: Boolean = false) {
+    if (!shell.controller.recipeImportSupported()) {
+        UnavailableFeature("Recipe sharing and import", "Application mappings are not portable to this platform yet.")
+        return
+    }
     FeatureBlock("Recipes", "Share how you route apps without sharing your servers. A recipe holds rules and app routes; servers become slots that the person importing it fills with their own.", first = first) {
         Spacer(Modifier.height(12.dp))
         Row(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
@@ -143,6 +147,10 @@ private fun CheckLine(text: String, checked: Boolean, enabled: Boolean = true, o
 }
 
 internal fun showRecipeImport(shell: Shell) {
+    if (!shell.controller.recipeImportSupported()) {
+        shell.notify(ActionResult(false, "Recipe import is not available on this platform yet."))
+        return
+    }
     val text = mutableStateOf("")
     shell.showDialog {
         DialogCard("Import a recipe", "Paste a recipe someone shared, or open a recipe file. You see every change before anything is applied.", shell::closeDialog, width = 560.dp,

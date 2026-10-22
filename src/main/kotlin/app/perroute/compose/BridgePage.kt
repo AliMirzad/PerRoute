@@ -163,6 +163,10 @@ internal fun bridgeModel(shell: Shell): BridgeModel = shell.screen("${Tab.Bridge
 
 @Composable
 internal fun BridgePage(shell: Shell) {
+    if (!shell.controller.lanBridgeSupported()) {
+        UnavailableFeature("LAN Bridge", "Device sharing and its firewall setup have not been ported.")
+        return
+    }
     val model = bridgeModel(shell)
     LaunchedEffect(Unit) {
         model.loadAddresses()

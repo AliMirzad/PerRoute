@@ -112,7 +112,7 @@ internal fun SimpleConnectionPage(shell: Shell) {
         Spacer(Modifier.height(14.dp))
         if (!shell.perApp) Text(when (shell.mode) {
             ConnectionMode.BROWSER_PROXY -> "Enter either endpoint in an application's own proxy settings. Everything else stays direct."
-            ConnectionMode.SYSTEM_PROXY -> "Applications that follow Windows proxy settings use the main server."
+            ConnectionMode.SYSTEM_PROXY -> "Applications that follow system proxy settings use the main server."
             else -> "Network traffic is routed by the compatibility tunnel."
         }, color = Muted, fontSize = 14.sp)
         else if (shell.apps.isEmpty()) Text("No apps selected yet. Choose the applications that should use the proxy.", color = Muted, fontSize = 14.sp)

@@ -146,7 +146,7 @@ internal class DiagnosticsModel(private val shell: Shell) {
     }
 
     fun dnsExplanation(): String = when (shell.mode) {
-        ConnectionMode.NATIVE_PER_APP -> "In Smart per-app mode selected apps usually ask Windows for names first, so lookups use the resolvers above and only the connection itself is tunnelled. PerRoute does not measure DNS separately for each server."
+        ConnectionMode.NATIVE_PER_APP -> "In Smart per-app mode selected apps usually ask the operating system for names first, so lookups use the resolvers above and only the connection itself is tunnelled. PerRoute does not measure DNS separately for each server."
         ConnectionMode.TUN_COMPATIBILITY -> "In TUN mode DNS is carried inside the tunnel. PerRoute does not measure DNS separately for each server."
         else -> "Apps using the HTTP proxy hand names to the server; SOCKS clients may still resolve locally first. PerRoute does not measure DNS separately for each server."
     }

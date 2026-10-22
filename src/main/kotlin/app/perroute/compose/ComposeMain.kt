@@ -939,6 +939,7 @@ internal fun PerRouteWindow(
 }
 
 private fun offerUpdate(shell: Shell, version: String) {
+    if (!shell.controller.capabilities().updates()) return
     shell.showDialog {
         DialogCard("PerRoute $version is ready", "Downloaded and verified in the background.", shell::closeDialog, width = 480.dp,
             actions = {
@@ -957,6 +958,7 @@ private fun offerUpdate(shell: Shell, version: String) {
 }
 
 private fun offerRollback(shell: Shell, status: app.perroute.update.StartupHealth.Status, version: String) {
+    if (!shell.controller.capabilities().updates()) return
     shell.showDialog {
         DialogCard("PerRoute did not start properly", "PerRoute ${status.version()} did not finish starting ${status.failedStarts()} times in a row.", shell::closeDialog, width = 480.dp,
             actions = {
@@ -1065,9 +1067,9 @@ private enum class WindowControl { MINIMIZE, RESTORE, CLOSE }
 @Composable
 internal fun WindowButtons(chrome: WindowChrome, tint: Color, height: Dp = 44.dp, width: Dp = 50.dp) {
     Row(Modifier.fillMaxHeight()) {
-        WindowButton(WindowControl.MINIMIZE, "Minimize to the notification area", tint, height, width, chrome.minimize)
+        WindowButton(WindowControl.MINIMIZE, if (IsMacDesktop) "Hide window" else "Minimize to the notification area", tint, height, width, chrome.minimize)
         WindowButton(WindowControl.RESTORE, "Maximize or restore", tint, height, width, chrome.maximize)
-        WindowButton(WindowControl.CLOSE, "Close to the notification area", tint, height, width, chrome.close)
+        WindowButton(WindowControl.CLOSE, if (IsMacDesktop) "Close window" else "Close to the notification area", tint, height, width, chrome.close)
     }
 }
 
