@@ -2,12 +2,13 @@
 """Stage a persistent certificate-pinned local helper build. Does not install or launch it."""
 import argparse
 import json
+import platform
 from pathlib import Path
 import shutil
 import subprocess
 import tempfile
 import macos_helper_probe as signing
-from macos_preview import macho
+from macos_preview import ENGINES, macho
 from macos_routing_bundle import stage as stage_routing, sign_payloads, enable_candidate_launch
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -38,6 +39,8 @@ def seal(path, settings, identifier=None):
 
 def build(app, *, routing=False):
     output = ROOT / ("build/macos-routing-helper" if routing else "build/macos-local-helper")
+    if not signing.STATE.exists():
+        signing.create_identity()
     settings = signing.identity()
     signing.run('/usr/bin/security', 'unlock-keychain', '-p', settings['password'],
                 signing.STATE / 'identity.keychain-db', quiet=True)
@@ -70,6 +73,15 @@ def build(app, *, routing=False):
         staged = Path(temporary) / 'PerRoute.app'
         shutil.copytree(app, staged, symlinks=True)
         contents = staged / 'Contents'
+        # Remove unused platform payloads before signing, never from a sealed delivery app.
+        resources = contents / 'app/resources'
+        (resources / 'jnidispatch.dll').unlink(missing_ok=True)
+        for entry in (resources / 'xray').iterdir():
+            if entry.name not in {ENGINES[platform.machine()], 'geoip.dat', 'geosite.dat', 'README.txt'}:
+                if entry.is_dir() and not entry.is_symlink():
+                    shutil.rmtree(entry)
+                else:
+                    entry.unlink()
         helper = contents / 'Library/HelperTools/PerRouteProxyHelper'
         bridge = contents / 'Frameworks/libPerRouteProxyBridge.dylib'
         installer = contents / 'MacOS/PerRouteHelperInstaller'

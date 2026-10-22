@@ -811,3 +811,30 @@ tasks.register<JavaExec>("runMacosApplicationIconTests") {
     mainClass.set("app.perroute.MacosApplicationIconTests")
     enableAssertions = true
 }
+
+tasks.register<Exec>("runMacosDmgTests") {
+    group = "verification"
+    commandLine(providers.gradleProperty("pythonExecutable").getOrElse("python3"), "scripts/test_macos_dmg.py")
+}
+
+// Packages the already sealed helper-enabled app; never use Compose packageDmg, which
+// would package the intermediate app before the matched native components are staged.
+tasks.register<Exec>("packageMacosDmg") {
+    group = "distribution"
+    description = "Build and verify an account-free macOS preview DMG with install instructions and checksums"
+    dependsOn(tasks.named("stageMacosRoutingHelper"), tasks.named("runMacosDmgTests"))
+    onlyIf { System.getProperty("os.name") == "Mac OS X" }
+    commandLine(providers.gradleProperty("pythonExecutable").getOrElse("python3"), "scripts/macos_dmg.py", "--app",
+        layout.buildDirectory.dir("macos-routing-helper/PerRoute.app").get().asFile.absolutePath,
+        "--output", layout.buildDirectory.dir("macos-installer").get().asFile.absolutePath)
+}
+
+val fetchMacosXray = tasks.register<Exec>("fetchMacosXray") {
+    group = "distribution"
+    description = "Download or verify the SHA-256-pinned host Xray for desktop packaging"
+    onlyIf { System.getProperty("os.name") == "Mac OS X" }
+    commandLine(providers.gradleProperty("pythonExecutable").getOrElse("python3"), "scripts/fetch_macos_xray.py")
+}
+stageNativeResources.configure {
+    if (System.getProperty("os.name") == "Mac OS X") dependsOn(fetchMacosXray)
+}
