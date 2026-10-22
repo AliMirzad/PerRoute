@@ -648,6 +648,7 @@ final class ControllerTests {
         volatile String lastValidated = "";
         volatile String rejectValidation;
         volatile String failStart;
+        volatile String failIsolatedStart;
         volatile int startCount, stopCount, validateCount, proxyApplications, proxyRestorations;
         volatile List<String> perAppApplications = List.of();
         volatile CountDownLatch blockStart;
@@ -763,6 +764,7 @@ final class ControllerTests {
         @Override public boolean bridgeFirewallReady(java.nio.file.Path core, int firstPort, int lastPort) { return firewallReady; }
         @Override public void allowBridgeFirewall(java.nio.file.Path core, int firstPort, int lastPort) { firewallAllowed++; firewallReady = true; }
         @Override public IsolatedTunnel startIsolatedCore(String config, int socksPort, java.util.function.Consumer<String> onLine) {
+            if (failIsolatedStart != null) throw new IllegalStateException(failIsolatedStart);
             isolatedConfig = config;
             FakeTunnel tunnel = new FakeTunnel(socksPort, onLine);
             isolated.add(tunnel);

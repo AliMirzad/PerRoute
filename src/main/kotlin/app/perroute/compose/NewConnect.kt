@@ -373,7 +373,7 @@ private fun ModeCard(mode: ConnectionMode) {
             Icon(Icons.Rounded.DesktopWindows, null, tint = White.copy(.8f), modifier = Modifier.size(24.dp))
         }
         Spacer(Modifier.width(12.dp))
-        Text(if (mode == ConnectionMode.SYSTEM_PROXY) "Apps that follow Windows proxy settings" else "Apps you point at the local proxy",
+        Text(if (mode == ConnectionMode.SYSTEM_PROXY) "Apps that follow system proxy settings" else "Apps you point at the local proxy",
             color = White, fontSize = 12.5.sp, lineHeight = 16.sp, maxLines = 3)
     }
 }

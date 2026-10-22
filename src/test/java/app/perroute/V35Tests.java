@@ -818,6 +818,7 @@ final class V35Tests {
         check(!view.getRunning() && view.getProblem().isEmpty(), "Ready to open");
         check(c.updateWorkspace(view.getWorkspace().id(), "Work", f.chrome, "second").getOk(), "Move it to another server");
         equal("second", c.workspaces().get(0).getNode().key());
+        f.backend.failIsolatedStart = "Core unavailable in this fixture";
         ActionResult opened = c.openWorkspace(view.getWorkspace().id());
         check(!opened.getOk() && opened.getMessage().contains("could not start its route"), "Without a core the workspace does not open: " + opened.getMessage());
         check(c.removeWorkspace(view.getWorkspace().id(), false).getOk() && c.workspaces().isEmpty(), "Remove");

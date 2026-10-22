@@ -113,7 +113,7 @@ internal class DiagnosticsModel(private val shell: Shell) {
         return listOf(direct) + rows.map { row ->
             RouteCheckEntry(row.id, row.node, serverName(row.node),
                 when {
-                    !shell.perApp -> if (shell.mode == ConnectionMode.SYSTEM_PROXY) "Apps that follow Windows proxy settings" else "Apps you point at the local proxy"
+                    !shell.perApp -> if (shell.mode == ConnectionMode.SYSTEM_PROXY) "Apps that follow system proxy settings" else "Apps you point at the local proxy"
                     row.applications.isEmpty() -> "No selected app uses this server"
                     else -> joinNames(row.applications.map(::appName), 4)
                 },

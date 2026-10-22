@@ -1740,7 +1740,7 @@ class PerRouteController @JvmOverloads constructor(
         if (connected && mode == ConnectionMode.SYSTEM_PROXY) {
             findings += if (!runCatching { backend.perRouteProxyActive() }.getOrDefault(true))
                 HealthFinding("proxy", "Windows", CheckStatus.FAIL, "Another program changed the Windows proxy",
-                    "Apps that follow Windows proxy settings no longer go through PerRoute. A VPN or another proxy tool may have replaced the setting.", Repair.REAPPLY_SYSTEM_PROXY)
+                    "Apps that follow system proxy settings no longer go through PerRoute. A VPN or another proxy tool may have replaced the setting.", Repair.REAPPLY_SYSTEM_PROXY)
             else HealthFinding("proxy", "Windows", CheckStatus.PASS, "The Windows proxy points to PerRoute", "")
         }
         if (!connected) {
