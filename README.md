@@ -88,7 +88,7 @@ Windows features are listed below; see [macOS support and limits](#macos-version
 
 ## Download
 
-Get the latest Windows build from the [Releases](https://github.com/AliMirzad/PerRoute/releases/latest) page.
+Download installers from [Releases](https://github.com/AliMirzad/PerRoute/releases). macOS downloads will appear there when published.
 
 | Package | Use it when |
 |---|---|
@@ -117,14 +117,14 @@ Per-app limitations: Safari routing is unreliable; UDP/QUIC, IPv6 and a kill swi
 
 ### Install on macOS
 
-Build the [macOS DMG](#build-the-macos-dmg) until a macOS release download is published.
+Download the Apple Silicon macOS `.dmg` from [Releases](https://github.com/AliMirzad/PerRoute/releases) when available. A macOS installer has not been published yet.
 
 1. Open the DMG and drag **PerRoute.app** to **Applications**.
 2. Eject the disk and open **Applications > PerRoute**.
 3. Import your server and choose a mode. For per-app routing, select the app including helpers in **Apps** and save.
 4. Click **Connect**. Approve the one-time helper installation and Keychain access if requested. Click **Disconnect** when finished.
 
-The preview is locally signed and unnotarized. If macOS blocks it, use **System Settings > Privacy & Security > Open Anyway** after the first launch attempt. See [Apple's instructions](https://support.apple.com/102445). Always launch the installed copy, not the app inside the DMG.
+The macOS preview is not notarized. If macOS blocks it, use **System Settings > Privacy & Security > Open Anyway** after the first launch attempt. See [Apple's instructions](https://support.apple.com/102445). Always launch the installed copy, not the app inside the DMG.
 
 ### Remove or upgrade
 
