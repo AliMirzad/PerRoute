@@ -5,6 +5,9 @@ import app.perroute.compose.ui.components.*
 import app.perroute.compose.inspector.*
 import app.perroute.compose.diagnostics.*
 import app.perroute.backend.api.IsolatedTunnel
+import androidx.compose.ui.graphics.painter.BitmapPainter
+import androidx.compose.ui.graphics.toComposeImageBitmap
+import app.perroute.platform.macos.MacApplicationIcon
 import app.perroute.model.ApplicationIdentity
 
 import app.perroute.compose.controller.ActionResult
@@ -510,6 +513,14 @@ private fun runDesktop(args: Array<String>, preview: app.perroute.platform.macos
         var mainWindow by remember { mutableStateOf<Frame?>(null) }
         var dockCanReopen by remember { mutableStateOf(false) }
         val macDesktop = PlatformBootstrap.isMac(System.getProperty("os.name"))
+        val macIcon = remember(macDesktop, Appearance.dark) {
+            if (macDesktop) runCatching { MacApplicationIcon.image(Appearance.dark) }.getOrNull() else null
+        }
+        val windowIcon = macIcon?.let { remember(it) { BitmapPainter(it.toComposeImageBitmap()) } }
+            ?: painterResource("icons/perroute-icon-256.png")
+        LaunchedEffect(macIcon) {
+            macIcon?.let { runCatching { MacApplicationIcon.apply(it) } }
+        }
         var nativeTrayIcon by remember { mutableStateOf<TrayIcon?>(null) }
         var trayConnected by remember { mutableStateOf(controller.isConnected()) }
         var traySelectedKey by remember { mutableStateOf(controller.selectedNodeKey()) }
@@ -672,7 +683,7 @@ private fun runDesktop(args: Array<String>, preview: app.perroute.platform.macos
             onCloseRequest = { if (nativeTrayIcon == null && !dockCanReopen) exitPerRoute() else hideMainWindow() },
             state = windowState,
             title = "PerRoute",
-            icon = painterResource("icons/perroute-icon-256.png"),
+            icon = windowIcon,
             undecorated = true,
             transparent = false,
             resizable = true,
@@ -683,7 +694,9 @@ private fun runDesktop(args: Array<String>, preview: app.perroute.platform.macos
                 window.minimumSize = Dimension(MinWindowWidth, MinWindowHeight)
             }
             LaunchedEffect(Appearance.style, Appearance.dark) {
-                window.background = if (Appearance.style == UiStyle.NEW) java.awt.Color(23, 25, 25)
+                window.background = if (Appearance.style == UiStyle.NEW) {
+                    if (Appearance.dark) java.awt.Color(23, 25, 25) else java.awt.Color(244, 244, 239)
+                }
                     else if (Appearance.dark) java.awt.Color(23, 23, 30) else java.awt.Color(247, 247, 250)
             }
             remember { Perf.mark("window.compose") }
@@ -705,7 +718,7 @@ private fun runDesktop(args: Array<String>, preview: app.perroute.platform.macos
             onCloseRequest = { quickVisible = false },
             state = quickState,
             title = "PerRoute Quick Access",
-            icon = painterResource("icons/perroute-icon-256.png"),
+            icon = windowIcon,
             undecorated = true,
             transparent = false,
             resizable = false,
