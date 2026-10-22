@@ -98,8 +98,11 @@ public final class MacPerAppBackendTests {
                     while (!socket.isClosed()) try (var client = socket.accept()) {
                         client.setSoTimeout(3000);
                         var reader = new BufferedReader(new InputStreamReader(client.getInputStream(),StandardCharsets.US_ASCII));
+                        String request=reader.readLine();
                         String line; while ((line=reader.readLine()) != null && !line.isEmpty()) { }
-                        client.getOutputStream().write("HTTP/1.1 200 OK\r\nContent-Length: 2\r\nConnection: close\r\n\r\nOK".getBytes(StandardCharsets.US_ASCII));
+                        byte[] body=request != null && request.startsWith("GET /big ") ? new byte[512*1024] : "OK".getBytes(StandardCharsets.US_ASCII);
+                        client.getOutputStream().write(("HTTP/1.1 200 OK\r\nContent-Length: "+body.length+"\r\nConnection: close\r\n\r\n").getBytes(StandardCharsets.US_ASCII));
+                        client.getOutputStream().write(body);
                     }
                 } catch (SocketException closed) { if (!socket.isClosed()) failure=closed; }
                 catch (Throwable error) { failure=error; }
@@ -134,6 +137,16 @@ public final class MacPerAppBackendTests {
                 check(peer.upstreams.equals(List.of(upOne,upTwo)),"Upstream binding order is preserved");
                 check(((Map<?,?>)peer.bindings.getFirst()).get("executable").equals(ApplicationIdentity.path(first)),"Only decoded executable paths cross the native boundary");
                 request(one,destination.socket.getLocalPort());
+                backend.setGatewayLimits(first,256*1024,0);
+                long began=System.nanoTime();
+                try (var socket=new Socket(new Proxy(Proxy.Type.SOCKS,new InetSocketAddress("127.0.0.1",one)))) {
+                    socket.connect(new InetSocketAddress("127.0.0.1",destination.socket.getLocalPort()),3000);
+                    socket.setSoTimeout(10_000);
+                    socket.getOutputStream().write("GET /big HTTP/1.1\r\nHost: loopback\r\nConnection: close\r\n\r\n".getBytes(StandardCharsets.US_ASCII));
+                    check(socket.getInputStream().readAllBytes().length>512*1024,"Limited macOS gateway carries the complete payload");
+                }
+                check(System.nanoTime()-began>=1_200_000_000L,"Tagged macOS app download obeys its real gateway rate limit");
+                backend.setGatewayLimits(first,1_000_000,1_000_000);
                 long deadline = System.nanoTime()+3_000_000_000L;
                 while (backend.gatewayCounters().get(first).openConnections() != 0 && System.nanoTime()<deadline) Thread.sleep(10);
                 var before = backend.gatewayCounters().get(first);

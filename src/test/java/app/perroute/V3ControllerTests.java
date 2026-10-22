@@ -430,7 +430,7 @@ final class V3ControllerTests {
         check(!f.controller.setTrafficGateway(false).getOk(), "The gateway cannot be switched while connected");
     }
 
-    private static void testKillSwitch(Fixture f) {
+    private static void testKillSwitch(Fixture f) throws Exception {
         f.controller.setKillSwitch(true);
         int restores = f.backend.restorePerAppCount;
         check(f.controller.connect().getOk(), "Connect");
@@ -440,6 +440,7 @@ final class V3ControllerTests {
         check(!f.backend.gatewayRunning, "The gateway is stopped; the held apps have nowhere to go");
         check(f.controller.connect().getOk(), "Reconnect");
         f.backend.crash();
+        waitFor(() -> !f.backend.gatewayRunning && !f.controller.isConnected());
         check(!f.backend.gatewayRunning, "A core crash stops the gateway too");
         equal(restores, f.backend.restorePerAppCount);
         check(!f.controller.isConnected(), "The crash is noticed");
