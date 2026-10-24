@@ -1665,9 +1665,17 @@ class PerRouteController @JvmOverloads constructor(
             "Xray is missing, so no connection can start.", Repair.OPEN_COMPONENTS)
         else HealthFinding("core", "PerRoute", CheckStatus.PASS, "The connection core is installed", "")
         if (mode == ConnectionMode.NATIVE_PER_APP) {
-            findings += if (!environment.perAppReady) HealthFinding("engine", "PerRoute", CheckStatus.FAIL, "The per-app engine is not installed",
-                "Smart per-app needs it to send the selected apps to the tunnel. Install PerRoute with the Full Installer.", Repair.OPEN_COMPONENTS)
-            else HealthFinding("engine", "PerRoute", CheckStatus.PASS, "The per-app engine is installed", "")
+            val driver = runCatching { proxiFyre.driverState() }.getOrDefault(ProxiFyreManager.DriverState.UNKNOWN)
+            findings += when {
+                !environment.perAppReady && driver == ProxiFyreManager.DriverState.MISSING -> HealthFinding("engine", "PerRoute", CheckStatus.FAIL, "The Windows Packet Filter driver is missing",
+                    "The per-app engine is there, but the driver it uses to redirect apps (${ProxiFyreManager.DRIVER_NAME}) is not installed, so selected apps cannot be routed. " +
+                        "Reinstall PerRoute with the Full Installer and restart Windows if it asks. Another network filter, VPN or security tool can also stop the driver from installing.", Repair.OPEN_COMPONENTS)
+                !environment.perAppReady -> HealthFinding("engine", "PerRoute", CheckStatus.FAIL, "The per-app engine is not installed",
+                    "Smart per-app needs it to send the selected apps to the tunnel. Install PerRoute with the Full Installer.", Repair.OPEN_COMPONENTS)
+                driver == ProxiFyreManager.DriverState.STOPPED -> HealthFinding("engine", "PerRoute", CheckStatus.WARN, "The Windows Packet Filter driver is not running",
+                    "The driver (${ProxiFyreManager.DRIVER_NAME}) is installed but stopped, so selected apps may go out directly. Restart Windows, or reinstall PerRoute with the Full Installer.", Repair.OPEN_COMPONENTS)
+                else -> HealthFinding("engine", "PerRoute", CheckStatus.PASS, "The per-app engine and driver are installed", "")
+            }
         }
 
         when {
@@ -3151,7 +3159,7 @@ class PerRouteController @JvmOverloads constructor(
         if (!plan.ready()) return ActionResult(false, missingRouteMessage(plan))
         if (!backend.coreReady()) return ActionResult(false, "Xray is not installed. Install it from Settings.")
         if (mode == ConnectionMode.NATIVE_PER_APP && !backend.perAppReady()) {
-            return ActionResult(false, "Smart per-app needs the bundled Windows driver. Reinstall PerRoute with the Full Installer and approve its single UAC prompt, or choose Local proxy/System proxy.")
+            return ActionResult(false, "Smart per-app needs the per-app engine and the Windows Packet Filter driver, and one of them is missing (see the Doctor). Reinstall PerRoute with the Full Installer and approve its single UAC prompt, or choose Local proxy/System proxy.")
         }
         if (mode == ConnectionMode.TUN_COMPATIBILITY && !backend.elevated()) {
             return ActionResult(false, "TUN mode requires Administrator privileges.")

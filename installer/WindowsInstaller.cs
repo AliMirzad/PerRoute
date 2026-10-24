@@ -966,7 +966,7 @@ namespace PerRouteSetup
                     {
                         progress.Report(new InstallProgress(58, "Installing the per-app network engine and driver…", ++step));
                         restartRequired = InstallPerAppEngine(dependencyStage);
-                        VerifyPerAppEngine();
+                        VerifyPerAppEngine(restartRequired);
                         RemoveDependencyShortcuts();
                         progress.Report(new InstallProgress(72, "Installing PerRoute for all users…", ++step));
                         executable = InstallApplication(appExtracted, target, desktopShortcut);
@@ -1230,13 +1230,16 @@ namespace PerRouteSetup
                 }
             }
 
-            private static void VerifyPerAppEngine()
+            private static void VerifyPerAppEngine(bool restartPending)
             {
                 string executable = Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.ProgramFiles), "ProxiFyre", "ProxiFyre.exe");
                 if (!File.Exists(executable)) throw new InvalidDataException("The per-app engine did not finish installing.");
                 using (RegistryKey machine = RegistryKey.OpenBaseKey(RegistryHive.LocalMachine, RegistryView.Registry64))
                 using (RegistryKey service = machine.OpenSubKey(@"SYSTEM\CurrentControlSet\Services\ProxiFyreService"))
                     if (service == null) throw new InvalidDataException("The ProxiFyre Windows service was not registered.");
+                using (RegistryKey machine = RegistryKey.OpenBaseKey(RegistryHive.LocalMachine, RegistryView.Registry64))
+                using (RegistryKey driver = machine.OpenSubKey(@"SYSTEM\CurrentControlSet\Services\ndisrd"))
+                    if (driver == null && !restartPending) throw new InvalidDataException("The Windows Packet Filter driver was not installed. Another network filter or security tool may have blocked it. Restart Windows and run the installer again.");
             }
 
             private static void RemoveDependencyShortcuts()

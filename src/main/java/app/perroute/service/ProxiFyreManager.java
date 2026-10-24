@@ -27,6 +27,7 @@ import java.util.regex.Pattern;
 
 public final class ProxiFyreManager {
     public static final String SERVICE_NAME = "ProxiFyreService";
+    public static final String DRIVER_NAME = "ndisrd";
     public static final String VERSION = "2.6.2";
     private static final String SETUP_NAME = "ProxiFyre-" + VERSION + "-win-x64-setup.exe";
     private static final URI SETUP_URI = URI.create("https://github.com/wiresock/proxifyre/releases/download/v" + VERSION + "/" + SETUP_NAME);
@@ -44,7 +45,21 @@ public final class ProxiFyreManager {
 
     public Inspection inspect() {
         Path executable = executablePath();
-        return new Inspection(Files.isRegularFile(executable), serviceExists(), executable);
+        return new Inspection(Files.isRegularFile(executable), serviceExists(), driverState().installed(), executable);
+    }
+
+    /** State of the Windows Packet Filter kernel driver that ProxiFyre redirects traffic through. */
+    public DriverState driverState() {
+        try {
+            Process process = new ProcessBuilder("sc.exe", "query", DRIVER_NAME).redirectErrorStream(true).start();
+            if (!process.waitFor(5, TimeUnit.SECONDS)) { process.destroyForcibly(); return DriverState.UNKNOWN; }
+            String output = new String(process.getInputStream().readAllBytes(), StandardCharsets.UTF_8);
+            if (process.exitValue() != 0) return output.contains("1060") ? DriverState.MISSING : DriverState.UNKNOWN;
+            Matcher matcher = SERVICE_STATE.matcher(output);
+            return matcher.find() && Integer.parseInt(matcher.group(1)) == 4 ? DriverState.RUNNING : DriverState.STOPPED;
+        } catch (Exception unknown) {
+            return DriverState.UNKNOWN;
+        }
     }
 
     public String generateConfig(List<String> applicationPaths) {
@@ -90,7 +105,9 @@ public final class ProxiFyreManager {
 
     public synchronized void applyAndStart(List<String> applicationPaths, boolean bypassLan) throws IOException, InterruptedException {
         Inspection inspection = inspect();
-        if (!inspection.ready()) throw new IOException("ProxiFyre is not installed. Install the per-app engine first.");
+        if (!inspection.installed() || !inspection.serviceInstalled()) throw new IOException("ProxiFyre is not installed. Install the per-app engine first.");
+        if (!inspection.driverInstalled()) throw new IOException("The Windows Packet Filter driver (" + DRIVER_NAME + ") is not installed, so apps cannot be routed. "
+                + "Reinstall PerRoute with the Full Installer, restart Windows if it asks, and check that no other network filter tool blocked the driver.");
         if (!AdminCheck.isElevated()) {
             startLimited(inspection, applicationPaths, bypassLan);
             return;
@@ -375,8 +392,14 @@ public final class ProxiFyreManager {
         catch (java.security.NoSuchAlgorithmException e) { throw new IOException("SHA-256 is unavailable", e); }
     }
 
-    public record Inspection(boolean installed, boolean serviceInstalled, Path executable) {
-        public boolean ready() { return installed && serviceInstalled; }
+    public enum DriverState {
+        RUNNING, STOPPED, MISSING, UNKNOWN;
+
+        /** Unknown counts as installed so a failed query never blocks a working setup. */
+        public boolean installed() { return this != MISSING; }
+    }
+    public record Inspection(boolean installed, boolean serviceInstalled, boolean driverInstalled, Path executable) {
+        public boolean ready() { return installed && serviceInstalled && driverInstalled; }
     }
     private record Result(int exitCode, String output) {}
 }
